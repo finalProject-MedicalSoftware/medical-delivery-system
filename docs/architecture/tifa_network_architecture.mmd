@@ -1,0 +1,181 @@
+%% BEGIN DIAGRAM 1 - EXISTING ACTUAL SYSTEM ARCHITECTURE
+flowchart TB
+    OP["Operator browser"]
+    subgraph SW["EXISTING - Software services; production host placement UNKNOWN"]
+        WEB["Next.js server - API routes and server WS client"]
+        BE["Java Spring Boot - REST auth and Kafka consumers"]
+        GW["Node.js WebSocket gateway - sessions by robot_id"]
+        K["Kafka event bus"]
+        DB[("PostgreSQL")]
+    end
+    subgraph ROB["EXISTING - Robot runtime; exact computer topology to confirm"]
+        WC["Custom robot WS client - outgoing cloud connection"]
+        LS["Robot local WS server - port 8765"]
+        BR["ROS2 WS bridge"]
+        API["RobotApiNode - FSM and RAM task queue"]
+        NAV["ROS2 Nav2 - planning and local control"]
+        LOC["ROS2 localization and EKF"]
+        S["Local sensors - scan and odometry"]
+        MUX["Velocity pipeline - mux and safety watchdog"]
+        CT["ros2_control controller"]
+        MOT["Arduino motor interface - serial"]
+    end
+    HMI["Android HMI - React Capacitor and Java plugin"]
+    OP -->|"Same-origin HTTP /api/robot-control"| WEB
+    WEB <-->|"SQL task and history"| DB
+    WEB <-->|"WebSocket UI session"| GW
+    GW -->|"POST /auth/validate for new UI session"| BE
+    GW <-->|"Kafka produce and backend command consume"| K
+    BE <-->|"Kafka consume and produce"| K
+    BE <-->|"Persistence"| DB
+    GW -->|"Robot company lookup"| DB
+    WC -->|"Robot initiates WSS and SI"| GW
+    GW -->|"Commands on established socket"| WC
+    WC <-->|"JSON callbacks and sends"| BR
+    LS <-->|"Local JSON transport"| BR
+    BR -->|"tifa/ws_in"| API
+    API -->|"tifa/ws_out"| BR
+    API <-->|"navigate_to_pose action and result"| NAV
+    S --> LOC
+    LOC -->|"Pose and TF"| NAV
+    S -->|"Local costmap observations"| NAV
+    NAV --> MUX --> CT
+    CT <-->|"Serial command and encoder data"| MOT
+    HMI <-->|"Cloud WebSocket"| GW
+    HMI -->|"REST and token login"| BE
+    HMI <-->|"USB ADB reverse; port alignment required"| LS
+    API -->|"HTTPS map upload"| BE
+%% END DIAGRAM 1
+
+%% BEGIN DIAGRAM 2 - EXISTING COMMAND FLOW
+sequenceDiagram
+    actor O as Operator
+    participant B as Browser panel
+    participant W as Next.js API and WS client
+    participant DB as PostgreSQL
+    participant G as WS Gateway
+    participant K as Kafka
+    participant BE as Java Backend
+    participant R as Robot custom bridge
+    participant A as ROS2 RobotApiNode
+    participant N as Local Nav2
+    participant M as Local controller and motor
+    Note over O,M: EXISTING - OP task path; cloud sessions already established
+    Note over W,BE: New UI session requires gateway token validation with Java BE
+    O->>B: Select robot and tray destinations
+    B->>W: POST /api/robot-control with encoded payload
+    W->>DB: Read goals and HOME pose; insert queue
+    W->>G: WebSocket OP with robot_id and tray_tasks
+    G->>K: Audit and ui.command.op event
+    K-->>BE: UICommandConsumer processes event
+    G->>R: OP through robot-initiated cloud socket
+    Note over G,R: WS send success is not robot execution ACK
+    R->>A: Publish JSON String to tifa/ws_in
+    A->>A: Enqueue poses in RAM; set MOVING
+    A->>N: navigate_to_pose action goal
+    N-->>A: Goal acceptance and local feedback
+    N->>M: Velocity through mux and watchdog
+    M->>M: Serial motor movement
+    A-->>R: ACK ENQUEUED via tifa/ws_out
+    R-->>G: ACK JSON
+    G->>K: robot.command.ack
+    N-->>A: Navigation result SUCCEEDED
+    A->>A: Set PAUSED; wait for PICKUP_CONFIRM
+    A-->>R: GOAL_COMPLETE and cached position when available
+    R-->>G: Robot event
+    G->>K: robot.events.goal_complete
+    K-->>BE: Event consumer updates persistence
+    G-->>W: Forward to matching UI session if available
+    W->>DB: Handle supported status events
+    B->>W: Read task and history API
+    W->>DB: Query persisted state
+    DB-->>W: State and history
+    W-->>B: Render status
+    Note over A,BE: Arrival is not proof of physical handover; UI routing depends on ui_id
+    Note over W,DB: SQL transaction cannot undo a command already sent to robot
+%% END DIAGRAM 2
+
+%% BEGIN DIAGRAM 3 - EXISTING NETWORK FAILURE
+flowchart TB
+    subgraph FAIL["EXISTING - Communication failures; not robot power failure"]
+        F1["Server endpoint unavailable"]
+        F2["Robot Wi-Fi disconnected"]
+        F3["WebSocket gateway stopped"]
+        CUT["Cloud socket unavailable"]
+        LOST["Remote tasks and confirmations unavailable; cloud telemetry stale"]
+        DROP["TIFA bridge does not persist disconnected outgoing events"]
+    end
+    subgraph LOCAL["EXISTING - Local components may remain running"]
+        ROS["ROS2 processes alive if local dependencies healthy"]
+        NAV["Nav2 accepted goal can continue locally"]
+        CT["Controller and serial motor remain local"]
+        PAUSE["OP pauses at destination until PICKUP_CONFIRM"]
+        SAFE["Safety watchdog outputs zero when velocity command is stale"]
+        HMI["Local HMI via USB possible if configured and connected"]
+        RAM["Task queue in RAM survives link loss; not process restart"]
+    end
+    F1 --> CUT
+    F2 --> CUT
+    F3 --> CUT
+    CUT --> LOST
+    CUT --> DROP
+    ROS --> NAV --> CT
+    NAV --> PAUSE
+    ROS --> RAM
+    SAFE --> CT
+    HMI -->|"Local confirmation path"| PAUSE
+    UNKNOWN["UNKNOWN - DDS over WLAN or hidden service dependencies may affect ROS"]
+    F2 -.-> UNKNOWN
+    REC["Reconnect and SI after network recovery; TIFA startup ping gate is an exception"]
+    CUT --> REC
+    REC --> GAP["Session recovery does not guarantee lost-event replay or task reconciliation"]
+    style CUT fill:#ffd5d5,stroke:#a33
+    style LOST fill:#ffd5d5,stroke:#a33
+    style ROS fill:#d9f2df,stroke:#285
+    style NAV fill:#d9f2df,stroke:#285
+    style UNKNOWN fill:#fff1c7,stroke:#a80
+%% END DIAGRAM 3
+
+%% BEGIN DIAGRAM 4 - PROPOSED NETWORK-RESILIENT ARCHITECTURE
+flowchart TB
+    subgraph SERVER["PROPOSED - Coordination and monitoring; not local motion dependency"]
+        SIM["SIMRS dummy"]
+        WEB["Medical dashboard"]
+        BE["Medical backend - order authority and audit"]
+        DB[("Order and audit database")]
+        BUS["Event bus and reliable command outbox"]
+        GW["Gateway - identity, session routing and transport ACK"]
+    end
+    subgraph ROB["PROPOSED - Local medical robot autonomy"]
+        LINK["Connector - retry backoff and authenticated session"]
+        SYNC["Reconnect task and state reconciliation"]
+        JOUR[("Durable local task checkpoints and event outbox")]
+        EXEC["Execution manager - task authority and idempotent commands"]
+        POLICY["Offline policy - continue validated goal or hold safely"]
+        HMI["Local HMI - authorized verification and audit"]
+        LOCK["Compartment lock and door feedback"]
+        NAV["Local ROS2 Nav2 and localization"]
+        SENSOR["Local sensors"]
+        SAFE["Local watchdog and safe control"]
+        MOTOR["Local controller and serial motor"]
+    end
+    SIM -->|"Order API"| BE
+    WEB <-->|"Task state and operator actions"| BE
+    BE <--> DB
+    BE <--> BUS <--> GW
+    GW <-->|"Network communication; may be unavailable"| LINK
+    LINK <--> SYNC <--> EXEC
+    SYNC <--> JOUR
+    EXEC <-->|"Persist acceptance and checkpoint"| JOUR
+    EXEC <--> POLICY
+    HMI <-->|"Verification and local status"| EXEC
+    EXEC <-->|"Authorized unlock and actual feedback"| LOCK
+    EXEC <-->|"Local navigation action"| NAV
+    SENSOR --> NAV --> SAFE --> MOTOR
+    JOUR -->|"Replay important events with unique IDs after reconnect"| LINK
+    POLICY -->|"Enforce permitted offline behavior"| EXEC
+    Note["PROPOSED only - no implementation added; no automatic stale movement replay"]
+    Note -.-> JOUR
+    style JOUR fill:#dceaff,stroke:#357
+    style POLICY fill:#fff1c7,stroke:#a80
+%% END DIAGRAM 4

@@ -1,0 +1,26 @@
+%% DRAF - Kisah satu pengantaran obat, dari pesan sampai serah-terima.
+%% Fase sekarang: kabar berjalan lewat internet biasa (HTTP polling lalu POST).
+sequenceDiagram
+    actor N as Perawat / dokter
+    participant S as SIMRS (buku besar)
+    participant M as Aplikasi pantau
+    participant R as Robot
+
+    N->>S: Membuat resep dan menandai obat siap
+    N->>S: Mengajukan pengantaran ke ruang X
+
+    Note over S,M: Tiap 30 detik, aplikasi pantau bertanya ada tugas baru?
+    S-->>M: Ini pasiennya, ini ruangnya, ini tugasnya
+    R->>M: Siap, mana tugas saya?
+    M->>R: Robot, silakan berangkat
+    R-->>M: Sedang melaju
+    M->>S: Lapor: pengantaran sedang melaju
+    R-->>M: Sudah tiba di ruang, pakai kotak nomor sekian
+    M->>S: Lapor: sudah tiba, nomor kotak sekian
+
+    Note over S: SIMRS mencatat tiba, tetapi belum serah-terima.
+
+    N->>S: Memindai kartu QR pasien, melihat nomor kotak, tekan konfirmasi
+    S-->>N: Tersimpan: serah-terima selesai
+    Note over S,M: Robot tidak boleh ikut mengonfirmasi; hanya manusia lewat QR.
+    Note over M,S: Rencana berikutnya: robot mengambil data pasien sendiri lewat API tertutup.

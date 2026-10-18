@@ -1,0 +1,16 @@
+%% DRAF - Peta bagian aplikasi SIMRS Dummy, dibaca dari atas ke bawah.
+%% Angka = urutan alur; garis putus-putus = masih rencana (belum dipasang).
+flowchart TB
+    n1["1. Meja petugas<br/>dokter, perawat, dan meja obat"]
+    n2["2. Layar aplikasi<br/>halaman pasien, resep, pengantaran, pindai QR"]
+    n3["3. Otak di server<br/>cek izin dulu, lalu catat siapa, kapan, apa"]
+    n4[("4. Buku besar<br/>satu tempat semua catatan")]
+    n5["5. Mesin sendiri<br/>VPS milik sendiri, dijalankan pakai Docker"]
+
+    webpantau["Aplikasi pantau: papan kontrol robot (rencana)"]
+
+    n1 -->|"memakai"| n2
+    n2 -->|"tombol diklik"| n3
+    n3 -->|"menyimpan"| n4
+    n5 -.->|"menopang semua"| n2
+    webpantau -.->|"melapor dan membaca lewat pintu aman"| n3

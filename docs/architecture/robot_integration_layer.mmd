@@ -1,0 +1,17 @@
+%% DRAF - Siapa mengerjakan apa saat obat diantar robot.
+%% Aturan inti: robot tiba bukan bukti serah-terima; hanya manusia yang konfirmasi.
+flowchart TB
+    NAKES["1. Perawat / dokter<br/>mengajukan antar obat,<br/>pindai QR pasien,<br/>tekan konfirmasi serah-terima"]
+    SIMRS["2. SIMRS (buku besar)<br/>mencatat order dan data pasien,<br/>menerima semua laporan"]
+    PANTAU["3. Aplikasi pantau (papan kontrol)<br/>melihat daftar pekerjaan,<br/>menyuruh robot berangkat"]
+    ROBOT["4. Robot (kurir)<br/>membawa obat,<br/>pakai kotak tertutup bernomor"]
+
+    rule["Aturan inti: robot tiba bukan bukti serah-terima.<br/>Hanya manusia yang memindai QR yang boleh konfirmasi."]
+
+    NAKES -->|"mengajukan"| SIMRS
+    SIMRS -->|"masukan tugas"| PANTAU
+    PANTAU -->|"suruh berangkat"| ROBOT
+    ROBOT -->|"lapor tiba + nomor kotak"| PANTAU
+    PANTAU -->|"catat tiba di buku"| SIMRS
+    NAKES -->|"pindai QR lalu konfirmasi"| SIMRS
+    rule -.-> NAKES
