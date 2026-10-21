@@ -1,0 +1,14 @@
+{
+  "name": "NEVO — Autonomous Hospital Robot",
+  "short_name": "NEVO",
+  "description": "Web Monitoring Autonomous Hospital Robot",
+  "display": "standalone",
+  "start_url": "/dashboard",
+  "scope": "/",
+  "theme_color": "#FFFFFF",
+  "background_color": "#FAFAFA",
+  "icons": [
+    { "src": "/icons/nevo-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "/icons/nevo-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}

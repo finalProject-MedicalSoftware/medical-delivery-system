@@ -1,0 +1,9 @@
+node_modules/
+.next/
+target/
+.env
+.env.*
+!.env.example
+data/uploads/
+.DS_Store
+.ANTIGRAVITY_SCAFFOLD_NEVO_FULL_TEST_v2_SIMRS.md

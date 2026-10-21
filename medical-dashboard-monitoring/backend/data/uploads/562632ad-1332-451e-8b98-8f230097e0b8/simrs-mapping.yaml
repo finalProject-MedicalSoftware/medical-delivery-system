@@ -1,0 +1,73 @@
+# SALINAN CONTOH - yang live dari GET /api/v1/monitoring/mapping
+# File ini hanya contoh hasil. Website monitoring WAJIB fetch endpoint
+# mapping secara berkala agar otomatis sinkron dengan SIMRS
+# (bangsal/ruang/bed baru langsung ikut tanpa edit file ini).
+# Dibuat dari data live 2026-10-15. Jangan edit manual untuk produksi.
+version: 1
+generatedAt: "2026-10-15T04:35:00+07:00"
+source: "simrs-dummy"
+polling:
+  snapshot: "/api/v1/monitoring/snapshot?since=ISO-8601"
+  mapping: "/api/v1/monitoring/mapping"
+  deliveryStatus: "/api/v1/monitoring/delivery-status"
+  recommendedIntervalSeconds: 30
+roomCodePattern: "^[A-Z0-9-_]+$"
+statuses:
+  delivery:
+    DELIVERY_REQUESTED: { label: "Diminta", severity: info }
+    PENDING_INTEGRATION: { label: "Pending Integrasi", severity: warning }
+    MOCK_IN_TRANSIT: { label: "Mock Transit", severity: info, simulation: true }
+    MOCK_ARRIVED_AT_ROOM: { label: "Mock Tiba", severity: ok, simulation: true }
+    CANCELLED: { label: "Dibatalkan", severity: muted }
+  prescription:
+    DRAFT: { label: "Draft", severity: muted }
+    SUBMITTED: { label: "Diajukan", severity: info }
+    VERIFIED: { label: "Diverifikasi", severity: ok }
+    REJECTED: { label: "Ditolak", severity: bad }
+    PREPARING: { label: "Disiapkan", severity: warning }
+    READY_FOR_DELIVERY: { label: "Siap Kirim", severity: ok }
+    CANCELLED: { label: "Dibatalkan", severity: muted }
+wards:
+  - code: "WARD-EDELWEIS"
+    name: "Bangsal Bangsi"
+    floor: 1
+    rooms:
+      - roomCode: "R-BANGSI-001"
+        name: "Ruang Bangsi 1"
+        beds:
+          - { number: "A", occupied: false }
+  - code: "WARD-MAWAR"
+    name: "Bangsal Mawar"
+    floor: 3
+    rooms:
+      - roomCode: "R-MAWAR-201"
+        name: "Ruang Mawar 201"
+        beds:
+          []
+      - roomCode: "R-MAWAR-202"
+        name: "Ruang Mawar 202"
+        beds:
+          - { number: "A", occupied: false }
+          - { number: "B", occupied: false }
+  - code: "WARD-MELATI"
+    name: "Bangsal Melati"
+    floor: 2
+    rooms:
+      - roomCode: "R-MELATI-101"
+        name: "Ruang Melati 101"
+        beds:
+          - { number: "A", occupied: false }
+          - { number: "B", occupied: false }
+          - { number: "C", occupied: false }
+          - { number: "D", occupied: false }
+      - roomCode: "R-MELATI-102"
+        name: "Ruang Melati 102"
+        beds:
+          - { number: "A", occupied: false }
+          - { number: "B", occupied: false }
+          - { number: "C", occupied: false }
+          - { number: "D", occupied: false }
+      - roomCode: "R-MELATI-103"
+        name: "Ruang Melati 103"
+        beds:
+          []
