@@ -3,6 +3,7 @@
 import React, { useEffect, useState } from 'react';
 import { useApp } from '../components/AppShell';
 import { Settings, Shield, Server, Database, Bot, AlertTriangle, Key } from 'lucide-react';
+import { WS_PORT_LABEL, WS_URL } from '../lib/ws-config';
 
 export default function SettingsPage() {
   const { user, request } = useApp();
@@ -75,7 +76,7 @@ export default function SettingsPage() {
           <div className="bg-slate-900/60 p-3.5 rounded-xl border border-slate-800 space-y-1">
             <span className="text-[10px] text-slate-500 uppercase tracking-wider block font-bold">Backend Server</span>
             <strong className="text-white font-mono text-[11px]">Java Spring Boot 3.3.6</strong>
-            <p className="text-slate-400 text-[10px]">Port {process.env.NEXT_PUBLIC_BACKEND_WS_PORT || '8081'} · WebSocket /ws/robot</p>
+            <p className="text-slate-400 text-[10px]">Port {WS_PORT_LABEL} · WebSocket {WS_URL.replace(/^ws:\/\/[^/]+/, '')}</p>
           </div>
 
           <div className="bg-slate-900/60 p-3.5 rounded-xl border border-slate-800 space-y-1">

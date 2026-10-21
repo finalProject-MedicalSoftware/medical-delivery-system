@@ -94,7 +94,8 @@ SIMRS_ENABLED=false
 SIMRS_BASE_URL=https://simrs.example.local
 SIMRS_MONITORING_TOKEN=isi-token-di-environment-saja
 SIMRS_WRITE_ENABLED=false
-SIMRS_POLL_INTERVAL_SECONDS=30
+SIMRS_POLL_INTERVAL_MS=30000
+SIMRS_WRITE_MAX_ATTEMPTS=5
 SIMRS_CONNECT_TIMEOUT_MS=5000
 SIMRS_READ_TIMEOUT_MS=10000
 ```
@@ -104,6 +105,8 @@ Catatan keamanan:
 - `SIMRS_MONITORING_TOKEN` hanya dibaca backend dan tidak dikirim ke browser.
 - Gunakan `SIMRS_ENABLED=false` jika SIMRS belum tersedia.
 - Gunakan `SIMRS_WRITE_ENABLED=false` untuk mode read-only.
+- `SIMRS_POLL_INTERVAL_MS` mengatur jeda poll snapshot/mapping backend (default 30000 ms; dulu `SIMRS_POLL_INTERVAL_SECONDS`, diganti agar lebih fleksibel).
+- `SIMRS_WRITE_MAX_ATTEMPTS` mengatur jumlah maksimal percobaan POST status ke SIMRS (default 5, kontrak §1.1: backoff 1s/5s/30s/2m).
 - Jangan menaruh token di source code atau file frontend.
 - Jangan mengubah `SIMRS_WRITE_ENABLED` menjadi `true` tanpa persetujuan pemilik SIMRS.
 

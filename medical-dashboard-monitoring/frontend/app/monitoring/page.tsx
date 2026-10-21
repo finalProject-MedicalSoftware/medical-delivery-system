@@ -14,6 +14,7 @@ import {
   Wifi,
   Navigation,
 } from 'lucide-react';
+import { WS_PORT_LABEL, WS_URL } from '../lib/ws-config';
 
 export default function MonitoringPage() {
   const { telemetry, authHeader, request, wsConnected } = useApp();
@@ -48,9 +49,7 @@ export default function MonitoringPage() {
 
   // Listen to WebSocket events for mission console
   useEffect(() => {
-    const wsPort = process.env.NEXT_PUBLIC_BACKEND_WS_PORT || '8081';
-    const wsUrl = `ws://${window.location.hostname}:${wsPort}/ws/robot`;
-    const ws = new WebSocket(wsUrl);
+    const ws = new WebSocket(WS_URL);
 
     ws.onmessage = (e) => {
       try {
@@ -185,7 +184,7 @@ export default function MonitoringPage() {
                 <Terminal size={14} className="text-emerald-400" />
                 Live Event Console
               </h3>
-              <span className="text-[10px] font-mono text-slate-500">WebSocket /ws/robot · port {process.env.NEXT_PUBLIC_BACKEND_WS_PORT || '8081'}</span>
+              <span className="text-[10px] font-mono text-slate-500">WebSocket {WS_URL.replace(/^ws:\/\/[^/]+/, '')} · port {WS_PORT_LABEL}</span>
             </div>
 
             <div className="flex-1 overflow-y-auto font-mono text-[11px] space-y-1.5 pr-1 text-slate-300">

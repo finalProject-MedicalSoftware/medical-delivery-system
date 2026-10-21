@@ -4,6 +4,7 @@ import React, { createContext, useContext, useState, useEffect, useCallback } fr
 import { usePathname, useRouter } from 'next/navigation';
 import Sidebar from './Sidebar';
 import { Lock, RefreshCw, AlertTriangle, BatteryCharging, Battery, Radio } from 'lucide-react';
+import { WS_URL } from '../lib/ws-config';
 
 export interface RobotTelemetry {
   robotId: string;
@@ -116,9 +117,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     let reconnectTimeout: any = null;
 
     const connect = () => {
-      const wsPort = process.env.NEXT_PUBLIC_BACKEND_WS_PORT || '8081';
-      const wsUrl = `ws://${window.location.hostname}:${wsPort}/ws/robot`;
-      ws = new WebSocket(wsUrl);
+      ws = new WebSocket(WS_URL);
 
       ws.onopen = () => {
         setWsConnected(true);

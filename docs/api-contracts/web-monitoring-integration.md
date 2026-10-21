@@ -58,6 +58,14 @@ Saat `POST /api/v1/monitoring/delivery-status` gagal:
 | `409` | STOP. Bug pola key di sisi monitoring. Tampilkan `idempotencyKeyUsedFor` untuk diagnosis |
 | `401` | STOP. Token salah/rotate. Alert ke admin |
 
+**Status implementasi (2026-10-22):** kebijakan pada tabel di atas sudah diimplementasi di `medical-backend` (`SimrsClientService.sendDeliveryStatusWithRetry`):
+
+- Retryable: network error/timeout/`5xx` (plus `429`), backoff diskrit `1s, 5s, 30s, 2m`, idempotencyKey SAMA di semua percobaan, maks `SIMRS_WRITE_MAX_ATTEMPTS` percobaan (default 5).
+- Non-retryable (`422/404/409/401` dan `4xx` lain): tidak diretry; hasil dikembalikan ke pemanggil untuk ditampilkan/erekonsiliasi.
+- Push status robot (`MOCK_IN_TRANSIT` / `MOCK_ARRIVED_AT_ROOM` / `CANCELLED`) bersifat fire-and-forget di thread daemon `simrs-writer`: kegagalan write TIDAK membuat misi robot gagal; rekonsiliasi tetap lewat snapshot.
+- Detail hasil POST memuat field `attempts` (jumlah percobaan terpakai) untuk diagnosis.
+- Endpoint manual admin `POST /api/v1/integrations/simrs/delivery-status` kini mengembalikan body hasil (termasuk `httpStatus` SIMRS) alih-alih 503 untuk semua kegagalan HTTP sisi SIMRS.
+
 ## 2. Bagian WebSocket (DRAF; jangan bangun dulu)
 
 ### 2.1 Trigger untuk mulai
