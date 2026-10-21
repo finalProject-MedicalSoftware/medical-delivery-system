@@ -22,3 +22,10 @@ yarn-error.log*
 # IDE
 .vscode/
 .idea/
+
+# Sub-repo terpisah (restrukturisasi KP TIFA-style; masing-masing punya .git sendiri)
+medical-backend/
+medical-ws/
+medical-dashboard-monitoring/
+simrs-dummy/
+websocket-gateway/
