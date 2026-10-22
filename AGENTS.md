@@ -27,7 +27,7 @@ medical-delivery-system/            # repo utama (dokumentasi, kontrak & orkestr
 
 1. Data sintetis; label `[MOCK]`/`SIMULATED` via kode, bukan catatan manual.
 2. `compartmentNo` = integer, hanya di payload arrival/handover; tidak pernah di read API.
-3. QR hanya `{base}/scan/{mrn}`; serah-terima hanya manusia (tidak ada transisi otomatis ARRIVED→HANDOVER mesin).
+3. QR hanya `{base}/scan/{mrn}?t=<token>` (token = exp + HMAC-SHA256 atas `{mrn}:{exp}`), diverifikasi sebelum data pasien dibaca; serah-terima hanya manusia (tidak ada transisi otomatis ARRIVED→HANDOVER mesin).
 4. Tidak ada hardcode port/URL/token — semua via env; secret hanya di `.env`, tidak pernah dicommit.
 5. Token via header, bukan query param / URL.
 6. Kontrak menjadi sumber kebenaran; perubahan kontrak = diskusi dan tercatat, bukan diam-diam.

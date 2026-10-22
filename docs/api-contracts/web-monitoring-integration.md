@@ -42,7 +42,7 @@ Aturan yang wajib dipatuhi konsumen:
 3. `compartmentNo`: integer `>= 0`, HANYA bermakna saat lapor `MOCK_ARRIVED_AT_ROOM`. Tidak ada endpoint read yang me-return-nya.
 4. `idempotencyKey` regex `^[A-Za-z0-9._:-]{1,64}$`. Replay kombinasi sama -> `200 duplicate:true`. Kombinasi beda -> `409` + `idempotencyKeyUsedFor`.
 5. `MOCK_HANDOVER_CONFIRMED` TIDAK bisa dilempar via API (422). Serah-terima HANYA manusia login di `/scan/[mrn]`.
-6. QR wristband berisi HANYA `{base}/scan/{mrn}`. Tanpa data klinis di QR.
+6. QR wristband berisi HANYA `{base}/scan/{mrn}?t={exp}.{sig}` — URL scan + token tanda tangan HMAC, tanpa data klinis. Token diverifikasi sebelum pasien di-query.
 7. `isInfectious: true` = ALERT wajib tampil (kewaspadaan kontak/droplet/airborne).
 8. Halaman web monitoring WAJIB fetch `/api/v1/monitoring/mapping` tiap 30 detik atau saat boot.
 

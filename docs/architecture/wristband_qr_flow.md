@@ -9,12 +9,16 @@ QR menghubungkan pasien fisik dengan halaman konfirmasi di SIMRS Dummy.
 2. Halaman `/pasien/[id]/gelang` menampilkan gelang berisi nama, MRN, tgl lahir dan umur, jenis kelamin, ruang, bed, barcode Code 128, dan QR.
 3. Petugas mencetak halaman itu (tombol Cetak Gelang); hasil cetak hanya kotak gelang.
 4. Saat robot tiba di ruang, petugas yang login memindai QR pada gelang.
-5. QR terbuka ke `/scan/[mrn]`, lalu petugas menekan Konfirmasi Serah-Terima.
+5. QR terbuka ke `/scan/[mrn]?t=<token>`, lalu petugas menekan Konfirmasi Serah-Terima.
 6. SIMRS Dummy mencatat status `MOCK_HANDOVER_CONFIRMED` dan audit trail.
 
 ## Aturan isi QR
-- QR hanya berisi URL halaman scan: `{base}/scan/{mrn}`.
+- QR hanya berisi URL halaman scan + token tanda tangan: `{base}/scan/{mrn}?t={exp}.{sig}`.
+- Token = `exp` (epoch detik) + HMAC-SHA256 atas `{mrn}:{exp}`; bukan MRN mentah,
+  sehingga URL yang tersebar tidak bisa dipakai untuk menebak MRN lain.
 - QR tidak menyimpan rekam medis; data pasien diambil server setelah petugas login.
+- Token diverifikasi SEBELUM data pasien di-query. Token salah/kadaluarsa =
+  halaman "QR Tidak Valid" tanpa membocorkan apakah MRN itu ada.
 - Gelang hanya boleh dicetak untuk pasien rawat inap aktif (punya bed, belum pulang).
 
 ## Kode pada gelang (koreksi soal QR vs barcode)
@@ -28,7 +32,7 @@ QR menghubungkan pasien fisik dengan halaman konfirmasi di SIMRS Dummy.
   Code 128 membuatnya mendekati gelang asli. Di SIMRS Dummy gelang memuat
   keduanya:
   - Barcode `Code 128` berisi MRN (dengan teks MRN terbaca manusia di bawahnya).
-  - `QR` berisi URL `/scan/{mrn}` untuk alur demo pindai HP saat robot tiba.
+  - `QR` berisi URL `/scan/{mrn}?t=<token>` untuk alur demo pindai HP saat robot tiba.
 - 1D Code 128 tidak dipakai untuk demo pindai HP karena kamera HP tidak
   membuka URL dari barcode 1D; QR tetap yang menuntun pindai.
 

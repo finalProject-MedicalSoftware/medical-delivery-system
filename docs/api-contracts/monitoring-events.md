@@ -67,7 +67,7 @@ Body:
 
 - `toStatus` valid: `DELIVERY_REQUESTED, PENDING_INTEGRATION,
   MOCK_IN_TRANSIT, MOCK_ARRIVED_AT_ROOM, MOCK_HANDOVER_CONFIRMED, CANCELLED`.
-- `MOCK_HANDOVER_CONFIRMED` HANYA dari halaman scan `/scan/[mrn]` oleh
+- `MOCK_HANDOVER_CONFIRMED` HANYA dari halaman scan `/scan/[mrn]?t=<token>` oleh
   manusia yang login (server action `confirmHandoverAction`). Monitoring
   yang melempar status ini mendapat `422` (edge itu tidak ada di
   `MONITORING_TRANSITIONS`; tabel diturunkan dari
