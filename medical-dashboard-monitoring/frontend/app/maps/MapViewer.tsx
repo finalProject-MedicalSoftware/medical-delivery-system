@@ -2,6 +2,8 @@
 
 import React, { useRef, useEffect, useState, useCallback } from 'react';
 import { ZoomIn, ZoomOut, Maximize2, RotateCcw, Grid, Tag, Compass, Info, CheckCircle2 } from 'lucide-react';
+import { useApp } from '../components/AppShell';
+import { useLanguage } from '../components/LanguageProvider';
 
 export interface MapMetadata {
   id: string;
@@ -49,6 +51,8 @@ export default function MapViewer({
 }: MapViewerProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const { telemetry } = useApp();
+  const { dict } = useLanguage();
 
   const [imgElement, setImgElement] = useState<HTMLImageElement | null>(null);
   const [imgLoaded, setImgLoaded] = useState(false);
@@ -588,8 +592,8 @@ export default function MapViewer({
 
       {/* Top Right Badges */}
       <div className="absolute top-3 right-3 z-10 flex items-center gap-2">
-        <span className="bg-warning/10 text-warning border border-warning/30 text-xs px-2.5 py-1 rounded-full font-medium flex items-center gap-1 backdrop-blur-md">
-          <Compass size={13} /> Visualisasi Web [MOCK]
+        <span className={`text-xs px-2.5 py-1 rounded-full font-medium flex items-center gap-1 backdrop-blur-md border ${telemetry.simulated ? 'bg-warning/10 text-warning border-warning/30' : 'bg-success/15 text-success border-success/30'}`}>
+          <Compass size={13} /> {telemetry.simulated ? dict.common.simulated : dict.common.live}
         </span>
         {meta.active ? (
           <span className="bg-success/15 text-success border border-success/30 text-xs px-2.5 py-1 rounded-full font-semibold flex items-center gap-1 backdrop-blur-md">
