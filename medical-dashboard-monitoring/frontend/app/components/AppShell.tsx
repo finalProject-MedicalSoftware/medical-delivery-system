@@ -28,6 +28,12 @@ export interface RobotTelemetry {
   lastSeen: string;
 }
 
+export interface CommandResult {
+  commandId: string;
+  result: 'OK' | 'REJECTED';
+  reason: string;
+}
+
 interface AppContextType {
   user: { username: string; role: string } | null;
   logout: () => Promise<void>;
@@ -35,6 +41,7 @@ interface AppContextType {
   backendConnected: boolean;
   simrsStatus: string;
   wsConnected: boolean;
+  lastCommandResult: CommandResult | null;
   request: (path: string, init?: RequestInit) => Promise<any>;
 }
 
@@ -58,6 +65,7 @@ const AppContext = createContext<AppContextType>({
   backendConnected: false,
   simrsStatus: 'UNKNOWN',
   wsConnected: false,
+  lastCommandResult: null,
   request: async () => ({}),
 });
 
@@ -70,7 +78,7 @@ type Role = (typeof ROLE_ALL)[number];
 
 interface NavItem {
   href: string;
-  labelKey: 'dashboard' | 'missions' | 'tracking' | 'maps' | 'simrs' | 'users' | 'reports' | 'notifications' | 'account' | 'settings';
+  labelKey: 'dashboard' | 'missions' | 'tracking' | 'robots' | 'maps' | 'simrs' | 'users' | 'reports' | 'notifications' | 'account' | 'settings';
   icon: LucideIcon;
   roles: Role[];
 }
@@ -82,6 +90,7 @@ const NAV_SECTIONS: { sectionKey: 'sectionOps' | 'sectionSystem'; items: NavItem
       { href: '/dashboard', labelKey: 'dashboard', icon: LayoutDashboard, roles: ROLE_ALL },
       { href: '/missions', labelKey: 'missions', icon: ClipboardList, roles: ROLE_ALL },
       { href: '/tracking', labelKey: 'tracking', icon: Activity, roles: ROLE_ALL },
+      { href: '/robots', labelKey: 'robots', icon: Bot, roles: ROLE_ALL },
       { href: '/simrs', labelKey: 'simrs', icon: Database, roles: ROLE_ALL },
     ],
   },
@@ -143,6 +152,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const [backendConnected, setBackendConnected] = useState(false);
   const [simrsStatus, setSimrsStatus] = useState('UNKNOWN');
   const [wsConnected, setWsConnected] = useState(false);
+  const [lastCommandResult, setLastCommandResult] = useState<AppContextType['lastCommandResult']>(null);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const pathname = usePathname();
@@ -216,6 +226,8 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
           const msg = JSON.parse(event.data);
           if (msg.type === 'TELEMETRY' && msg.data) {
             setTelemetry(msg.data);
+          } else if (msg.type === 'ROBOT_COMMAND_RESULT' && msg.data) {
+            setLastCommandResult(msg.data);
           }
         } catch {
           // ignore
@@ -277,6 +289,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         backendConnected,
         simrsStatus,
         wsConnected,
+        lastCommandResult,
         request,
       }}
     >
