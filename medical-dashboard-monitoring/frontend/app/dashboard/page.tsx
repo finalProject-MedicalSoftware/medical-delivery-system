@@ -3,23 +3,18 @@
 import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useApp } from '../components/AppShell';
+import { useLanguage } from '../components/LanguageProvider';
+import { simrsMode } from '../lib/simrs-mode';
+import { statusPillClass, missionStatusLabel } from '../lib/mission-status';
 import {
-  Bot,
-  Activity,
-  Battery,
-  MapPin,
-  Database,
-  Navigation,
-  Clock,
-  CheckCircle2,
-  AlertTriangle,
-  Radio,
-  ArrowRight,
-  ShieldAlert,
+  Bot, Activity, Battery, BatteryCharging, MapPin, Database, Navigation,
+  Clock, CheckCircle2, Radio, ArrowRight, ShieldAlert,
 } from 'lucide-react';
 
 export default function DashboardPage() {
   const { telemetry, request } = useApp();
+  const { dict, language } = useLanguage();
+  const t = dict.dashboard;
   const [activeMap, setActiveMap] = useState<any>(null);
   const [simrsStatus, setSimrsStatus] = useState<any>(null);
   const [deliveries, setDeliveries] = useState<any[]>([]);
@@ -40,201 +35,167 @@ export default function DashboardPage() {
     return () => window.clearInterval(timer);
   }, [request]);
 
+  const greeting = (() => {
+    const h = new Date().getHours();
+    return h < 11 ? t.greetingMorning : h < 15 ? t.greetingAfternoon : t.greetingEvening;
+  })();
+
   return (
-    <div className="space-y-8">
-      {/* Welcome & System Status Bar */}
-      <div className="flex flex-wrap items-center justify-between gap-6 bg-white p-7 rounded-2xl border border-neutral-200 shadow-sm">
+    <div className="space-y-6">
+      {/* Header */}
+      <div className="glass-panel p-6 flex flex-wrap items-center justify-between gap-4">
         <div className="flex items-center gap-4">
-          <div className="w-12 h-12 rounded-2xl bg-blue-600 flex items-center justify-center text-white shadow-sm">
-            <Bot size={28} />
+          <div className="w-12 h-12 rounded-2xl bg-accent flex items-center justify-center text-white shadow-sm">
+            <Bot size={26} />
           </div>
           <div>
-            <h2 className="text-xl font-bold text-neutral-900 flex items-center gap-2">
-              NEVO Dashboard Monitoring
-              <span className="text-[10px] bg-amber-50 text-amber-800 border border-amber-200 px-2 py-1 rounded-full font-semibold tracking-wide">
-                SIMULASI WEB
-              </span>
-            </h2>
-            <p className="text-sm text-neutral-500 mt-1">
-              Sistem Pengawasan Otonom & Navigasi Distribusi Farmasi Rumah Sakit
-            </p>
+            <h2 className="text-xl font-bold txt-main">{greeting}</h2>
+            <p className="text-sm txt-sec mt-0.5">{t.subtitle}</p>
           </div>
         </div>
-
         <div className="flex items-center gap-3">
-          <Link
-            href="/control"
-            className="bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold px-4 py-2.5 rounded-lg flex items-center gap-2 transition-colors"
-          >
-            <Navigation size={15} /> Mulai Misi Baru
+          <Link href="/missions/create" className="btn-primary flex items-center gap-2">
+            <Navigation size={15} /> {t.newMission}
           </Link>
-          <Link
-            href="/monitoring"
-            className="bg-white hover:bg-neutral-50 border border-neutral-300 text-neutral-700 text-sm font-semibold px-4 py-2.5 rounded-lg flex items-center gap-2 transition-colors"
-          >
-            <Activity size={15} /> Buka Live Map
+          <Link href="/tracking" className="btn-secondary flex items-center gap-2">
+            <Activity size={15} /> {t.openTracking}
           </Link>
         </div>
       </div>
 
-      {/* KPI Cards Grid */}
+      {/* KPI Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        {/* Robot Status */}
-        <div className="bg-white border border-neutral-200 p-5 rounded-xl shadow-sm relative overflow-hidden">
-          <div className="flex items-center justify-between text-slate-400 mb-3">
-            <span className="text-xs font-medium">Status Robot</span>
-            <Radio size={16} className={telemetry.status === 'NAVIGATING' ? 'text-sky-400 animate-pulse' : 'text-slate-500'} />
+        <div className="glass-panel card-hover p-5">
+          <div className="flex items-center justify-between txt-sec mb-3">
+            <span className="text-xs font-medium">{t.robotStatus}</span>
+            <Radio size={16} className={telemetry.status === 'NAVIGATING' ? 'text-info animate-pulse' : 'txt-sec'} />
           </div>
-          <p className="text-xl font-bold text-white font-mono">{telemetry.status}</p>
-          <div className="flex items-center justify-between text-xs text-slate-400 mt-3 pt-3 border-t border-slate-800/80">
-            <span>Mode: <strong className="text-slate-200">{telemetry.mode}</strong></span>
-            <span className="text-emerald-400 font-semibold">Online (Sim)</span>
+          <p className="text-xl font-bold txt-main font-mono">{telemetry.status}</p>
+          <div className="flex items-center justify-between text-xs txt-sec mt-3 pt-3 border-t border-base">
+            <span>{dict.common.status}: <strong className="txt-main">{telemetry.mode}</strong></span>
+            <span className={`status-pill ${telemetry.simulated ? 'status-warning' : 'status-success'}`}>
+              {telemetry.simulated ? dict.common.simulated : dict.common.real}
+            </span>
           </div>
         </div>
 
-        {/* Battery & Power */}
-        <div className="bg-white border border-neutral-200 p-5 rounded-xl shadow-sm relative overflow-hidden">
-          <div className="flex items-center justify-between text-slate-400 mb-3">
-            <span className="text-xs font-medium">Kapasitas Baterai</span>
-            <Battery size={18} className="text-emerald-400" />
+        <div className="glass-panel card-hover p-5">
+          <div className="flex items-center justify-between txt-sec mb-3">
+            <span className="text-xs font-medium">{dict.header.battery}</span>
+            {telemetry.status === 'CHARGING' ? <BatteryCharging size={18} className="text-info" /> : <Battery size={18} className="text-success" />}
           </div>
-          <p className="text-xl font-bold text-white font-mono">{telemetry.battery.toFixed(1)}%</p>
-          <div className="w-full bg-slate-800 h-2 rounded-full overflow-hidden mt-3">
+          <p className="text-xl font-bold txt-main font-mono">{telemetry.battery.toFixed(1)}%</p>
+          <div className="w-full bg-elevated h-2 rounded-full overflow-hidden mt-3">
             <div
               className={`h-full rounded-full transition-all duration-500 ${
-                telemetry.battery > 50 ? 'bg-emerald-500' : telemetry.battery > 20 ? 'bg-amber-500' : 'bg-rose-500'
+                telemetry.battery > 50 ? 'bg-success' : telemetry.battery > 20 ? 'bg-warning' : 'bg-error'
               }`}
               style={{ width: `${Math.min(telemetry.battery, 100)}%` }}
             />
           </div>
         </div>
 
-        {/* Active ROS Map */}
-        <div className="bg-white border border-neutral-200 p-5 rounded-xl shadow-sm relative overflow-hidden">
-          <div className="flex items-center justify-between text-slate-400 mb-3">
-            <span className="text-xs font-medium">Peta Navigasi ROS 2</span>
-            <MapPin size={16} className="text-sky-400" />
+        <div className="glass-panel card-hover p-5">
+          <div className="flex items-center justify-between txt-sec mb-3">
+            <span className="text-xs font-medium">{t.activeMap}</span>
+            <MapPin size={16} className="text-accent" />
           </div>
-          <p className="text-sm font-bold text-white truncate">
-            {activeMap ? activeMap.file_name : 'Belum Ada Peta Aktif'}
+          <p className="text-sm font-bold txt-main truncate">
+            {activeMap ? activeMap.file_name : dict.maps.noActiveMap}
           </p>
-          <div className="flex items-center justify-between text-xs text-slate-400 mt-3 pt-3 border-t border-slate-800/80">
-            <span className="font-mono text-[11px] text-slate-300">
+          <div className="flex items-center justify-between text-xs txt-sec mt-3 pt-3 border-t border-base">
+            <span className="font-mono text-[11px]">
               {activeMap?.summary?.resolution ? `${activeMap.summary.resolution} m/px` : 'Res: -'}
             </span>
-            <span className="text-sky-400 text-[11px] font-semibold">Aktif di Web</span>
+            <Link href="/maps" className="text-accent text-[11px] font-semibold hover:underline">{dict.common.edit}</Link>
           </div>
         </div>
 
-        {/* SIMRS Integration */}
-        <div className="bg-white border border-neutral-200 p-5 rounded-xl shadow-sm relative overflow-hidden">
-          <div className="flex items-center justify-between text-slate-400 mb-3">
-            <span className="text-xs font-medium">SIMRS Dummy Publik</span>
-            <Database size={16} className="text-amber-400" />
+        <div className="glass-panel card-hover p-5">
+          <div className="flex items-center justify-between txt-sec mb-3">
+            <span className="text-xs font-medium">{dict.sidebar.simrs}</span>
+            <Database size={16} className="text-warning" />
           </div>
-          <p className="text-sm font-bold text-white truncate">
-            {simrsStatus?.mode === 'LIVE_READ_ONLY' ? 'Terhubung Live' : 'Mode Simulasi Mock'}
-          </p>
-          <div className="flex items-center justify-between text-xs text-slate-400 mt-3 pt-3 border-t border-slate-800/80">
-            <span className="text-[10px] text-slate-400 truncate max-w-[130px]" title={simrsStatus?.host}>
+          <p className="text-sm font-bold txt-main truncate">{simrsMode(simrsStatus?.mode).label}</p>
+          <div className="flex items-center justify-between text-xs txt-sec mt-3 pt-3 border-t border-base">
+            <span className="text-[10px] truncate max-w-[130px]" title={simrsStatus?.host}>
               {simrsStatus?.host || 'backend env'}
             </span>
-            <span className="text-amber-400 text-[11px] font-mono">
+            <span className="text-warning text-[11px] font-mono">
               {simrsStatus?.writeEnabled ? 'WRITE-ON' : 'READ-ONLY'}
             </span>
           </div>
         </div>
       </div>
 
-      {/* Main Grid: Active Mission & SIMRS Queue */}
+      {/* Main Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        {/* Active Mission Banner / Telemetry (7 cols) */}
         <div className="lg:col-span-7 space-y-6">
-          <div className="bg-slate-950 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-4">
-            <h3 className="text-sm font-bold text-white flex items-center justify-between">
-              <span>Status Pergerakan Robot Real-Time</span>
-              <span className="text-[11px] font-mono text-sky-400">Pose: ({telemetry.pose.x.toFixed(2)}m, {telemetry.pose.y.toFixed(2)}m)</span>
+          {/* Active mission banner */}
+          <div className="glass-panel p-6 space-y-4">
+            <h3 className="text-sm font-bold txt-main flex items-center justify-between">
+              <span>{t.robotStatus}</span>
+              <span className="text-[11px] font-mono txt-sec">
+                {dict.tracking.pose}: ({telemetry.pose.x.toFixed(2)}m, {telemetry.pose.y.toFixed(2)}m)
+              </span>
             </h3>
 
             {telemetry.status === 'NAVIGATING' ? (
-              <div className="bg-sky-950/40 border border-sky-800/80 rounded-xl p-5 space-y-3">
+              <div className="bg-accent-muted border border-base rounded-xl p-5 space-y-3">
                 <div className="flex items-center justify-between">
                   <div>
-                    <span className="text-xs text-sky-300 font-semibold flex items-center gap-2">
-                      <Navigation size={16} className="text-sky-400 animate-spin" /> Sedang Menjalankan Misi Navigasi
+                    <span className="text-xs txt-main font-semibold flex items-center gap-2">
+                      <Navigation size={16} className="text-accent animate-pulse" /> {dict.missions.statusExecuting}
                     </span>
-                    <p className="text-xs text-slate-400 mt-1 font-mono">ID Misi: {telemetry.activeMissionId}</p>
+                    <p className="text-xs txt-sec mt-1 font-mono">ID: {telemetry.activeMissionId}</p>
                   </div>
-                  <span className="text-xs font-mono font-bold text-sky-300 bg-sky-900/60 px-2.5 py-1 rounded-lg">
-                    Kecepatan: {telemetry.speed} m/s
+                  <span className="text-xs font-mono font-bold txt-main bg-card px-2.5 py-1 rounded-lg border border-base">
+                    {telemetry.speed} m/s
                   </span>
                 </div>
-
                 <div className="pt-2">
-                  <Link
-                    href="/monitoring"
-                    className="text-xs text-sky-400 hover:text-sky-300 font-semibold flex items-center gap-1.5"
-                  >
-                    Buka Kanvas Monitoring Live <ArrowRight size={14} />
+                  <Link href="/tracking" className="text-xs text-accent hover:underline font-semibold flex items-center gap-1.5">
+                    {t.openTracking} <ArrowRight size={14} />
                   </Link>
                 </div>
               </div>
             ) : (
-              <div className="bg-slate-900/60 border border-slate-800/80 rounded-xl p-6 text-center text-slate-400 space-y-2">
-                <CheckCircle2 size={32} className="mx-auto text-emerald-400/80" />
-                <p className="text-sm font-semibold text-slate-200">Robot Siap Menerima Misi Baru</p>
-                <p className="text-xs text-slate-400 max-w-md mx-auto">
-                  Pilih ruangan atau titik waypoint pada menu Kendali Navigasi untuk mengirimkan misi pengantaran obat.
-                </p>
+              <div className="bg-elevated border border-base rounded-xl p-6 text-center txt-sec space-y-2">
+                <CheckCircle2 size={32} className="mx-auto text-success" />
+                <p className="text-sm font-semibold txt-main">{dict.tracking.status}: {telemetry.status}</p>
+                <p className="text-xs max-w-md mx-auto">{t.subtitle}</p>
               </div>
             )}
           </div>
 
-          {/* Recent Mission History */}
-          <div className="bg-slate-950 border border-slate-800 rounded-2xl p-6 shadow-xl">
-            <div className="flex items-center justify-between mb-4 pb-3 border-b border-slate-800">
-              <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                <Clock size={16} className="text-sky-400" />
-                Riwayat Aktivitas Misi Terakhir
+          {/* Recent missions */}
+          <div className="glass-panel p-6">
+            <div className="flex items-center justify-between mb-4 pb-3 border-b border-base">
+              <h3 className="text-sm font-bold txt-main flex items-center gap-2">
+                <Clock size={16} className="text-accent" /> {t.recentMissions}
               </h3>
-              <Link href="/missions" className="text-xs text-sky-400 hover:text-sky-300 font-medium">
-                Lihat Semua
-              </Link>
+              <Link href="/missions" className="text-xs text-accent hover:underline font-medium">{t.viewAll}</Link>
             </div>
-
             <div className="space-y-2.5 text-xs">
               {recentMissions.length === 0 ? (
-                <p className="text-slate-500 italic py-3 text-center">Belum ada riwayat misi.</p>
+                <p className="txt-sec italic py-3 text-center">{t.noMissions}</p>
               ) : (
                 recentMissions.map((m) => (
-                  <div
-                    key={m.id}
-                    className="p-3 bg-slate-900/40 border border-slate-800 rounded-xl flex items-center justify-between"
-                  >
+                  <div key={m.id} className="p-3 bg-elevated border border-base rounded-xl flex items-center justify-between">
                     <div>
-                      <div className="font-semibold text-slate-200 flex items-center gap-2">
-                        <span>{m.waypointName || m.roomCode || 'Waypoint'}</span>
+                      <div className="font-semibold txt-main flex items-center gap-2">
+                        <span>{m.waypointName || m.roomCode || dict.maps.waypoints}</span>
                         {m.requestCode && (
-                          <span className="text-[10px] bg-slate-800 text-slate-400 px-1.5 py-0.5 rounded font-mono">
+                          <span className="text-[10px] bg-card txt-sec px-1.5 py-0.5 rounded font-mono border border-base">
                             {m.requestCode}
                           </span>
                         )}
                       </div>
-                      <p className="text-[10px] text-slate-500 mt-0.5">
-                        {new Date(m.createdAt).toLocaleTimeString('id-ID')} · oleh {m.createdBy}
+                      <p className="text-[10px] txt-sec mt-0.5">
+                        {new Date(m.createdAt).toLocaleTimeString(language === 'id' ? 'id-ID' : 'en-US')} · {m.createdBy}
                       </p>
                     </div>
-
-                    <span
-                      className={`text-[10px] font-mono px-2 py-0.5 rounded font-bold ${
-                        m.status === 'SUCCEEDED'
-                          ? 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/30'
-                          : m.status === 'EXECUTING'
-                          ? 'bg-sky-500/15 text-sky-300 border border-sky-500/30 animate-pulse'
-                          : 'bg-slate-800 text-slate-400'
-                      }`}
-                    >
-                      {m.status}
+                    <span className={`status-pill ${statusPillClass(m.status)}`}>{missionStatusLabel(m.status, dict)}
                     </span>
                   </div>
                 ))
@@ -243,57 +204,44 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        {/* SIMRS Deliveries & Infectious Alerts (5 cols) */}
+        {/* SIMRS deliveries */}
         <div className="lg:col-span-5 space-y-6">
-          <div className="bg-slate-950 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-4">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-800">
-              <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                <Database size={16} className="text-amber-400" />
-                Antrean Tugas Pengantaran Obat (SIMRS)
+          <div className="glass-panel p-6 space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-base">
+              <h3 className="text-sm font-bold txt-main flex items-center gap-2">
+                <Database size={16} className="text-warning" /> {t.simrsDeliveries}
               </h3>
-              <Link href="/simrs" className="text-xs text-amber-400 hover:text-amber-300 font-medium">
-                Kelola
-              </Link>
+              <Link href="/simrs" className="text-xs text-accent hover:underline font-medium">{dict.common.refresh}</Link>
             </div>
-
             <div className="space-y-3 text-xs">
               {deliveries.length === 0 ? (
-                <p className="text-slate-500 italic py-4 text-center">Tidak ada antrean pengantaran aktif.</p>
+                <p className="txt-sec italic py-4 text-center">{t.pendingDeliveries}</p>
               ) : (
                 deliveries.map((del) => (
-                  <div
-                    key={del.requestCode}
-                    className="p-3.5 bg-slate-900/60 border border-slate-800 rounded-xl space-y-2 hover:border-slate-700 transition-colors"
-                  >
+                  <div key={del.requestCode} className="p-3.5 bg-elevated border border-base rounded-xl space-y-2 card-hover">
                     <div className="flex items-center justify-between">
-                      <span className="font-bold text-slate-200">{del.roomName || del.roomCode}</span>
-                      <span className="text-[10px] font-mono bg-slate-800 text-slate-300 px-2 py-0.5 rounded">
+                      <span className="font-bold txt-main">{del.roomName || del.roomCode}</span>
+                      <span className="text-[10px] font-mono bg-card txt-sec px-2 py-0.5 rounded border border-base">
                         {del.requestCode}
                       </span>
                     </div>
-
-                    <p className="text-slate-400 text-[11px]">
-                      Pasien: <strong className="text-slate-300">{del.patientName}</strong> ({del.mrn})
+                    <p className="txt-sec text-[11px]">
+                      {t.patient}: <strong className="txt-main">{del.patientName}</strong> ({del.mrn})
                     </p>
-                    <p className="text-slate-500 text-[11px] truncate">Obat: {del.medicine}</p>
-
-                    {/* Infection Warning Alert */}
+                    <p className="txt-sec text-[11px] truncate">{t.medicine}: {del.medicine}</p>
                     {del.isInfectious && (
-                      <div className="bg-rose-500/10 border border-rose-500/30 text-rose-300 text-[11px] p-2 rounded-lg flex items-center gap-1.5 font-medium">
-                        <ShieldAlert size={14} className="text-rose-400 shrink-0" />
-                        <span>Pasien Penyakit Menular / Isolasi (Protokol APD)</span>
+                      <div className="bg-error/10 border border-error/30 text-error text-[11px] p-2 rounded-lg flex items-center gap-1.5 font-medium">
+                        <ShieldAlert size={14} className="shrink-0" />
+                        <span>{t.infectious} — APD</span>
                       </div>
                     )}
-
                     <div className="pt-1 flex items-center justify-between">
-                      <span className="text-[10px] font-mono bg-sky-500/15 text-sky-300 px-2 py-0.5 rounded font-semibold">
-                        {del.status}
-                      </span>
+                      <span className="status-pill status-info">{del.status}</span>
                       <Link
-                        href={`/control?room=${del.roomCode}&req=${del.requestCode}`}
-                        className="text-[11px] bg-slate-800 hover:bg-slate-700 text-sky-400 px-2.5 py-1 rounded-lg transition-colors flex items-center gap-1"
+                        href={`/missions/create?room=${del.roomCode}&req=${del.requestCode}`}
+                        className="text-[11px] bg-card hover:bg-card border border-base text-accent px-2.5 py-1 rounded-lg transition-colors flex items-center gap-1"
                       >
-                        Tugaskan Robot <ArrowRight size={12} />
+                        {t.newMission} <ArrowRight size={12} />
                       </Link>
                     </div>
                   </div>

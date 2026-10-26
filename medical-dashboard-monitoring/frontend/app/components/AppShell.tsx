@@ -1,10 +1,19 @@
 'use client';
 
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import Sidebar from './Sidebar';
-import { Lock, RefreshCw, AlertTriangle, BatteryCharging, Battery, Radio } from 'lucide-react';
+import {
+  Bot, LayoutDashboard, Activity, ClipboardList, Database,
+  Map as MapIcon, Settings, ChevronLeft, ChevronRight, Menu,
+  Radio, Battery, BatteryCharging, LucideIcon,
+  Users as UsersIcon, FileText, Bell, UserCircle,
+} from 'lucide-react';
 import { WS_URL } from '../lib/ws-config';
+import { csrfHeaders } from '../lib/csrf';
+import { useLanguage } from './LanguageProvider';
+import LanguageSwitcher from './LanguageSwitcher';
+import UserDropdown from './UserDropdown';
 
 export interface RobotTelemetry {
   robotId: string;
@@ -20,9 +29,8 @@ export interface RobotTelemetry {
 }
 
 interface AppContextType {
-  user: { username: string; role: 'operator' | 'admin' } | null;
+  user: { username: string; role: string } | null;
   logout: () => Promise<void>;
-  authHeader: string;
   telemetry: RobotTelemetry;
   backendConnected: boolean;
   simrsStatus: string;
@@ -46,7 +54,6 @@ const defaultTelemetry: RobotTelemetry = {
 const AppContext = createContext<AppContextType>({
   user: null,
   logout: async () => {},
-  authHeader: '',
   telemetry: defaultTelemetry,
   backendConnected: false,
   simrsStatus: 'UNKNOWN',
@@ -56,6 +63,79 @@ const AppContext = createContext<AppContextType>({
 
 export const useApp = () => useContext(AppContext);
 
+/* ------------------------------------------------------------ Sidebar */
+
+const ROLE_ALL = ['ADMIN', 'FARMASI', 'OPERATOR'];
+type Role = (typeof ROLE_ALL)[number];
+
+interface NavItem {
+  href: string;
+  labelKey: 'dashboard' | 'missions' | 'tracking' | 'maps' | 'simrs' | 'users' | 'reports' | 'notifications' | 'account' | 'settings';
+  icon: LucideIcon;
+  roles: Role[];
+}
+
+const NAV_SECTIONS: { sectionKey: 'sectionOps' | 'sectionSystem'; items: NavItem[] }[] = [
+  {
+    sectionKey: 'sectionOps',
+    items: [
+      { href: '/dashboard', labelKey: 'dashboard', icon: LayoutDashboard, roles: ROLE_ALL },
+      { href: '/missions', labelKey: 'missions', icon: ClipboardList, roles: ROLE_ALL },
+      { href: '/tracking', labelKey: 'tracking', icon: Activity, roles: ROLE_ALL },
+      { href: '/simrs', labelKey: 'simrs', icon: Database, roles: ROLE_ALL },
+    ],
+  },
+  {
+    sectionKey: 'sectionSystem',
+    items: [
+      { href: '/maps', labelKey: 'maps', icon: MapIcon, roles: ['ADMIN'] },
+      { href: '/users', labelKey: 'users', icon: UsersIcon, roles: ['ADMIN'] },
+      { href: '/reports', labelKey: 'reports', icon: FileText, roles: ROLE_ALL },
+      { href: '/notifications', labelKey: 'notifications', icon: Bell, roles: ROLE_ALL },
+      { href: '/account', labelKey: 'account', icon: UserCircle, roles: ROLE_ALL },
+      { href: '/settings', labelKey: 'settings', icon: Settings, roles: ['ADMIN'] },
+    ],
+  },
+];
+
+function SidebarLink({
+  href, label, icon: Icon, collapsed, active, onClick,
+}: {
+  href: string; label: string; icon: LucideIcon; collapsed: boolean; active: boolean; onClick?: () => void;
+}) {
+  return (
+    <Link
+      href={href}
+      onClick={onClick}
+      title={collapsed ? label : undefined}
+      className={`relative flex items-center rounded-xl transition-all duration-200 shrink-0 ${
+        collapsed ? 'w-12 h-12 justify-center mx-auto' : 'gap-3 px-3 py-2.5'
+      } ${
+        active
+          ? 'bg-white text-[#0a0a0a] font-semibold shadow-sm'
+          : 'text-neutral-400 hover:bg-white/5 hover:text-white'
+      }`}
+    >
+      {active && !collapsed && (
+        <span className="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-7 bg-accent rounded-l-full" />
+      )}
+      <Icon size={20} className="shrink-0" />
+      {!collapsed && <span className="text-sm truncate">{label}</span>}
+    </Link>
+  );
+}
+
+function StatusChip({ label, ok, text }: { label: string; ok: boolean; text?: string }) {
+  return (
+    <span className={`status-pill flex items-center gap-1.5 ${ok ? 'status-success' : 'status-danger'}`}>
+      <span className={`w-1.5 h-1.5 rounded-full ${ok ? 'bg-success' : 'bg-error'}`} />
+      {label}{text ? ` · ${text}` : ''}
+    </span>
+  );
+}
+
+/* ------------------------------------------------------------ Shell */
+
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<AppContextType['user']>(null);
   const [authChecked, setAuthChecked] = useState(false);
@@ -63,12 +143,15 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const [backendConnected, setBackendConnected] = useState(false);
   const [simrsStatus, setSimrsStatus] = useState('UNKNOWN');
   const [wsConnected, setWsConnected] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const pathname = usePathname();
   const router = useRouter();
-  const authHeader = '';
+  const { dict } = useLanguage();
 
   const request = useCallback(async (path: string, init: RequestInit = {}) => {
     const headers = new Headers(init.headers);
+    for (const [key, value] of Object.entries(csrfHeaders())) headers.set(key, value);
     const res = await fetch(`/api/proxy/${path}`, { ...init, headers, credentials: 'include', cache: 'no-store' });
     const ct = res.headers.get('content-type') || '';
     const data = ct.includes('json') ? await res.json() : await res.text();
@@ -92,7 +175,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   }, [authChecked, pathname, user, router]);
 
   const logout = async () => {
-    await fetch('/api/proxy/auth/logout', { method: 'POST', credentials: 'include' });
+    await fetch('/api/proxy/auth/logout', { method: 'POST', credentials: 'include', headers: csrfHeaders() });
     setUser(null);
     router.replace('/login');
   };
@@ -158,15 +241,38 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     };
   }, []);
 
+  // Tutup drawer mobile saat pindah rute
+  useEffect(() => {
+    setIsMobileMenuOpen(false);
+  }, [pathname]);
+
+  // Restore collapse state
+  useEffect(() => {
+    const saved = localStorage.getItem('nevo_sidebar_collapsed');
+    if (saved === 'true') setSidebarCollapsed(true);
+  }, []);
+
+  useEffect(() => {
+    localStorage.setItem('nevo_sidebar_collapsed', String(sidebarCollapsed));
+  }, [sidebarCollapsed]);
+
   if (pathname === '/login') return <>{children}</>;
-  if (!authChecked || !user) return <div className="min-h-screen bg-slate-900" />;
+  if (!authChecked || !user) {
+    return (
+      <div className="min-h-screen bg-page flex items-center justify-center">
+        <div className="w-12 h-12 skeleton rounded-xl" />
+      </div>
+    );
+  }
+
+  const role = (user.role || '').toUpperCase() as Role;
+  const simrsOk = simrsStatus !== 'UNKNOWN' && simrsStatus !== 'BACKEND_OFFLINE';
 
   return (
     <AppContext.Provider
       value={{
         user,
         logout,
-        authHeader,
         telemetry,
         backendConnected,
         simrsStatus,
@@ -174,51 +280,135 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         request,
       }}
     >
-      <div className="flex h-screen bg-neutral-50 text-neutral-900 overflow-hidden font-sans">
-        <Sidebar wsConnected={wsConnected} robotStatus={telemetry.status} backendConnected={backendConnected} simrsStatus={simrsStatus} />
+      <div className="flex h-screen bg-page text-txt-main overflow-hidden font-sans">
+        {/* Mobile overlay */}
+        {isMobileMenuOpen && (
+          <div
+            className="fixed inset-0 bg-black/50 z-40 md:hidden"
+            onClick={() => setIsMobileMenuOpen(false)}
+          />
+        )}
+
+        <aside
+          className={`fixed md:relative z-50 h-full bg-[#121212] flex flex-col shrink-0 sidebar-transition
+            ${sidebarCollapsed ? 'w-64 md:w-20' : 'w-64'}
+            ${isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}`}
+        >
+          {/* Logo */}
+          <div className={`px-4 py-5 border-b border-white/10 flex items-center ${sidebarCollapsed ? 'md:justify-center' : 'gap-3'}`}>
+            <div className="w-10 h-10 rounded-xl bg-accent flex items-center justify-center text-white shadow-sm shrink-0">
+              <Bot size={21} />
+            </div>
+            {!sidebarCollapsed && (
+              <div className="min-w-0 sidebar-copy">
+                <h1 className="font-bold text-sm text-white tracking-tight flex items-center gap-2">
+                  NEVO
+                  <span className="text-[10px] text-neutral-300 bg-white/10 border border-white/20 px-1.5 py-0.5 rounded-md font-mono">v1.0</span>
+                </h1>
+                <p className="text-[11px] text-neutral-500 mt-0.5 truncate">{dict.header.product}</p>
+              </div>
+            )}
+          </div>
+
+          {/* Nav */}
+          <nav className="flex-1 overflow-y-auto p-3 space-y-1.5">
+            {NAV_SECTIONS.map((section) => {
+              const items = section.items.filter((it) => it.roles.includes(role));
+              if (!items.length) return null;
+              return (
+                <div key={section.sectionKey}>
+                  {sidebarCollapsed ? (
+                    <div className="h-px bg-white/10 my-3 mx-2" />
+                  ) : (
+                    <p className="px-3 mb-1.5 mt-4 first:mt-0 text-[10px] font-mono font-bold tracking-widest text-neutral-600 uppercase">
+                      {dict.sidebar[section.sectionKey]}
+                    </p>
+                  )}
+                  <div className="space-y-1.5">
+                    {items.map((it) => (
+                      <SidebarLink
+                        key={it.href}
+                        href={it.href}
+                        label={dict.sidebar[it.labelKey]}
+                        icon={it.icon}
+                        collapsed={sidebarCollapsed}
+                        active={pathname === it.href}
+                        onClick={() => setIsMobileMenuOpen(false)}
+                      />
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+          </nav>
+
+          {/* Collapse toggle (desktop) */}
+          <button
+            type="button"
+            onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
+            title={sidebarCollapsed ? dict.sidebar.expand : dict.sidebar.collapse}
+            className="hidden md:flex items-center gap-3 px-3 py-3 mx-3 mb-3 rounded-xl text-neutral-400 hover:bg-white/5 hover:text-white transition-colors"
+          >
+            {sidebarCollapsed ? <ChevronRight size={20} /> : <ChevronLeft size={20} />}
+            {!sidebarCollapsed && <span className="text-sm">{dict.sidebar.expand}</span>}
+          </button>
+        </aside>
 
         <div className="flex-1 flex flex-col min-w-0 overflow-y-auto">
-          {/* Top Header */}
-          <header className="h-16 bg-white border-b border-neutral-200 px-5 md:px-8 flex items-center justify-between shrink-0 sticky top-0 z-20">
-            <div className="flex items-center gap-3">
-              <span className="text-xs bg-amber-500/10 text-amber-400 border border-amber-500/30 px-2.5 py-1 rounded-full font-medium flex items-center gap-1.5">
-                <AlertTriangle size={13} /> Mode Simulasi Web · Perangkat Fisik Belum Tersambung
+          {/* Header */}
+          <header className="h-16 bg-card/80 backdrop-blur-md border-b border-border-base px-4 md:px-6 flex items-center justify-between shrink-0 sticky top-0 z-30">
+            <div className="flex items-center gap-3 min-w-0">
+              <button
+                type="button"
+                onClick={() => setIsMobileMenuOpen(true)}
+                className="md:hidden p-2 rounded-lg text-txt-sec hover:bg-bg-elevated transition-colors"
+                aria-label={dict.header.menu}
+              >
+                <Menu size={20} />
+              </button>
+
+              <span className={`status-pill flex items-center gap-1.5 shrink-0 ${telemetry.simulated ? 'status-warning' : 'status-success'}`}>
+                <span className={`w-1.5 h-1.5 rounded-full animate-pulse ${telemetry.simulated ? 'bg-warning' : 'bg-success'}`} />
+                {telemetry.simulated ? dict.common.simulated : dict.common.live}
               </span>
+              <span className="hidden sm:block text-xs text-txt-sec truncate">{dict.header.monitoring}</span>
             </div>
 
-            {/* Right Header Statuses */}
-            <div className="flex items-center gap-4">
+            <div className="flex items-center gap-2 md:gap-3">
+              <div className="hidden lg:flex items-center gap-2">
+                <StatusChip label={dict.header.ws} ok={wsConnected} />
+                <StatusChip label={dict.header.backend} ok={backendConnected} />
+                <StatusChip label={dict.header.simrs} ok={simrsOk} text={simrsOk ? simrsStatus : undefined} />
+              </div>
+
               {/* Telemetry quick view */}
-              <div className="hidden md:flex items-center gap-3 text-xs text-slate-300 bg-slate-900 px-3 py-1 rounded-xl border border-slate-800">
+              <div className="hidden md:flex items-center gap-3 text-xs text-txt-sec bg-bg-elevated px-3 py-1.5 rounded-xl border border-border-base">
                 <span className="flex items-center gap-1">
-                  <Radio size={14} className={telemetry.status === 'NAVIGATING' ? 'text-sky-400 animate-pulse' : 'text-slate-400'} />
-                  <strong className="font-mono text-sky-300">{telemetry.status}</strong>
+                  <Radio size={14} className={telemetry.status === 'NAVIGATING' ? 'text-info animate-pulse' : 'text-txt-sec'} />
+                  <strong className="font-mono text-txt-main">{telemetry.status}</strong>
                 </span>
-                <span className="text-slate-600">|</span>
+                <span className="text-border-base">|</span>
                 <span className="flex items-center gap-1">
                   {telemetry.battery > 20 ? (
-                    <Battery size={15} className="text-emerald-400" />
+                    <Battery size={15} className="text-success" />
                   ) : (
-                    <BatteryCharging size={15} className="text-rose-400" />
+                    <BatteryCharging size={15} className="text-error" />
                   )}
-                  <strong className="font-mono">{telemetry.battery.toFixed(1)}%</strong>
+                  <strong className="font-mono text-txt-main">{telemetry.battery.toFixed(1)}%</strong>
                 </span>
-                <span className="text-slate-600">|</span>
-                <span className="font-mono text-[11px] text-slate-400">
+                <span className="text-border-base">|</span>
+                <span className="font-mono text-[11px] text-txt-sec">
                   ({telemetry.pose.x.toFixed(2)}m, {telemetry.pose.y.toFixed(2)}m)
                 </span>
               </div>
 
-              <div className="flex items-center gap-2 bg-slate-900 border border-slate-800 rounded-xl px-2.5 py-1">
-                <Lock size={13} className="text-slate-400" />
-                <span className="text-xs text-slate-300">{user.username} · {user.role === 'admin' ? 'Administrator' : 'Operator'}</span>
-                <button onClick={logout} className="text-xs text-rose-300 hover:text-rose-200 ml-2">Logout</button>
-              </div>
+              <LanguageSwitcher />
+              <UserDropdown username={user.username} role={user.role} onLogoutClick={logout} />
             </div>
           </header>
 
           {/* Main Content Area */}
-          <main className="flex-1 bg-neutral-50 overflow-y-auto">{children}</main>
+          <main className="flex-1 overflow-y-auto">{children}</main>
         </div>
       </div>
     </AppContext.Provider>

@@ -11,7 +11,7 @@ export default function Home() {
   }, [router]);
 
   return (
-    <div className="flex h-full items-center justify-center p-8 text-slate-400 text-xs">
+    <div className="flex h-full items-center justify-center p-8 txt-sec text-xs">
       Mengarahkan ke Dashboard NEVO...
     </div>
   );

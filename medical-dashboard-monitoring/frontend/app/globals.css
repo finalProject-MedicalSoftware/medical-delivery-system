@@ -1,23 +1,251 @@
 @import "tailwindcss";
-:root{color-scheme:light;--nevo-white:#FFFFFF;--nevo-canvas:#FAFAFA;--nevo-subtle:#F5F5F5;--nevo-line:#E5E5E5;--nevo-line-strong:#D4D4D4;--nevo-muted:#737373;--nevo-ink-soft:#525252;--nevo-ink:#171717;--nevo-black:#0A0A0A;--nevo-blue:#2563EB;--nevo-blue-hover:#1D4ED8;--nevo-blue-soft:#DBEAFE;--nevo-teal:#0891B2;--nevo-success:#15803D;--nevo-warning:#B45309;--nevo-danger:#DC2626}*{box-sizing:border-box}body{background:var(--nevo-canvas);color:var(--nevo-ink);font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}input,button{font:inherit}button:disabled{opacity:.5;cursor:not-allowed}
 
-/* NEVO light grayscale system. Existing utility classes are remapped here so
-   every route receives the same theme without changing the data flows. */
-.bg-slate-950{background-color:#fff!important}.bg-slate-900{background-color:#fafafa!important}.bg-slate-800{background-color:#f5f5f5!important}.bg-slate-700{background-color:#e5e5e5!important}
-.bg-slate-950\/80,.bg-slate-950\/90{background-color:rgba(255,255,255,.94)!important}.bg-slate-900\/70,.bg-slate-900\/60,.bg-slate-900\/40{background-color:rgba(245,245,245,.8)!important}
-.border-slate-800,.border-slate-800\/80{border-color:#e5e5e5!important}.border-slate-700{border-color:#d4d4d4!important}
-.text-white{color:#171717!important}.text-slate-100,.text-slate-200{color:#262626!important}.text-slate-300{color:#404040!important}.text-slate-400{color:#737373!important}.text-slate-500{color:#737373!important}.text-slate-600{color:#a3a3a3!important}
-.hover\:bg-slate-900:hover{background-color:#f5f5f5!important}.hover\:bg-slate-800:hover{background-color:#e5e5e5!important}.hover\:text-slate-200:hover{color:#171717!important}
-.shadow-xl,.shadow-2xl{box-shadow:0 12px 30px rgba(23,23,23,.08)!important}
-.nevo-sidebar{background:#fff!important;border-color:#e5e5e5!important}.nevo-sidebar .bg-slate-900\/70{background:#f5f5f5!important}.nevo-sidebar .border-t{border-color:#e5e5e5!important}
-.nevo-sidebar a{min-height:42px}.nevo-sidebar a:focus-visible,button:focus-visible,input:focus-visible,select:focus-visible{outline:3px solid #bfdbfe;outline-offset:2px}.nevo-sidebar a.bg-blue-50{background:#dbeafe!important;color:#1d4ed8!important}.nevo-sidebar a:hover{background:#f5f5f5!important;color:#171717!important}
-main>div{max-width:1280px!important;margin:0 auto!important;padding:2rem clamp(1rem,3vw,2.5rem)!important}main>div>div.bg-slate-950{background:#fff!important;border-color:#e5e5e5!important;box-shadow:0 1px 2px rgba(23,23,23,.04)!important}main>div>div.bg-slate-950 h2{letter-spacing:-.02em}main>div h2{font-size:clamp(1.25rem,2vw,1.65rem)!important}main>div h3{letter-spacing:-.01em}main table thead{background:#fafafa!important}main table th{font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:#737373!important;font-weight:700}main table td{font-size:13px}main input,main select{background:#fff!important;border-color:#d4d4d4!important;color:#262626!important}main input::placeholder{color:#a3a3a3}
-.status-pill{border-radius:999px;padding:.2rem .5rem;font:600 10px ui-monospace,SFMono-Regular,monospace;letter-spacing:.02em}.status-success{background:#f0fdf4;color:#15803d}.status-warning{background:#fffbeb;color:#b45309}.status-danger{background:#fef2f2;color:#dc2626}
-/* Reference palette: accents are intentionally restrained so grayscale remains dominant. */
-[class~="bg-blue-600"],[class~="bg-sky-600"],[class~="bg-gradient-to-r"],[class~="bg-gradient-to-tr"]{background:#262626!important;background-image:none!important}
-[class~="hover:bg-blue-700"]:hover,[class~="hover:bg-sky-500"]:hover,[class~="hover:bg-blue-500"]:hover{background:#0A0A0A!important}
-[class~="text-blue-600"],[class~="text-blue-700"],[class~="text-sky-300"],[class~="text-sky-400"],[class~="text-cyan-400"]{color:#404040!important}
-[class~="border-blue-100"],[class~="border-sky-500\/30"],[class~="border-sky-500\/40"],[class~="border-sky-800"]{border-color:#D4D4D4!important}
-[class~="bg-blue-50"],[class~="bg-sky-500\/15"],[class~="bg-sky-500\/20"],[class~="bg-sky-950\/40"],[class~="bg-sky-950\/60"],[class~="bg-sky-950\/80"]{background:#F5F5F5!important}
-.nevo-sidebar a.bg-blue-50{background:#E5E5E5!important;color:#171717!important}.nevo-sidebar .bg-blue-600{background:#171717!important}.nevo-sidebar .text-blue-700{color:#171717!important}.nevo-sidebar .text-blue-300{color:#D4D4D4!important}
-@media (max-width:767px){.nevo-sidebar{width:4.5rem!important}.nevo-sidebar .sidebar-copy,.nevo-sidebar .sidebar-label,.nevo-sidebar .border-t>div:last-child{display:none}.nevo-sidebar nav a{justify-content:center;padding-left:.7rem;padding-right:.7rem}.nevo-sidebar nav a svg{margin:0}.nevo-sidebar .px-5{padding-left:.75rem;padding-right:.75rem}.nevo-sidebar .p-4{padding:.65rem}.nevo-sidebar .bg-slate-900\/70{padding:.55rem}.nevo-sidebar .bg-slate-900\/70>div{justify-content:center}main>div{padding:1rem!important}header{padding-left:1rem!important;padding-right:1rem!important}.nevo-sidebar .status-pill{font-size:0;width:8px;height:8px;padding:0}.nevo-sidebar .status-success{background:#16a34a}.nevo-sidebar .status-warning{background:#d97706}.nevo-sidebar .status-danger{background:#dc2626}}
+/* ============================================================
+   NEVO Design System — light page + forced dark sidebar.
+   Struktur mengikuti KP TIFA: token di :root, dipetakan ke
+   utility Tailwind v4 lewat @theme inline.
+   ============================================================ */
+
+:root {
+  color-scheme: light;
+
+  /* Surfaces */
+  --bg-page:        #F8FAFB;
+  --bg-sidebar:     #121212;   /* sidebar selalu gelap */
+  --bg-card:        #FFFFFF;
+  --bg-elevated:    #F1F5F9;
+  --bg-input:       #F1F5F9;
+
+  /* Text */
+  --text-main:      #0F172A;
+  --text-secondary: #64748B;
+  --text-accent:    #008B8B;
+
+  /* Borders & accent */
+  --border-color:     #E2E8F0;
+  --border-highlight: #008B8B;
+  --primary-glow:     rgba(0, 139, 139, 0.12);
+  --accent:           #008B8B;
+  --accent-hover:     #006D6D;
+  --accent-muted:     rgba(0, 139, 139, 0.10);
+
+  /* Status colors */
+  --color-success: #10B981;
+  --color-warning: #F59E0B;
+  --color-error:   #EF4444;
+  --color-offline: #64748B;
+  --color-info:    #3B82F6;
+
+  --font-sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+@theme inline {
+  --color-background: var(--bg-page);
+  --color-foreground: var(--text-main);
+
+  --color-page:     var(--bg-page);
+  --color-sidebar:  var(--bg-sidebar);
+  --color-card:     var(--bg-card);
+  --color-elevated: var(--bg-elevated);
+  --color-input:    var(--bg-input);
+
+  --color-txt-main:   var(--text-main);
+  --color-txt-sec:    var(--text-secondary);
+  --color-txt-accent: var(--text-accent);
+
+  --color-border-base:      var(--border-color);
+  --color-border-highlight: var(--border-highlight);
+
+  --color-accent:       var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-accent-muted: var(--accent-muted);
+
+  --color-success: var(--color-success);
+  --color-warning: var(--color-warning);
+  --color-error:   var(--color-error);
+  --color-offline: var(--color-offline);
+  --color-info:    var(--color-info);
+
+  --font-sans: var(--font-sans);
+  --font-mono: var(--font-mono);
+}
+
+* { box-sizing: border-box; }
+
+body {
+  background: var(--bg-page);
+  color: var(--text-main);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+input, button { font: inherit; }
+button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+:focus-visible {
+  outline: 3px solid var(--accent-muted);
+  outline-offset: 2px;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: var(--bg-page); }
+::-webkit-scrollbar-thumb { background: var(--text-secondary); border-radius: 4px; opacity: 0.2; }
+::-webkit-scrollbar-thumb:hover { background: var(--text-accent); }
+
+/* ============================================================
+   PANELS & CARDS
+   ============================================================ */
+.glass-panel {
+  background: var(--bg-card);
+  border-radius: 16px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04);
+  border: 1px solid var(--border-color);
+  transition: background-color 0.3s ease, border-color 0.3s ease, box-shadow 0.3s ease;
+  transform: translateZ(0);
+}
+
+.glass-panel-active {
+  background: var(--bg-card);
+  border: 1px solid var(--accent);
+  box-shadow: 0 0 0 1px var(--accent), 0 4px 24px var(--accent-muted);
+}
+
+.card-hover { transition: border-color 0.2s ease, box-shadow 0.2s ease; }
+.card-hover:hover { border-color: var(--accent); box-shadow: 0 0 12px var(--accent-muted); }
+
+.hover-lift { transition: transform 0.3s ease, box-shadow 0.3s ease; transform: translateZ(0); }
+.hover-lift:hover { transform: translate3d(0, -4px, 0); box-shadow: 0 10px 30px -10px var(--primary-glow); }
+
+/* ============================================================
+   FORM CONTROLS
+   ============================================================ */
+.input-field {
+  background: var(--bg-input);
+  border: 1.5px solid var(--border-color);
+  border-radius: 10px;
+  padding: 10px 14px;
+  font-size: 0.875rem;
+  color: var(--text-main);
+  width: 100%;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, background-color 0.2s ease;
+}
+.input-field:hover { border-color: var(--text-secondary); }
+.input-field:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--primary-glow);
+  background: var(--bg-card);
+  outline: none;
+}
+.input-field:disabled { opacity: 0.5; cursor: not-allowed; background: var(--bg-elevated); }
+
+/* ============================================================
+   BUTTONS
+   ============================================================ */
+.btn-primary {
+  background: var(--accent);
+  color: #FFFFFF;
+  font-weight: 600;
+  padding: 10px 20px;
+  border-radius: 10px;
+  border: none;
+  font-size: 0.875rem;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  box-shadow: 0 1px 3px rgba(0, 139, 139, 0.25);
+}
+.btn-primary:hover:not(:disabled) {
+  background: var(--accent-hover);
+  box-shadow: 0 4px 12px rgba(0, 139, 139, 0.25);
+  transform: translateY(-1px);
+}
+.btn-primary:active:not(:disabled) { transform: translateY(0); }
+
+.btn-secondary {
+  background: transparent;
+  color: var(--accent);
+  border: 1.5px solid var(--accent);
+  font-weight: 600;
+  padding: 10px 20px;
+  border-radius: 10px;
+  font-size: 0.875rem;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+.btn-secondary:hover:not(:disabled) { background: var(--accent-muted); }
+
+.btn-ghost {
+  background: transparent;
+  color: var(--text-secondary);
+  border: none;
+  font-weight: 500;
+  padding: 8px 16px;
+  border-radius: 8px;
+  font-size: 0.875rem;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.btn-ghost:hover:not(:disabled) { background: var(--bg-elevated); color: var(--text-main); }
+
+.btn-danger {
+  background: var(--color-error);
+  color: #FFFFFF;
+  font-weight: 600;
+  padding: 10px 20px;
+  border-radius: 10px;
+  border: none;
+  font-size: 0.875rem;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+.btn-danger:hover:not(:disabled) { background: #DC2626; transform: translateY(-1px); }
+
+/* ============================================================
+   STATUS PILLS & METRICS
+   ============================================================ */
+.status-pill {
+  border-radius: 999px;
+  padding: 0.2rem 0.5rem;
+  font: 600 10px var(--font-mono);
+  letter-spacing: 0.02em;
+}
+.status-success { background: #f0fdf4; color: #15803d; }
+.status-warning { background: #fffbeb; color: #b45309; }
+.status-danger  { background: #fef2f2; color: #dc2626; }
+.status-info    { background: #eff6ff; color: #1d4ed8; }
+
+.metric-value {
+  font-size: 2.5rem;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+  line-height: 1;
+  color: var(--text-main);
+}
+
+/* ============================================================
+   SKELETON & MOTION UTILITIES
+   ============================================================ */
+.skeleton {
+  background: linear-gradient(90deg, var(--bg-elevated) 25%, var(--bg-card) 50%, var(--bg-elevated) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s ease-in-out infinite;
+  border-radius: 8px;
+}
+@keyframes shimmer { to { background-position: -200% 0; } }
+
+.sidebar-transition { transition: width 0.3s ease, transform 0.3s ease; will-change: width; transform: translateZ(0); }
+.gpu-accelerated { transform: translateZ(0); will-change: transform; backface-visibility: hidden; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+}
+
+/* Layout container untuk konten halaman di dalam AppShell. */
+main > div {
+  max-width: 1280px;
+  margin-inline: auto;
+  padding: 1.5rem clamp(1rem, 3vw, 2.5rem);
+}

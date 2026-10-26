@@ -1,0 +1,31 @@
+spring:
+  config:
+    import: optional:file:.env[.properties]
+  datasource:
+    url: ${DATABASE_URL:jdbc:postgresql://localhost:5432/nevo}
+    username: ${DATABASE_USER:nevo}
+    password: ${DATABASE_PASSWORD:change-me}
+  servlet:
+    multipart:
+      max-file-size: 12MB
+      max-request-size: 20MB
+  flyway:
+    enabled: true
+server:
+  port: ${SERVER_PORT:8080}
+nevo:
+  storage-dir: ${NEVO_STORAGE_DIR:./data/uploads}
+  ws:
+    allowed-origins: ${NEVO_WS_ALLOWED_ORIGINS:}
+  simrs:
+    base-url: ${SIMRS_BASE_URL:}
+    monitoring-token: ${SIMRS_MONITORING_TOKEN:}
+    enabled: ${SIMRS_ENABLED:false}
+    write-enabled: ${SIMRS_WRITE_ENABLED:false}
+    poll-interval-millis: ${SIMRS_POLL_INTERVAL_MS:30000}
+    write-max-attempts: ${SIMRS_WRITE_MAX_ATTEMPTS:5}
+    connect-timeout-ms: ${SIMRS_CONNECT_TIMEOUT_MS:5000}
+    read-timeout-ms: ${SIMRS_READ_TIMEOUT_MS:10000}
+  internal-publish:
+    url: ${INTERNAL_PUBLISH_URL:http://localhost:8081/internal/publish}
+    secret: ${INTERNAL_PUBLISH_SECRET:}

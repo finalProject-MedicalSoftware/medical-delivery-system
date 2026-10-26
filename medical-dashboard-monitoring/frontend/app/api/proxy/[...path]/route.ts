@@ -1,6 +1,6 @@
 import {NextRequest,NextResponse} from 'next/server';
 export const dynamic = 'force-dynamic';
-const backend=process.env.BACKEND_URL || 'http://127.0.0.1:8081';
+const backend=process.env.BACKEND_URL || 'http://127.0.0.1:8080';
 async function forward(req:NextRequest,ctx:{params:Promise<{path:string[]}>}){
  const {path}=await ctx.params;
  const parts=path.map(encodeURIComponent).join('/');
@@ -10,6 +10,8 @@ async function forward(req:NextRequest,ctx:{params:Promise<{path:string[]}>}){
  if(cookie) headers.set('cookie', cookie);
  const authorization=req.headers.get('authorization');
  if(authorization) headers.set('authorization', authorization);
+ const csrf=req.headers.get('x-xsrf-token');
+ if(csrf) headers.set('x-xsrf-token', csrf);
  const body=['GET','HEAD'].includes(req.method)?undefined:await req.arrayBuffer();
  if(body && req.headers.get('content-type'))headers.set('content-type',req.headers.get('content-type')!);
  try{

@@ -23,9 +23,19 @@ yarn-error.log*
 .vscode/
 .idea/
 
-# Sub-repo terpisah (restrukturisasi KP TIFA-style; masing-masing punya .git sendiri)
-medical-backend/
-medical-ws/
-medical-dashboard-monitoring/
-simrs-dummy/
+# Monorepo: medical-backend/, medical-ws/, medical-dashboard-monitoring/,
+# simrs-dummy/ kini di-track langsung (tanpa .git nested).
+# Aturan ignore tiap komponen tetap berlaku lewat .gitignore di foldernya masing-masing.
 
+# Build artifacts Java/Maven
+target/
+
+# TypeScript incremental build info
+*.tsbuildinfo
+
+# Obsidian vault config (lokal)
+.obsidian/
+
+
+# Codegraph tool (symlink lokal)
+.codegraph

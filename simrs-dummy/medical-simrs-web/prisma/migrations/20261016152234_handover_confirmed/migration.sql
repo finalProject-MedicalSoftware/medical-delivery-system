@@ -1,0 +1,2 @@
+-- AlterEnum
+ALTER TYPE "DeliveryStatus" ADD VALUE 'MOCK_HANDOVER_CONFIRMED';

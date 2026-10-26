@@ -1,0 +1,33 @@
+name: medical-delivery-system
+
+services:
+  simrs-postgres:
+    image: postgres:17-alpine
+    container_name: simrs-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: simrs_dummy
+      POSTGRES_USER: simrs_app
+      POSTGRES_PASSWORD: ${SIMRS_DB_PASSWORD:?Set SIMRS_DB_PASSWORD di file .env}
+    ports:
+      # Bind ke localhost saja; pgAdmin di Mac konek ke localhost:5433.
+      - "127.0.0.1:5433:5432"
+    volumes:
+      - simrs_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U simrs_app -d simrs_dummy" ]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    security_opt:
+      - no-new-privileges:true
+
+# FASE 2 (BELUM AKTIF — sesuai AGENTS.md aturan 9, jangan odkomentari dulu):
+# - simrs-backend (Java Spring Boot): folder simrs-dummy/medical-simrs-backend (draft, belum di-build)
+# - simrs-web (Next.js): aplikasinya di root simrs-dummy, jalan lokal via `npm run dev`
+# - medical-ws: folder root `medical-ws/` (Node.js ws + kafkajs; Kafka→WS ke dashboard monitoring/HMI)
+# - kafka/zookeeper: HANYA setelah kontrak event lintas layanan dirumuskan (dilarang AGENTS.md aturan 2 & 9).
+# Jangan tambah service di bawah sebelum kontrak API/event disepakati dan ditulis di docs/api-contracts/.
+
+volumes:
+  simrs_postgres_data:

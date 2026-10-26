@@ -1,0 +1,295 @@
+// Prisma schema for SIMRS Dummy
+// Baseline version: Prisma v7.10.0
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ==========================================
+// 1. Multi-Role & User Management
+// ==========================================
+
+model User {
+  id           String     @id @default(cuid())
+  username     String     @unique
+  passwordHash String     @map("password_hash")
+  fullName     String     @map("full_name")
+  email        String?    @unique
+  isActive     Boolean    @default(true) @map("is_active")
+  createdAt    DateTime   @default(now()) @map("created_at")
+  updatedAt    DateTime   @updatedAt @map("updated_at")
+
+  // Many-to-many through UserRole
+  userRoles    UserRole[]
+
+  // Domain relations
+  doctorPrescriptions   Prescription[]    @relation("DoctorPrescriptions")
+  verifiedPrescriptions Prescription[]    @relation("PharmacistPrescriptions")
+  deliveryRequests      DeliveryRequest[] @relation("UserDeliveryRequests")
+  auditLogs             AuditLog[]        @relation("UserAuditLogs")
+
+  @@map("m_user")
+}
+
+model Role {
+  id          String           @id @default(cuid())
+  code        String           @unique // e.g. SYSTEM_ADMIN, SIMRS_ADMIN, DOCTOR, NURSE, PHARMACIST, PHARMACY_STAFF, WARD_ADMIN
+  name        String
+  description String?
+  createdAt   DateTime         @default(now()) @map("created_at")
+
+  userRoles       UserRole[]
+  rolePermissions RolePermission[]
+
+  @@map("m_role")
+}
+
+model UserRole {
+  id         String   @id @default(cuid())
+  userId     String   @map("user_id")
+  roleId     String   @map("role_id")
+  assignedAt DateTime @default(now()) @map("assigned_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role Role @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, roleId])
+  @@index([userId])
+  @@index([roleId])
+  @@map("m_user_role")
+}
+
+model Permission {
+  id          String           @id @default(cuid())
+  code        String           @unique // e.g. prescription:create, prescription:verify, delivery:create, admin:roles
+  name        String
+  description String?
+  createdAt   DateTime         @default(now()) @map("created_at")
+
+  rolePermissions RolePermission[]
+
+  @@map("m_permission")
+}
+
+model RolePermission {
+  id           String     @id @default(cuid())
+  roleId       String     @map("role_id")
+  permissionId String     @map("permission_id")
+
+  role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@unique([roleId, permissionId])
+  @@index([roleId])
+  @@index([permissionId])
+  @@map("m_role_permission")
+}
+
+// ==========================================
+// 2. Master Data (Synthetic Hospital Domain)
+// ==========================================
+
+model Patient {
+  id          String   @id @default(cuid())
+  mrn         String   @unique // Synthetic Medical Record Number (e.g. SYN-MRN-001)
+  fullName    String   @map("full_name")
+  dateOfBirth DateTime @map("date_of_birth")
+  gender      String   // L / P
+  roomCode    String?  @map("room_code") // Current inpatient room assignment
+  bedId       String?  @map("bed_id") // Current inpatient bed assignment
+  bed         Bed?     @relation(fields: [bedId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  notes       String?
+  diagnosis   String?  // Diagnosis/penyakit (fiktif)
+  isInfectious Boolean @default(false) @map("is_infectious") // Penyakit menular → ALERT
+  dischargedAt DateTime? @map("discharged_at") // Terisi = selesai rawat inap (riwayat)
+  dischargeNote String? @map("discharge_note")
+  isSynthetic Boolean  @default(true) @map("is_synthetic") // Explicit synthetic data flag
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  prescriptions Prescription[]
+
+  @@index([dischargedAt])
+  @@index([bedId])
+  @@map("m_patient")
+}
+
+model Ward {
+  id        String   @id @default(cuid())
+  code      String   @unique // e.g. WARD-MELATI
+  name      String   // e.g. Bangsal Melati
+  floor     Int      @default(1)
+  createdAt DateTime @default(now()) @map("created_at")
+
+  rooms Room[]
+
+  @@map("m_ward")
+}
+
+model Room {
+  id        String   @id @default(cuid())
+  wardId    String   @map("ward_id")
+  ward      Ward     @relation(fields: [wardId], references: [id], onDelete: Cascade)
+  roomCode  String   @unique @map("room_code") // Unique & stable identifier (e.g. R-MELATI-101)
+  name      String   // e.g. Ruang Melati 101
+  createdAt DateTime @default(now()) @map("created_at")
+
+  beds             Bed[]
+  deliveryRequests DeliveryRequest[]
+
+  @@index([roomCode])
+  @@map("m_room")
+}
+
+model Bed {
+  id         String   @id @default(cuid())
+  roomId     String   @map("room_id")
+  room       Room     @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  bedNumber  String   @map("bed_number") // e.g. "A", "B", "1", "2"
+  isOccupied Boolean  @default(false) @map("is_occupied")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  patients Patient[]
+
+  @@unique([roomId, bedNumber])
+  @@map("m_bed")
+}
+
+model Medicine {
+  id        String   @id @default(cuid())
+  code      String   @unique // e.g. MED-PCM-500
+  name      String
+  unit      String   // tablet, kapsul, botol, ampul
+  category  String   // Analgesik, Antibiotik, Vitamin, dll.
+  stock     Int      @default(100) // Simple demo stock
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  prescriptionItems PrescriptionItem[]
+
+  @@map("m_medicine")
+}
+
+// ==========================================
+// 3. Prescription & Pharmacy Workflow
+// ==========================================
+
+enum PrescriptionStatus {
+  DRAFT
+  SUBMITTED
+  VERIFIED
+  REJECTED
+  PREPARING
+  READY_FOR_DELIVERY
+  CANCELLED
+}
+
+model Prescription {
+  id              String             @id @default(cuid())
+  code            String             @unique // e.g. RX-20261012-0001
+  patientId       String             @map("patient_id")
+  patient         Patient            @relation(fields: [patientId], references: [id])
+  doctorId        String             @map("doctor_id")
+  doctor          User               @relation("DoctorPrescriptions", fields: [doctorId], references: [id])
+  status          PrescriptionStatus @default(DRAFT)
+  verifiedById    String?            @map("verified_by_id")
+  verifiedBy      User?              @relation("PharmacistPrescriptions", fields: [verifiedById], references: [id])
+  verifiedAt      DateTime?          @map("verified_at")
+  rejectionReason String?            @map("rejection_reason")
+  notes           String?
+  createdAt       DateTime           @default(now()) @map("created_at")
+  updatedAt       DateTime           @updatedAt @map("updated_at")
+
+  items            PrescriptionItem[]
+  deliveryRequests DeliveryRequest[]
+
+  @@index([status])
+  @@index([patientId])
+  @@map("t_prescription")
+}
+
+model PrescriptionItem {
+  id             String       @id @default(cuid())
+  prescriptionId String       @map("prescription_id")
+  prescription   Prescription @relation(fields: [prescriptionId], references: [id], onDelete: Cascade)
+  medicineId     String       @map("medicine_id")
+  medicine       Medicine     @relation(fields: [medicineId], references: [id])
+  quantity       Int
+  instructions   String       // e.g. "3x1 tablet sesudah makan"
+  createdAt      DateTime     @default(now()) @map("created_at")
+
+  @@map("t_prescription_item")
+}
+
+// ==========================================
+// 4. Delivery Request & Event/Audit
+// ==========================================
+
+enum DeliveryStatus {
+  DELIVERY_REQUESTED
+  PENDING_INTEGRATION
+  MOCK_IN_TRANSIT
+  MOCK_ARRIVED_AT_ROOM
+  MOCK_HANDOVER_CONFIRMED
+  CANCELLED
+}
+
+model DeliveryRequest {
+  id             String         @id @default(uuid()) // Stable UUID
+  requestCode    String         @unique @map("request_code") // e.g. DELIV-20261012-0001
+  prescriptionId String         @map("prescription_id")
+  prescription   Prescription   @relation(fields: [prescriptionId], references: [id])
+  roomCode       String         @map("room_code") // Bound to Room.roomCode
+  room           Room           @relation(fields: [roomCode], references: [roomCode])
+  requestedById  String         @map("requested_by_id")
+  requestedBy    User           @relation("UserDeliveryRequests", fields: [requestedById], references: [id])
+  status         DeliveryStatus @default(DELIVERY_REQUESTED)
+  notes          String?
+  requestedAt    DateTime       @default(now()) @map("requested_at")
+  updatedAt      DateTime       @updatedAt @map("updated_at")
+
+  events DeliveryEvent[]
+
+  @@index([status])
+  @@index([roomCode])
+  @@map("t_delivery_request")
+}
+
+model DeliveryEvent {
+  id                String          @id @default(cuid())
+  deliveryRequestId String          @map("delivery_request_id")
+  deliveryRequest   DeliveryRequest @relation(fields: [deliveryRequestId], references: [id], onDelete: Cascade)
+  eventType         String          @map("event_type") // STATUS_CHANGE, DISPATCH, ARRIVAL_MOCK
+  statusBefore      String?         @map("status_before")
+  statusAfter       String          @map("status_after")
+  idempotencyKey    String?         @unique @map("idempotency_key") // Dedupe retry monitoring (POST delivery-status)
+  payload           Json?
+  isSimulation      Boolean         @default(true) @map("is_simulation") // Transparent mock flag
+  actorId           String?         @map("actor_id")
+  notes             String?
+  createdAt         DateTime        @default(now()) @map("created_at")
+
+  @@index([deliveryRequestId])
+  @@map("h_delivery_event")
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  entityType String   @map("entity_type") // USER_ROLE, PRESCRIPTION, DELIVERY_REQUEST, MASTER_DATA
+  entityId   String   @map("entity_id")
+  action     String   // ASSIGN_ROLE, REVOKE_ROLE, VERIFY, REJECT, REQUEST_DELIVERY
+  actorId    String   @map("actor_id")
+  actor      User     @relation("UserAuditLogs", fields: [actorId], references: [id])
+  details    Json?
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@index([entityType, entityId])
+  @@index([actorId])
+  @@index([createdAt])
+  @@map("h_audit_log")
+}

@@ -3,20 +3,18 @@
 import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useApp } from '../components/AppShell';
+import { useLanguage } from '../components/LanguageProvider';
+import { simrsMode, SIMRS_TONE_DOT } from '../lib/simrs-mode';
 import {
-  Database,
-  CheckCircle2,
-  AlertTriangle,
-  RefreshCw,
-  ShieldAlert,
-  Building,
-  ArrowRight,
-  ShieldCheck,
-  User,
+  Database, CheckCircle2, RefreshCw, ShieldAlert, Building,
+  ArrowRight, ShieldCheck,
 } from 'lucide-react';
 
 export default function SimrsPage() {
   const { request } = useApp();
+  const { dict } = useLanguage();
+  const t = dict.simrs;
+
   const [simrsStatus, setSimrsStatus] = useState<any>(null);
   const [deliveries, setDeliveries] = useState<any[]>([]);
   const [rooms, setRooms] = useState<any[]>([]);
@@ -25,6 +23,7 @@ export default function SimrsPage() {
 
   const loadData = (manualSync = false) => {
     setLoading(true);
+    setMessage(null);
     (manualSync ? request('integrations/simrs/sync', { method: 'POST' }) : request('integrations/simrs/status'))
       .then(async (status) => {
         const [dels, rmList] = await Promise.all([
@@ -38,7 +37,7 @@ export default function SimrsPage() {
         setDeliveries(dels);
         setRooms(rmList);
       })
-      .catch((err) => setMessage('Error: ' + err.message))
+      .catch((err) => setMessage(`${t.message}: ${err.message}`))
       .finally(() => setLoading(false));
   };
 
@@ -48,170 +47,167 @@ export default function SimrsPage() {
     return () => window.clearInterval(timer);
   }, []);
 
+  const tone = simrsMode(simrsStatus?.mode).tone;
+  const modeLabel = t.modes[(simrsStatus?.mode || 'default') as keyof typeof t.modes] ?? t.modes.default;
+  const liveRooms = rooms.filter((r) => r.availableInSimrs !== false).length;
+
   return (
-    <div className="space-y-8">
+    <div className="space-y-6">
       {/* Header */}
-      <div className="flex flex-wrap items-center justify-between gap-6 bg-white p-7 rounded-2xl border border-neutral-200 shadow-sm">
+      <div className="glass-panel p-6 flex flex-wrap items-center justify-between gap-4">
         <div>
-          <h2 className="text-xl font-bold text-white flex items-center gap-2">
-            <Database className="text-amber-400" size={24} />
-            Integrasi SIMRS Dummy Publik
-            <span className="text-xs bg-amber-500/15 text-amber-300 border border-amber-500/30 px-2 py-0.5 rounded-full font-mono">
-              [HTTP Mock Final]
-            </span>
+          <h2 className="text-xl font-bold txt-main flex items-center gap-2 flex-wrap">
+            <Database className="text-accent" size={24} />
+            {t.title}
+            <span className="status-pill status-info font-mono">[{simrsStatus?.mode || t.modes.default}]</span>
           </h2>
-          <p className="text-xs text-slate-400 mt-1">
-            Sinkronisasi data direktori kamar, antrean pengantaran resep, dan peringatan isolasi pasien
-          </p>
+          <p className="text-xs txt-sec mt-1">{t.subtitle}</p>
         </div>
 
-        <div className="flex items-center gap-3">
-          <button
-            onClick={() => loadData(true)}
-            disabled={loading}
-            className="bg-amber-600 hover:bg-amber-500 text-white text-xs font-semibold px-4 py-2.5 rounded-xl flex items-center gap-2 transition-colors"
-          >
-            <RefreshCw size={15} className={loading ? 'animate-spin' : ''} /> Sinkronisasi
-          </button>
-        </div>
+        <button
+          onClick={() => loadData(true)}
+          disabled={loading}
+          className="btn-primary flex items-center gap-2"
+        >
+          <RefreshCw size={15} className={loading ? 'animate-spin' : ''} />
+          {loading ? t.syncing : t.syncNow}
+        </button>
       </div>
 
       {message && (
-        <div className="p-3.5 bg-rose-950/80 border border-rose-800 text-rose-300 text-xs rounded-xl">
+        <div className="card-hover border border-error/40 bg-error/5 p-3.5 text-error text-xs rounded-xl flex items-start gap-2">
+          <ShieldAlert size={16} className="text-error shrink-0 mt-0.5" />
           {message}
         </div>
       )}
 
-      {/* Connection Status Panel */}
+      {/* Status cards */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         {/* Connection Mode */}
-        <div className="bg-slate-950 border border-slate-800 p-5 rounded-2xl space-y-2">
-          <span className="text-xs text-slate-400 font-medium">Status Koneksi SIMRS</span>
+        <div className="glass-panel p-5 space-y-2">
+          <span className="text-xs txt-sec font-medium">{t.status}</span>
           <div className="flex items-center gap-2">
-            <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse" />
-            <strong className="text-base text-white">
-              {simrsStatus?.mode === 'LIVE_READ_ONLY' ? 'Live Terhubung' : (simrsStatus?.mode || 'Memuat status')}
-            </strong>
+            <span className={`w-2.5 h-2.5 rounded-full ${SIMRS_TONE_DOT[tone]}`} />
+            <strong className="text-base txt-main">{modeLabel}</strong>
           </div>
-          <p className="text-[11px] text-slate-400 font-mono truncate">Host backend: {simrsStatus?.host || 'tidak dikonfigurasi'}</p>
-          <p className="text-[11px] text-slate-400">Sumber: {simrsStatus?.source || 'Belum tersinkron'} · Sync: {simrsStatus?.lastSyncTime || 'Belum ada'}</p>
+          <p className="text-[11px] txt-sec font-mono truncate">{t.host}: {simrsStatus?.host || t.hostMissing}</p>
+          <p className="text-[11px] txt-sec">{t.source}: {simrsStatus?.source || t.notSynced} · {t.lastSync}: {simrsStatus?.lastSyncTime || '-'}</p>
         </div>
 
         {/* Security / Write Policy */}
-        <div className="bg-slate-950 border border-slate-800 p-5 rounded-2xl space-y-2">
-          <span className="text-xs text-slate-400 font-medium">Kebijakan Penulisan Status</span>
+        <div className="glass-panel p-5 space-y-2">
+          <span className="text-xs txt-sec font-medium">{t.writePolicy}</span>
           <div className="flex items-center gap-2">
-            <ShieldCheck size={18} className="text-emerald-400" />
-            <strong className="text-base text-emerald-400">Read-Only Protected</strong>
+            <ShieldCheck size={18} className="text-success" />
+            <strong className="text-base text-success">{t.writeProtected}</strong>
           </div>
-          <p className="text-[11px] text-slate-400">
-            {simrsStatus?.writeEnabled ? 'Write Mutasi Aktif' : 'Mutasi status publik dinonaktifkan (Safety policy)'}
+          <p className="text-[11px] txt-sec">
+            {simrsStatus?.writeEnabled ? t.writeEnabled : t.writeDisabled}
           </p>
         </div>
 
         {/* Token status */}
-        <div className="bg-slate-950 border border-slate-800 p-5 rounded-2xl space-y-2">
-          <span className="text-xs text-slate-400 font-medium">Token x-monitoring-token</span>
+        <div className="glass-panel p-5 space-y-2">
+          <span className="text-xs txt-sec font-medium">{t.token}</span>
           <div className="flex items-center gap-2">
-            <strong className="text-base text-white font-mono">
-              {simrsStatus?.tokenConfigured ? 'Terkonfigurasi (Server)' : 'Belum Diatur (.env)'}
+            <strong className="text-base txt-main font-mono">
+              {simrsStatus?.tokenConfigured ? t.tokenConfigured : t.tokenMissing}
             </strong>
           </div>
-          <p className="text-[11px] text-slate-400">
-              {simrsStatus?.tokenConfigured
-              ? 'Kredensial hanya dibaca oleh Spring Boot backend'
-              : 'Tidak ada token yang dikirim ke browser'}
+          <p className="text-[11px] txt-sec">
+            {simrsStatus?.tokenConfigured ? t.tokenNoteOn : t.tokenNoteOff}
           </p>
         </div>
       </div>
 
       {/* Active Deliveries Table */}
-      <div className="bg-slate-950 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-4">
-        <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+      <div className="glass-panel p-6 space-y-4">
+        <div className="flex items-center justify-between pb-3 border-b border-base">
           <div>
-            <h3 className="font-bold text-sm text-white">Antrean Pengantaran Obat (Active Deliveries)</h3>
-            <p className="text-xs text-slate-400 mt-0.5">
-              Daftar resep obat pasien yang siap diantarkan oleh robot NEVO ke ruangan tujuan
-            </p>
+            <h3 className="font-bold text-sm txt-main flex items-center gap-2">
+              <CheckCircle2 size={16} className="text-accent" />
+              {t.deliveries}
+            </h3>
+            <p className="text-xs txt-sec mt-0.5">{t.subtitle}</p>
           </div>
-          <span className="text-xs font-mono bg-slate-900 border border-slate-800 px-3 py-1 rounded-xl text-slate-300">
-            {deliveries.length} Antrean
+          <span className="text-xs font-mono status-pill status-info">
+            {deliveries.length} {t.queueCount}
           </span>
         </div>
 
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs">
-            <thead>
-              <tr className="border-b border-slate-800 bg-slate-900/60 text-slate-400">
-                <th className="py-3 px-4">Request Code</th>
-                <th className="py-3 px-4">Ruangan Tujuan</th>
-                <th className="py-3 px-4">Pasien (MRN)</th>
-                <th className="py-3 px-4">Obat / Resep</th>
-                <th className="py-3 px-4">Peringatan Medis</th>
-                <th className="py-3 px-4">Status SIMRS</th>
-                <th className="py-3 px-4 text-right">Aksi</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-800/60">
-              {deliveries.map((del) => (
-                <tr key={del.requestCode} className="hover:bg-slate-900/40 transition-colors">
-                  <td className="py-3 px-4 font-mono font-bold text-amber-300">{del.requestCode}</td>
-                  <td className="py-3 px-4">
-                    <span className="font-semibold text-white">{del.roomName || del.roomCode}</span>
-                    <span className="text-[10px] text-slate-500 block">Lantai {del.floor} · {del.wardCode}</span>
-                  </td>
-                  <td className="py-3 px-4">
-                    <span className="text-slate-200">{del.patientName}</span>
-                    <span className="text-[10px] text-slate-500 block font-mono">{del.mrn}</span>
-                  </td>
-                  <td className="py-3 px-4 text-slate-300">{del.medicine}</td>
-                  <td className="py-3 px-4">
-                    {del.isInfectious ? (
-                      <span className="bg-rose-500/15 text-rose-300 border border-rose-500/30 px-2 py-0.5 rounded text-[10px] font-semibold flex items-center gap-1 w-fit">
-                        <ShieldAlert size={12} className="text-rose-400" /> Isolasi / Infeksi
-                      </span>
-                    ) : (
-                      <span className="text-slate-500 text-[11px]">Normal</span>
-                    )}
-                  </td>
-                  <td className="py-3 px-4">
-                    <span className="text-[10px] font-mono bg-sky-500/15 text-sky-300 px-2 py-0.5 rounded font-bold">
-                      {del.status}
-                    </span>
-                  </td>
-                  <td className="py-3 px-4 text-right">
-                    <Link
-                      href={`/control?room=${del.roomCode}&req=${del.requestCode}`}
-                      className="bg-sky-600 hover:bg-sky-500 text-white px-3 py-1.5 rounded-lg font-medium transition-colors inline-flex items-center gap-1"
-                    >
-                      Kirim Misi <ArrowRight size={13} />
-                    </Link>
-                  </td>
+        {deliveries.length === 0 ? (
+          <p className="text-sm txt-sec italic py-6 text-center">{t.deliveryEmpty}</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs">
+              <thead>
+                <tr className="border-b border-base bg-elevated/50 txt-sec">
+                  <th className="py-3 px-4">{t.reqCode}</th>
+                  <th className="py-3 px-4">{t.targetRoom}</th>
+                  <th className="py-3 px-4">{t.patient} ({t.mrn})</th>
+                  <th className="py-3 px-4">{t.medicine}</th>
+                  <th className="py-3 px-4">{t.medicalAlert}</th>
+                  <th className="py-3 px-4">{t.simrsStatus}</th>
+                  <th className="py-3 px-4 text-right">{dict.common.actions}</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+              </thead>
+              <tbody className="divide-y divide-border-base/60">
+                {deliveries.map((del) => (
+                  <tr key={del.requestCode} className="hover:bg-elevated/40 transition-colors">
+                    <td className="py-3 px-4 font-mono font-bold txt-accent">{del.requestCode}</td>
+                    <td className="py-3 px-4">
+                      <span className="font-semibold txt-main">{del.roomName || del.roomCode}</span>
+                      <span className="text-[10px] txt-sec block">{t.floor} {del.floor} · {del.wardCode}</span>
+                    </td>
+                    <td className="py-3 px-4">
+                      <span className="txt-main">{del.patientName}</span>
+                      <span className="text-[10px] txt-sec block font-mono">{del.mrn}</span>
+                    </td>
+                    <td className="py-3 px-4 txt-main">{del.medicine}</td>
+                    <td className="py-3 px-4">
+                      {del.isInfectious ? (
+                        <span className="status-pill status-danger flex items-center gap-1 w-fit text-[10px]">
+                          <ShieldAlert size={12} /> {t.infectiousBadge}
+                        </span>
+                      ) : (
+                        <span className="text-[11px] txt-sec">{t.normal}</span>
+                      )}
+                    </td>
+                    <td className="py-3 px-4">
+                      <span className="status-pill status-info font-mono text-[10px]">{del.status}</span>
+                    </td>
+                    <td className="py-3 px-4 text-right">
+                      <Link
+                        href={`/missions/create?room=${encodeURIComponent(del.roomCode)}&req=${encodeURIComponent(del.requestCode)}`}
+                        className="btn-primary inline-flex items-center gap-1 text-xs"
+                      >
+                        {t.dispatch} <ArrowRight size={13} />
+                      </Link>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
 
-      {/* Hospital Room Hierarchy Card */}
-      <div className="bg-slate-950 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-4">
-        <h3 className="font-bold text-sm text-white flex items-center gap-2">
-          <Building size={16} className="text-sky-400" />
-          Direktori Ruangan SIMRS Live ({rooms.filter((r) => r.availableInSimrs !== false).length} Live / {rooms.length} total)
+      {/* Hospital Room Directory */}
+      <div className="glass-panel p-6 space-y-4">
+        <h3 className="font-bold text-sm txt-main flex items-center gap-2">
+          <Building size={16} className="text-accent" />
+          {t.roomDirectory} ({liveRooms} {t.roomLive} / {rooms.length})
         </h3>
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 text-xs">
           {rooms.map((rm) => (
-            <div key={rm.roomCode} className="p-3 bg-slate-900/60 border border-slate-800 rounded-xl space-y-1">
-              <span className="font-semibold text-white block">{rm.name}</span>
-              <p className="text-[11px] font-mono text-slate-400">
-                Kode: <strong>{rm.roomCode}</strong>
+            <div key={rm.roomCode} className="p-3 bg-elevated/60 border border-base rounded-xl space-y-1">
+              <span className="font-semibold txt-main block">{rm.name}</span>
+              <p className="text-[11px] font-mono txt-sec">
+                {t.roomCode}: <strong>{rm.roomCode}</strong>
               </p>
-              <p className="text-[10px] text-slate-500">
-                {rm.wardName} · Lantai {rm.floor}
-              </p>
-              <p className={`text-[10px] ${rm.availableInSimrs === false ? 'text-rose-300' : 'text-emerald-300'}`}>
-                {rm.source} · {rm.waypointStatus || 'Belum dipetakan'}
+              <p className="text-[10px] txt-sec">{rm.wardName} · {t.floor} {rm.floor}</p>
+              <p className={`text-[10px] ${rm.availableInSimrs === false ? 'text-error' : 'text-success'}`}>
+                {rm.source} · {rm.waypointStatus || t.notMapped}
               </p>
             </div>
           ))}

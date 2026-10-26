@@ -1,0 +1,33 @@
+{
+  "name": "medical-ws",
+  "version": "1.0.0",
+  "description": "Medical Delivery — WebSocket gateway (Kafka -> WS, kontrak docs/api-contracts/web-monitoring-integration.md)",
+  "main": "src/ws/server.js",
+  "scripts": {
+    "start": "node src/ws/server.js",
+    "dev": "nodemon src/ws/server.js",
+    "check": "node scripts/check.js",
+    "test": "node scripts/check.js",
+    "audit": "npm audit --omit=dev"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "keywords": [
+    "websocket",
+    "kafka",
+    "medical-delivery",
+    "monitoring"
+  ],
+  "author": "Medical Delivery Team",
+  "license": "ISC",
+  "dependencies": {
+    "dotenv": "^16.3.1",
+    "kafkajs": "^2.2.4",
+    "uuid": "^9.0.1",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1"
+  }
+}
