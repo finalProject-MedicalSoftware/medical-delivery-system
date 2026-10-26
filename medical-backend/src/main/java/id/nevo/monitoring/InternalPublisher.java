@@ -45,11 +45,20 @@ public class InternalPublisher {
      * @param data payload; wajib memuat requestCode + wardCode non-blank agar bisa dirutekan.
      */
     public void publish(String type, Object data) {
-        if (url == null || url.isBlank() || secret == null || secret.isBlank()) return;
         if (!(data instanceof Map<?, ?> map)) return;
         Object requestCode = map.get("requestCode");
         Object wardCode = map.get("wardCode");
         if (!nonBlank(requestCode) || !nonBlank(wardCode)) return;
+        send(type, data, requestCode, wardCode);
+    }
+
+    /** Tipe downlink perintah robot: requestCode/wardCode boleh kosong (kontrak robot-command.md). */
+    public void publishCommand(String type, Object data) {
+        send(type, data, "", "");
+    }
+
+    private void send(String type, Object data, Object requestCode, Object wardCode) {
+        if (url == null || url.isBlank() || secret == null || secret.isBlank()) return;
 
         Map<String, Object> envelope = new LinkedHashMap<>();
         envelope.put("v", 1);

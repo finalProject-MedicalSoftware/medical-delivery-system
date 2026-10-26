@@ -1,7 +1,10 @@
 package id.nevo.monitoring;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.scheduling.annotation.EnableScheduling;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -24,12 +27,14 @@ import java.util.concurrent.Executors;
  */
 @Service
 @EnableScheduling
-public class SimulatedRobotService {
+@ConditionalOnProperty(name = "nevo.robot.mode", havingValue = "sim", matchIfMissing = true)
+public class SimulatedRobotService implements RobotAdapter {
     private static final Logger log = LoggerFactory.getLogger(SimulatedRobotService.class);
 
     private final JdbcTemplate db;
     private final RobotWebSocketHandler wsHandler;
     private final SimrsClientService simrsService;
+    private final ObjectMapper json;
 
     // Robot state
     private final String robotId = "NEVO-01";
@@ -56,10 +61,11 @@ public class SimulatedRobotService {
     private String activeRequestCode = "";
     private String activeWardCode = "";
 
-    public SimulatedRobotService(JdbcTemplate db, RobotWebSocketHandler wsHandler, SimrsClientService simrsService) {
+    public SimulatedRobotService(JdbcTemplate db, RobotWebSocketHandler wsHandler, SimrsClientService simrsService, ObjectMapper json) {
         this.db = db;
         this.wsHandler = wsHandler;
         this.simrsService = simrsService;
+        this.json = json;
     }
 
     // ---- SIMRS write-path (fire-and-forget; kegagalan hanya di-log, tidak menghentikan robot) ----
@@ -185,6 +191,27 @@ public class SimulatedRobotService {
         return map;
     }
 
+    /** Daftar /robots: robot simulasi dari state live, baris m_robot lain OFFLINE (kontrak robot-command.md §6). */
+    @Override
+    public List<Map<String, Object>> getRobots() {
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (Map<String, Object> row : db.queryForList("SELECT robot_id, name FROM m_robot ORDER BY robot_id")) {
+            String rid = (String) row.get("robot_id");
+            if (this.robotId.equals(rid)) {
+                out.add(getRobotState());
+                continue;
+            }
+            Map<String, Object> offline = new LinkedHashMap<>();
+            offline.put("robotId", rid);
+            offline.put("name", row.get("name"));
+            offline.put("status", "OFFLINE");
+            offline.put("activeMissionId", null);
+            offline.put("simulated", false);
+            out.add(offline);
+        }
+        return out;
+    }
+
     public synchronized Map<String, Object> dispatchMission(UUID waypointId, String roomCode, String userName, String requestCode, Integer compartmentNo) {
         if ("NAVIGATING".equals(status)) {
             throw new IllegalStateException("Robot NEVO-01 sedang menjalankan misi aktif lain");
@@ -305,6 +332,77 @@ public class SimulatedRobotService {
         ));
 
         return Map.of("missionId", missionId, "cancelled", true);
+    }
+
+    // ---- Perintah downlink (kontrak docs/api-contracts/robot-command.md) ----
+
+    @Override
+    public synchronized void executeCommand(UUID commandId, String robotId, String command, String userName, Map<String, Object> params) {
+        // Insert dengan PK commandId: perintah ulang diabaikan, bukan dieksekusi dua kali (kontrak §5).
+        try {
+            db.update("INSERT INTO t_robot_command(command_id, robot_id, command, params, user_name) VALUES (?, ?, ?, ?::jsonb, ?)",
+                    commandId, robotId, command, writeJson(params), userName);
+        } catch (DuplicateKeyException e) {
+            return;
+        }
+        wsHandler.publishCommand("ROBOT_COMMAND", Map.of(
+                "commandId", commandId,
+                "robotId", robotId,
+                "command", command,
+                "issuedBy", userName == null ? "" : userName,
+                "params", params == null ? Map.of() : params));
+
+        if (!this.robotId.equals(robotId)) {
+            finishCommand(commandId, robotId, "REJECTED", "UNKNOWN_ROBOT"); // terdaftar di m_robot, bukan robot simulasi
+            return;
+        }
+
+        String reason = "";
+        try {
+            switch (command) {
+                case "CMD_CANCEL_MISSION" -> {
+                    UUID missionId = parseUuid(params == null ? null : params.get("missionId"));
+                    if (missionId == null) throw new IllegalArgumentException("missionId wajib UUID");
+                    cancelMission(missionId, userName);
+                }
+                case "CMD_RETURN_TO_DOCK" -> {
+                    UUID dockId = parseUuid(params == null ? null : params.get("waypointId"));
+                    if (dockId == null) throw new IllegalArgumentException("waypointId wajib UUID");
+                    // Misi biasa dengan room_code/request_code kosong (tanpa terusan SIMRS/gateway; mirror lokal tetap jalan).
+                    dispatchMission(dockId, "", userName, "", null);
+                }
+                default -> throw new IllegalArgumentException("Perintah tidak dikenal: " + command);
+            }
+        } catch (IllegalStateException e) {
+            reason = "ROBOT_BUSY"; // misi aktif sedang berjalan
+            log.info("Perintah {} robot {} ditolak: {}", command, robotId, e.getMessage());
+        } catch (Exception e) {
+            reason = "INVALID_PARAMS"; // missionId/waypointId salah, perintah tidak dikenal, kegagalan tak terduga
+            log.warn("Perintah {} robot {} ditolak: {}", command, robotId, e.getMessage());
+        }
+        finishCommand(commandId, robotId, reason.isEmpty() ? "OK" : "REJECTED", reason);
+    }
+
+    private void finishCommand(UUID commandId, String robotId, String result, String reason) {
+        db.update("UPDATE t_robot_command SET status=?, reason_code=?, finished_at=now() WHERE command_id=?", result, reason, commandId);
+        wsHandler.publishCommand("ROBOT_COMMAND_RESULT", Map.of(
+                "commandId", commandId, "robotId", robotId, "result", result, "reason", reason));
+    }
+
+    private static UUID parseUuid(Object raw) {
+        try {
+            return raw == null ? null : UUID.fromString(Objects.toString(raw));
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
+    }
+
+    private String writeJson(Map<String, Object> params) {
+        try {
+            return json.writeValueAsString(params == null ? Map.of() : params);
+        } catch (Exception e) {
+            return "{}";
+        }
     }
 
     /**

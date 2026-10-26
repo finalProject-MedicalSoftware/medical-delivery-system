@@ -39,6 +39,22 @@ assert.ok(!envelopeMatchesChannel(env, 'delivery:DELIV-0002'));
 assert.ok(envelopeMatchesAny(env, parseChannels(['ward:A'])));
 assert.ok(!envelopeMatchesAny(env, parseChannels(['ward:B'])));
 
+// -- kanal robot (downlink, kontrak robot-command.md) ---------------------
+const cmd = {
+  v: 1, eventId: 'e2', type: 'ROBOT_COMMAND', occurredAt: '2026-10-27T00:00:00.000Z',
+  requestCode: '', wardCode: 'A',
+  data: { commandId: 'c1', robotId: 'NEVO-01', command: 'CMD_CANCEL_MISSION', issuedBy: 'budi', params: {} }
+};
+assert.deepStrictEqual(parseChannel('robot:NEVO-01'), { kind: 'robot', code: 'NEVO-01' });
+assert.strictEqual(parseChannel('robot:'), null);
+assert.ok(envelopeMatchesChannel(cmd, 'robot:NEVO-01'));
+assert.ok(!envelopeMatchesChannel({ ...cmd, data: { ...cmd.data, robotId: 'NEVO-02' } }, 'robot:NEVO-01'));
+assert.ok(!envelopeMatchesChannel({ ...cmd, type: 'MISSION_EVENT' }, 'robot:NEVO-01'));
+assert.ok(isValidEnvelope(cmd)); // tipe downlink boleh requestCode/wardCode kosong
+assert.ok(!isValidEnvelope({ ...cmd, requestCode: 5 })); // kode wajib string, bukan hanya ada
+assert.ok(!isValidEnvelope({ ...env, requestCode: '' })); // tipe misi wajib non-blank
+assert.deepStrictEqual(parseChannels(['robot:NEVO-01']), ['robot:NEVO-01']);
+
 // -- isValidEnvelope ------------------------------------------------------
 assert.ok(isValidEnvelope(env));
 assert.ok(!isValidEnvelope({ ...env, v: 2 }));

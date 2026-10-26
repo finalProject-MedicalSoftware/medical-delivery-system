@@ -14,6 +14,7 @@ import java.util.*;
 public class MissionApi {
 
     private final JdbcTemplate db;
+    // ponytail: konkret sulung dipakai endpoint misi lama (dispatch/cancel); tukar ke RobotAdapter saat ROBOT_MODE=real (fase robot).
     private final SimulatedRobotService robotService;
     private final SimrsClientService simrsService;
 
@@ -25,7 +26,25 @@ public class MissionApi {
 
     @GetMapping("/robots")
     public List<Map<String, Object>> getRobots() {
-        return List.of(robotService.getRobotState());
+        return robotService.getRobots();
+    }
+
+    private static final Set<String> ROBOT_COMMANDS = Set.of("CMD_CANCEL_MISSION", "CMD_RETURN_TO_DOCK");
+
+    /** Perintah downlink (kontrak docs/api-contracts/robot-command.md §6); hasil dikirim via WS ROBOT_COMMAND_RESULT. */
+    @PostMapping("/robots/{robotId}/commands")
+    @ResponseStatus(HttpStatus.ACCEPTED)
+    public Map<String, Object> sendCommand(@PathVariable String robotId, @RequestBody CommandReq req, Authentication user) {
+        if (req == null || req.command() == null || !ROBOT_COMMANDS.contains(req.command())) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "command harus CMD_CANCEL_MISSION atau CMD_RETURN_TO_DOCK");
+        }
+        Integer count = db.queryForObject("SELECT count(*) FROM m_robot WHERE robot_id = ?", Integer.class, robotId);
+        if (count == null || count == 0) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Robot tidak ditemukan");
+        }
+        UUID commandId = UUID.randomUUID();
+        robotService.executeCommand(commandId, robotId, req.command(), user.getName(), req.params() == null ? Map.of() : req.params());
+        return Map.of("commandId", commandId.toString(), "simulated", true);
     }
 
     @PostMapping("/missions")
@@ -157,5 +176,6 @@ public class MissionApi {
     }
 
     public record MissionReq(UUID waypointId, String roomCode, String requestCode, Integer compartmentNo) {}
+    public record CommandReq(String command, Map<String, Object> params) {}
     public record DeliveryStatusReq(String requestCode, String toStatus, String note, Integer compartmentNo, String idempotencyKey) {}
 }

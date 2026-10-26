@@ -126,13 +126,14 @@ mengizinkan tipe baru lolos validasi dan menyediakan kanal
 
 | Method | Path | Isi |
 |---|---|---|
-| `GET /robots` | daftar robot dari tabel robot (bukan objek simulator tunggal), minimal: `robotId`, `name`, `status`, `currentMissionId` (nullable) |
+| `GET /robots` | daftar robot dari tabel robot (bukan objek simulator tunggal), minimal: `robotId`, `name`, `status`, `activeMissionId` (nullable) |
 | `POST /robots/{robotId}/commands` | body `{ "command": "…", "params": {…} }`; backend membuat `commandId`+`eventId`, menjawab `202 { "commandId": "…" }`; validasi enum di backend, bukan di UI |
 
-Fase ini: REST backend belum ber-token sama sekali (kondisi nyata
-MissionApi hari ini) — perintah dianggap `[MOCK]` sebagaimana seluruh
-REST mock. Bila token diberlakukan nanti, ia lewat **header** (bukan
-query param/URL — AGENTS.md aturan 5) dan kontrak ini direvisi, bukan
-diam-diam. Tidak ada port/URL/token hardcode — semua via env (AGENTS.md
-aturan 4). Penjelasan `ROBOT_MODE` dan pemilihan adapter adalah
-pekerjaan fase B; fase ini hanya mengunci bentuk kontraknya.
+Autentikasi REST = session cookie + CSRF (cookie `XSRF-TOKEN` dikirim
+balik lewat header `X-XSRF-TOKEN`) via BFF `/api/proxy/` dashboard —
+aturan 5 (token lewat header, bukan query param/URL) dan aturan 4
+(tanpa hardcode). Sisi server wajib login: `SecurityConfiguration`
+melindungi `/api/v1/**`; hanya `/auth/**`, `/actuator/health`, `/error`
+yang permitAll, sisanya denyAll. Pemilihan `RobotAdapter` dikendalikan
+`ROBOT_MODE` via env (default `sim`); `ROBOT_MODE=real` adalah
+pekerjaan fase robot, bukan fase ini.

@@ -28,7 +28,7 @@ async function handleIncoming(socket, rawData) {
     case 'subscribe': {
       const keys = parseChannels(msg.channels);
       if (keys.length === 0) {
-        sendError(socket, 'NO_VALID_CHANNEL', 'allowed: all | ward:<wardCode> | delivery:<requestCode>');
+        sendError(socket, 'NO_VALID_CHANNEL', 'allowed: all | ward:<code> | delivery:<code> | robot:<robotId>');
         return;
       }
       sessionManager.setChannels(socket, keys);

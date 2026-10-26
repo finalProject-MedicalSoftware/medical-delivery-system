@@ -49,6 +49,16 @@ public class RobotWebSocketHandler extends TextWebSocketHandler {
     public void broadcast(String type, Object data) {
         // Teruskan ke gateway lebih dulu: broadcast lokal boleh tidak punya klien sama sekali.
         publisher.publish(type, data);
+        deliverLocal(type, data);
+    }
+
+    /** Tipe downlink perintah robot (kontrak robot-command.md): ke gateway + klien WS lokal. */
+    public void publishCommand(String type, Object data) {
+        publisher.publishCommand(type, data);
+        deliverLocal(type, data);
+    }
+
+    private void deliverLocal(String type, Object data) {
         if (sessions.isEmpty()) return;
         try {
             String payload = json.writeValueAsString(Map.of("type", type, "data", data));

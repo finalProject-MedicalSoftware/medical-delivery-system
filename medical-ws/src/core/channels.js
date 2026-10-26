@@ -1,10 +1,14 @@
 /**
  * Validasi & pencocokan channel langganan (kontrak ws v1):
- *   all | ward:<wardCode> | delivery:<requestCode>
+ *   all | ward:<wardCode> | delivery:<requestCode> | robot:<robotId>
  */
 
 const WARD_RE = /^ward:([A-Za-z0-9_-]+)$/;
 const DELIVERY_RE = /^delivery:([A-Za-z0-9:_-]+)$/;
+const ROBOT_RE = /^robot:([A-Za-z0-9_-]+)$/;
+
+// Tipe downlink perintah: requestCode/wardCode boleh kosong (kontrak robot-command.md).
+const COMMAND_TYPES = new Set(['ROBOT_COMMAND', 'ROBOT_COMMAND_RESULT']);
 
 function parseChannel(raw) {
   if (typeof raw !== 'string') return null;
@@ -13,6 +17,8 @@ function parseChannel(raw) {
   if (m) return { kind: 'ward', code: m[1] };
   m = raw.match(DELIVERY_RE);
   if (m) return { kind: 'delivery', code: m[1] };
+  m = raw.match(ROBOT_RE);
+  if (m) return { kind: 'robot', code: m[1] };
   return null;
 }
 
@@ -36,6 +42,10 @@ function envelopeMatchesChannel(envelope, key) {
   if (key === 'all') return true;
   if (key.startsWith('ward:')) return envelope.wardCode === key.slice(5);
   if (key.startsWith('delivery:')) return envelope.requestCode === key.slice(9);
+  if (key.startsWith('robot:')) {
+    return COMMAND_TYPES.has(envelope.type) &&
+      envelope.data != null && envelope.data.robotId === key.slice(6);
+  }
   return false;
 }
 
@@ -48,16 +58,14 @@ function envelopeMatchesAny(envelope, channelKeys) {
 
 /** Validasi bentuk minimal envelope v1 (struktur tunggal WS + Kafka). */
 function isValidEnvelope(e) {
-  return (
-    !!e &&
-    e.v === 1 &&
-    typeof e.eventId === 'string' && e.eventId.length > 0 &&
-    typeof e.type === 'string' && e.type.length > 0 &&
-    typeof e.occurredAt === 'string' && e.occurredAt.length > 0 &&
-    typeof e.requestCode === 'string' && e.requestCode.length > 0 &&
-    typeof e.wardCode === 'string' && e.wardCode.length > 0 &&
-    typeof e.data === 'object' && e.data !== null
-  );
+  if (!e || e.v !== 1) return false;
+  if (typeof e.eventId !== 'string' || e.eventId.length === 0) return false;
+  if (typeof e.type !== 'string' || e.type.length === 0) return false;
+  if (typeof e.occurredAt !== 'string' || e.occurredAt.length === 0) return false;
+  if (typeof e.requestCode !== 'string' || typeof e.wardCode !== 'string') return false;
+  // Tipe downlink perintah boleh kode kosong; tipe lain wajib non-blank agar bisa dirutekan.
+  if (!COMMAND_TYPES.has(e.type) && (e.requestCode.length === 0 || e.wardCode.length === 0)) return false;
+  return typeof e.data === 'object' && e.data !== null;
 }
 
 module.exports = {
