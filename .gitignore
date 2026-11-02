@@ -46,4 +46,5 @@ TIFA/
 robot/
 **/samples/ros-mock-map/
 .ustht/
-
+opencode.json
+task_plan.md
