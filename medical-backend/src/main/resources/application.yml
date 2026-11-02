@@ -13,6 +13,9 @@ spring:
     enabled: true
 server:
   port: ${SERVER_PORT:8080}
+  error:
+    # Sertakan `message` (mis. "robotId sudah terdaftar") di body error agar UI dapat menampilkannya.
+    include-message: always
 nevo:
   storage-dir: ${NEVO_STORAGE_DIR:./data/uploads}
   robot:
@@ -22,6 +25,7 @@ nevo:
   simrs:
     base-url: ${SIMRS_BASE_URL:}
     monitoring-token: ${SIMRS_MONITORING_TOKEN:}
+    webhook-token: ${SIMRS_WEBHOOK_TOKEN:}
     enabled: ${SIMRS_ENABLED:false}
     write-enabled: ${SIMRS_WRITE_ENABLED:false}
     poll-interval-millis: ${SIMRS_POLL_INTERVAL_MS:30000}

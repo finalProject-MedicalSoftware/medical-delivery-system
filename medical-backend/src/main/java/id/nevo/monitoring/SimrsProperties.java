@@ -9,6 +9,7 @@ public class SimrsProperties {
     private boolean enabled;
     private String baseUrl = "";
     private String monitoringToken = "";
+    private String webhookToken = ""; // Token untuk menerima webhook dari SIMRS (header x-simrs-token).
     private boolean writeEnabled;
     private int pollIntervalSeconds = 30; // Dipakai iterator/test lama; scheduler membaca pollIntervalMillis.
     private int pollIntervalMillis = 30000;
@@ -21,7 +22,8 @@ public class SimrsProperties {
         try {
             URI uri = URI.create(baseUrl.trim());
             return uri.getHost() != null && ("https".equalsIgnoreCase(uri.getScheme())
-                    || ("http".equalsIgnoreCase(uri.getScheme()) && "localhost".equalsIgnoreCase(uri.getHost())));
+                    || ("http".equalsIgnoreCase(uri.getScheme()) && ("localhost".equalsIgnoreCase(uri.getHost())
+                    || "simrs-web".equalsIgnoreCase(uri.getHost()))));
         } catch (IllegalArgumentException ex) {
             return false;
         }
@@ -40,6 +42,8 @@ public class SimrsProperties {
     public void setBaseUrl(String baseUrl) { this.baseUrl = baseUrl; }
     public String getMonitoringToken() { return monitoringToken; }
     public void setMonitoringToken(String monitoringToken) { this.monitoringToken = monitoringToken; }
+    public String getWebhookToken() { return webhookToken; }
+    public void setWebhookToken(String webhookToken) { this.webhookToken = webhookToken; }
     public boolean isWriteEnabled() { return writeEnabled; }
     public void setWriteEnabled(boolean writeEnabled) { this.writeEnabled = writeEnabled; }
     public int getPollIntervalSeconds() { return pollIntervalSeconds; }

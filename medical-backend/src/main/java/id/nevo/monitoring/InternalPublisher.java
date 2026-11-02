@@ -28,7 +28,11 @@ public class InternalPublisher {
     private static final Logger log = LoggerFactory.getLogger(InternalPublisher.class);
 
     private final ObjectMapper json;
-    private final HttpClient http = HttpClient.newHttpClient();
+    // HTTP_1_1 penting: default HTTP_2 mengirim header Upgrade "h2c" pada http
+    // plaintext, dan gateway medical-ws (Node/ws) menolaknya dengan HTTP 405.
+    private final HttpClient http = HttpClient.newBuilder()
+            .version(HttpClient.Version.HTTP_1_1)
+            .build();
     private final String url;
     private final String secret;
 

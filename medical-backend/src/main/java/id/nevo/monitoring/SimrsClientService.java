@@ -182,8 +182,47 @@ public class SimrsClientService {
         JsonNode items = root.isArray() ? root : root.path("deliveries");
         if (!items.isArray()) throw new IllegalArgumentException("Active deliveries SIMRS tidak sesuai kontrak");
         List<Map<String, Object>> result = new ArrayList<>();
-        for (JsonNode item : items) result.add(json.convertValue(item, Map.class));
+        for (JsonNode item : items) {
+            Map<String, Object> delivery = new LinkedHashMap<>(json.convertValue(item, Map.class));
+            JsonNode patient = item.path("patient");
+            if (patient.isObject()) {
+                copyIfPresent(delivery, "patientName", patient, "fullName");
+                copyIfPresent(delivery, "patientMrn", patient, "mrn");
+                copyIfPresent(delivery, "roomName", patient, "roomName");
+            }
+            if (!delivery.containsKey("roomName")) copyIfPresent(delivery, "roomName", item, "roomName");
+            String medicineName = firstText(item, "medicineName", "medicine.name");
+            if (medicineName == null) medicineName = firstText(item.path("prescription"), "medicineName", "medicine.name");
+            if (medicineName == null) medicineName = firstArrayItemText(item.path("prescription").path("items"), "medicine.name", "name");
+            if (medicineName == null) medicineName = firstArrayItemText(item.path("items"), "medicine.name", "name");
+            if (medicineName != null) delivery.put("medicineName", medicineName);
+            result.add(delivery);
+        }
         return result;
+    }
+
+    private static void copyIfPresent(Map<String, Object> target, String key, JsonNode source, String field) {
+        if (!target.containsKey(key) && source.path(field).isValueNode() && !source.path(field).asText().isBlank()) {
+            target.put(key, source.path(field).asText());
+        }
+    }
+
+    private static String firstText(JsonNode source, String... paths) {
+        for (String path : paths) {
+            JsonNode value = source;
+            for (String part : path.split("\\.")) value = value.path(part);
+            if (value.isValueNode() && !value.asText().isBlank()) return value.asText();
+        }
+        return null;
+    }
+
+    private static String firstArrayItemText(JsonNode items, String... paths) {
+        if (!items.isArray()) return null;
+        for (JsonNode item : items) {
+            String value = firstText(item, paths);
+            if (value != null) return value;
+        }
+        return null;
     }
 
     private void saveSnapshot(JsonNode snapshot) {

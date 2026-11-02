@@ -50,13 +50,20 @@ public class SecurityConfiguration {
     SecurityFilterChain security(HttpSecurity http) throws Exception {
         return http.csrf(csrf -> csrf
                         .csrfTokenRepository(CookieCsrfTokenRepository.withHttpOnlyFalse())
-                        .csrfTokenRequestHandler(new CsrfTokenRequestAttributeHandler()))
+                        .csrfTokenRequestHandler(new CsrfTokenRequestAttributeHandler())
+                        .ignoringRequestMatchers("/webhooks/simrs/**", "/actuator/health"))
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/actuator/health", "/error").permitAll()
                         .requestMatchers("/api/v1/auth/**").permitAll()
+                        .requestMatchers("/webhooks/simrs/**").permitAll()
                         .requestMatchers(HttpMethod.POST, "/api/v1/maps/*/activate").hasRole("ADMIN")
                         .requestMatchers(HttpMethod.POST, "/api/v1/mappings/*/activate").hasRole("ADMIN")
+                        // Registrasi robot node = ADMIN saja (kontrak robot-command.md §7);
+                        // exact path — POST /robots/{id}/commands tetap pada catch-all.
+                        .requestMatchers(HttpMethod.POST, "/api/v1/robots").hasRole("ADMIN")
                         .requestMatchers("/api/v1/users/**").hasRole("ADMIN")
+                        // Admin SIMRS: config + mission reassign
+                        .requestMatchers("/api/v1/simrs/admin/**").hasRole("ADMIN")
                         .requestMatchers("/api/v1/**").hasAnyRole("ADMIN", "FARMASI", "OPERATOR")
                         .requestMatchers("/ws/**").authenticated()
                         .anyRequest().denyAll())

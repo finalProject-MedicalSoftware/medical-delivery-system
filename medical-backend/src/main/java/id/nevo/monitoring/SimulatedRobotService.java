@@ -46,6 +46,9 @@ public class SimulatedRobotService implements RobotAdapter {
     private double currentY = -5.0;
     private double currentYaw = 0.0;
     private double speed = 0.0;
+    private double configuredSpeed = 0.55;
+    private double teleopLinear = 0.0;
+    private double teleopAngular = 0.0;
 
     // Navigation tracking
     private UUID activeMissionId = null;
@@ -74,7 +77,6 @@ public class SimulatedRobotService implements RobotAdapter {
         t.setDaemon(true);
         return t;
     });
-    private Integer simrsCompartmentNo;
 
     @PreDestroy
     public void shutdownSimrsWriter() { simrsWriter.shutdown(); }
@@ -117,9 +119,7 @@ public class SimulatedRobotService implements RobotAdapter {
                 String requestCode = (String) mission.get("request_code");
                 if (requestCode == null || requestCode.isBlank()) return;
                 String roomCode = (String) mission.get("room_code");
-                Integer compartment = simrsCompartmentNo;
-                simrsCompartmentNo = null;
-                doSimrsPost(missionId, requestCode, "MOCK_ARRIVED_AT_ROOM", "[SIMULASI] Robot NEVO-01 tiba di ruang " + (roomCode == null ? "sasaran" : roomCode) + "; serah-terima ditentukan via scan manusia.", compartment);
+                doSimrsPost(missionId, requestCode, "MOCK_ARRIVED_AT_ROOM", "[SIMULASI] Robot NEVO-01 tiba di ruang " + (roomCode == null ? "sasaran" : roomCode) + "; serah-terima ditentukan via scan manusia.", missionCompartment(missionId));
             } catch (Exception ex) {
                 log.warn("Push status SIMRS (MOCK_ARRIVED_AT_ROOM) gagal: {}", safeSimrsMessage(ex));
             }
@@ -135,7 +135,6 @@ public class SimulatedRobotService implements RobotAdapter {
                 if (mission == null) { log.warn("Misi {} tidak ditemukan; laporan pembatalan SIMRS dilewati", missionId); return; }
                 String requestCode = (String) mission.get("request_code");
                 if (requestCode == null || requestCode.isBlank()) return;
-                simrsCompartmentNo = null;
                 doSimrsPost(missionId, requestCode, "CANCELLED", "[SIMULASI] Misi pengantaran dibatalkan; robot kembali ke status siap.", null);
             } catch (Exception ex) {
                 log.warn("Push status SIMRS (CANCELLED) gagal: {}", safeSimrsMessage(ex));
@@ -185,7 +184,9 @@ public class SimulatedRobotService implements RobotAdapter {
         map.put("battery", Math.round(battery * 10.0) / 10.0);
         map.put("pose", Map.of("x", Math.round(currentX * 100.0) / 100.0, "y", Math.round(currentY * 100.0) / 100.0, "yaw", Math.round(currentYaw * 100.0) / 100.0));
         map.put("speed", speed);
+        map.put("configuredSpeed", configuredSpeed);
         map.put("activeMissionId", activeMissionId);
+        map.put("queueLength", countQueued());
         map.put("simulated", true);
         map.put("lastSeen", Instant.now().toString());
         return map;
@@ -212,32 +213,16 @@ public class SimulatedRobotService implements RobotAdapter {
         return out;
     }
 
+    /**
+     * Terima misi baru. Satu robot = satu misi aktif: bila robot sedang NAVIGATING, misi
+     * berikutnya masuk status QUEUED dan otomatis mulai saat misi aktif selesai/dibatalkan.
+     */
     public synchronized Map<String, Object> dispatchMission(UUID waypointId, String roomCode, String userName, String requestCode, Integer compartmentNo) {
-        if ("NAVIGATING".equals(status)) {
-            throw new IllegalStateException("Robot NEVO-01 sedang menjalankan misi aktif lain");
+        if (compartmentNo != null && (compartmentNo < 0 || compartmentNo > 5)) {
+            throw new IllegalArgumentException("compartmentNo harus 0..5 (6 kompartemen tray)");
         }
-
-        // Query waypoint coordinates
-        var rows = db.queryForList("SELECT name, x, y, yaw, map_id FROM m_waypoint WHERE id=?", waypointId);
-        if (rows.isEmpty()) {
-            throw new IllegalArgumentException("Waypoint tidak ditemukan");
-        }
-        var wp = rows.get(0);
-        String wpName = (String) wp.get("name");
-        targetX = ((Number) wp.get("x")).doubleValue();
-        targetY = ((Number) wp.get("y")).doubleValue();
-        targetYaw = ((Number) wp.get("yaw")).doubleValue();
-
+        Target target = loadTarget(waypointId);
         UUID missionId = UUID.randomUUID();
-        this.activeMissionId = missionId;
-        this.startX = currentX;
-        this.startY = currentY;
-        this.totalDistance = Math.hypot(targetX - startX, targetY - startY);
-        this.traveledDistance = 0;
-        this.status = "NAVIGATING";
-        this.speed = 0.55; // 0.55 m/s
-        this.activeRequestCode = requestCode == null ? "" : requestCode;
-        this.activeWardCode = resolveWardCode(roomCode);
 
         // 1. Record SUBMITTED
         db.update("INSERT INTO t_mission(id, robot_id, waypoint_id, room_code, created_by, status, request_code, simulated, created_at, updated_at) " +
@@ -250,12 +235,66 @@ public class SimulatedRobotService implements RobotAdapter {
         db.update("INSERT INTO h_mission_event(mission_id, status, source, message) VALUES (?, 'BACKEND_ACCEPTED', 'BACKEND', ?)",
                 missionId, "Perintah divalidasi dan diterima oleh Server Monitoring NEVO");
 
-        // 3. Transition ROBOT_ACKNOWLEDGED (SIMULASI)
+        // 3. Kompartemen tray per misi (bukan state global: antrian bisa menumpuk beberapa misi).
+        if (compartmentNo != null) {
+            db.update("INSERT INTO t_delivery_compartment(id, mission_id, compartment_no, filled_at) VALUES (?, ?, ?, now())",
+                    UUID.randomUUID(), missionId, compartmentNo);
+        }
+
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("missionId", missionId);
+        result.put("robotId", robotId);
+        result.put("targetWaypoint", target.name());
+        result.put("targetCoordinates", Map.of("x", target.x(), "y", target.y(), "yaw", target.yaw()));
+        result.put("compartmentNo", compartmentNo);
+        result.put("simulated", true);
+
+        if ("IDLE".equals(status)) {
+            startMission(missionId, target, roomCode, requestCode);
+            result.put("status", "EXECUTING");
+            return result;
+        }
+
+        // Robot sibuk: masuk antrian. Posisi = jumlah misi QUEUED yang lebih tua + 1.
+        db.update("UPDATE t_mission SET status='QUEUED', updated_at=now() WHERE id=?", missionId);
+        int position = queuePosition(missionId);
+        db.update("INSERT INTO h_mission_event(mission_id, status, source, message) VALUES (?, 'QUEUED', 'BACKEND', ?)",
+                missionId, "Robot NEVO-01 sedang bertugas; misi masuk antrian posisi " + position);
+        wsHandler.broadcast("MISSION_EVENT", Map.of(
+                "missionId", missionId,
+                "status", "QUEUED",
+                "progress", 0,
+                "message", "Menunggu robot selesai; antrian posisi " + position,
+                "simulated", true,
+                "requestCode", requestCode == null ? "" : requestCode,
+                "wardCode", resolveWardCode(roomCode)
+        ));
+        result.put("status", "QUEUED");
+        result.put("queuePosition", position);
+        return result;
+    }
+
+    /** Mulai eksekusi misi (dipakai dispatch langsung maupun saat antrian maju). */
+    private void startMission(UUID missionId, Target target, String roomCode, String requestCode) {
+        this.activeMissionId = missionId;
+        this.startX = currentX;
+        this.startY = currentY;
+        this.targetX = target.x();
+        this.targetY = target.y();
+        this.targetYaw = target.yaw();
+        this.totalDistance = Math.hypot(targetX - startX, targetY - startY);
+        this.traveledDistance = 0;
+        this.status = "NAVIGATING";
+        this.speed = configuredSpeed;
+        this.activeRequestCode = requestCode == null ? "" : requestCode;
+        this.activeWardCode = resolveWardCode(roomCode);
+
+        // ROBOT_ACKNOWLEDGED (SIMULASI)
         db.update("UPDATE t_mission SET status='ROBOT_ACKNOWLEDGED', updated_at=now() WHERE id=?", missionId);
         db.update("INSERT INTO h_mission_event(mission_id, status, source, message) VALUES (?, 'ROBOT_ACKNOWLEDGED', 'SIMULATED_ROBOT', ?)",
-                missionId, "[SIMULASI] Robot menerima rencana rute menuju " + wpName);
+                missionId, "[SIMULASI] Robot menerima rencana rute menuju " + target.name());
 
-        // 4. Transition EXECUTING
+        // EXECUTING
         db.update("UPDATE t_mission SET status='EXECUTING', updated_at=now() WHERE id=?", missionId);
         db.update("INSERT INTO h_mission_event(mission_id, status, source, message) VALUES (?, 'EXECUTING', 'SIMULATED_ROBOT', ?)",
                 missionId, "[SIMULASI] Robot memulai navigasi otonom menuju titik sasaran");
@@ -264,24 +303,77 @@ public class SimulatedRobotService implements RobotAdapter {
                 "missionId", missionId,
                 "status", "EXECUTING",
                 "progress", 0,
-                "message", "Memulai perjalanan menuju " + wpName,
+                "message", "Memulai perjalanan menuju " + target.name(),
                 "simulated", true,
                 "requestCode", activeRequestCode,
                 "wardCode", activeWardCode
         ));
 
         // Push status SIMRS (fire-and-forget; gagal tidak memblokir misi)
-        this.simrsCompartmentNo = compartmentNo;
         postSimrsInTransit(missionId, requestCode, roomCode);
+    }
 
-        return Map.of(
-                "missionId", missionId,
-                "robotId", robotId,
-                "status", "EXECUTING",
-                "targetWaypoint", wpName,
-                "targetCoordinates", Map.of("x", targetX, "y", targetY, "yaw", targetYaw),
-                "simulated", true
-        );
+    /** Misi QUEUED tertua untuk robot ini; misi tanpa waypoint valid dilewati (JOIN), bukan dipaksa FAILED. */
+    private synchronized void startNextQueued() {
+        if (!"IDLE".equals(status)) return;
+        var rows = db.queryForList(
+                "SELECT m.id, m.room_code, m.request_code, w.name, w.x, w.y, w.yaw " +
+                        "FROM t_mission m JOIN m_waypoint w ON m.waypoint_id = w.id " +
+                        "WHERE m.status = 'QUEUED' AND m.robot_id = ? " +
+                        "ORDER BY m.created_at ASC, m.id ASC LIMIT 1", robotId);
+        if (rows.isEmpty()) return;
+        var row = rows.get(0);
+        UUID nextId = (UUID) row.get("id");
+        Target target = new Target((String) row.get("name"),
+                ((Number) row.get("x")).doubleValue(),
+                ((Number) row.get("y")).doubleValue(),
+                ((Number) row.get("yaw")).doubleValue());
+        log.info("[SIMULASI] Antrian maju: memulai misi {}", nextId);
+        startMission(nextId, target, (String) row.get("room_code"), (String) row.get("request_code"));
+    }
+
+    /** Posisi 1-based sebuah misi QUEUED dalam antrian robotnya. */
+    public int queuePosition(UUID missionId) {
+        Integer before = db.queryForObject(
+                "SELECT count(*) FROM t_mission q WHERE q.status = 'QUEUED' AND q.robot_id = " +
+                        "(SELECT robot_id FROM t_mission WHERE id = ?) " +
+                        "AND (q.created_at, q.id) < (SELECT created_at, id FROM t_mission WHERE id = ?)",
+                Integer.class, missionId, missionId);
+        return (before == null ? 0 : before) + 1;
+    }
+
+    public int countQueued() {
+        try {
+            Integer n = db.queryForObject("SELECT count(*) FROM t_mission WHERE status = 'QUEUED' AND robot_id = ?", Integer.class, robotId);
+            return n == null ? 0 : n;
+        } catch (Exception ex) {
+            return 0;
+        }
+    }
+
+    /** Kompartemen tray misi (baris t_delivery_compartment); null bila misi tidak memakai tray. */
+    private Integer missionCompartment(UUID missionId) {
+        try {
+            var rows = db.queryForList("SELECT compartment_no FROM t_delivery_compartment WHERE mission_id = ? ORDER BY compartment_no LIMIT 1", Integer.class, missionId);
+            return rows.isEmpty() ? null : rows.get(0);
+        } catch (Exception ex) {
+            log.warn("Lookup kompartemen misi {} gagal: {}", missionId, safeSimrsMessage(ex));
+            return null;
+        }
+    }
+
+    private record Target(String name, double x, double y, double yaw) {}
+
+    private Target loadTarget(UUID waypointId) {
+        var rows = db.queryForList("SELECT name, x, y, yaw FROM m_waypoint WHERE id=?", waypointId);
+        if (rows.isEmpty()) {
+            throw new IllegalArgumentException("Waypoint tidak ditemukan");
+        }
+        var wp = rows.get(0);
+        return new Target((String) wp.get("name"),
+                ((Number) wp.get("x")).doubleValue(),
+                ((Number) wp.get("y")).doubleValue(),
+                ((Number) wp.get("yaw")).doubleValue());
     }
 
     /**
@@ -307,31 +399,52 @@ public class SimulatedRobotService implements RobotAdapter {
     }
 
     public synchronized Map<String, Object> cancelMission(UUID missionId, String userName) {
-        if (activeMissionId == null || !activeMissionId.equals(missionId)) {
-            throw new IllegalArgumentException("Misi tidak aktif atau tidak ditemukan");
+        if (activeMissionId != null && activeMissionId.equals(missionId)) {
+            this.status = "IDLE";
+            this.speed = 0.0;
+            this.activeMissionId = null;
+            String requestCode = activeRequestCode;
+            String wardCode = activeWardCode;
+            this.activeRequestCode = "";
+            this.activeWardCode = "";
+
+            markCancelled(missionId, userName);
+            postSimrsCancel(missionId);
+            broadcastCancelled(missionId, requestCode, wardCode, "Misi dibatalkan oleh pengguna");
+
+            // Slot robot bebas: misi antrian berikutnya langsung jalan.
+            startNextQueued();
+            return Map.of("missionId", missionId, "cancelled", true);
         }
 
-        this.status = "IDLE";
-        this.speed = 0.0;
-        this.activeMissionId = null;
+        // Misi yang masih menunggu di antrian tetap bisa dibatalkan tanpa mengganggu misi aktif.
+        Integer queued = db.queryForObject("SELECT count(*) FROM t_mission WHERE id=? AND status='QUEUED'", Integer.class, missionId);
+        if (queued == null || queued == 0) {
+            throw new IllegalArgumentException("Misi tidak aktif atau tidak ditemukan");
+        }
+        var row = db.queryForList("SELECT request_code, room_code FROM t_mission WHERE id=?", missionId).get(0);
+        markCancelled(missionId, userName);
+        postSimrsCancel(missionId);
+        broadcastCancelled(missionId, Objects.toString(row.get("request_code"), ""),
+                resolveWardCode((String) row.get("room_code")), "Misi antrian dibatalkan oleh pengguna");
+        return Map.of("missionId", missionId, "cancelled", true);
+    }
 
+    private void markCancelled(UUID missionId, String userName) {
         db.update("UPDATE t_mission SET status='CANCELLED', updated_at=now() WHERE id=?", missionId);
         db.update("INSERT INTO h_mission_event(mission_id, status, source, message) VALUES (?, 'CANCELLED', 'OPERATOR', ?)",
                 missionId, "Misi dibatalkan oleh operator: " + userName);
+    }
 
-        // Push pembatalan ke SIMRS (fire-and-forget)
-        postSimrsCancel(missionId);
-
+    private void broadcastCancelled(UUID missionId, String requestCode, String wardCode, String message) {
         wsHandler.broadcast("MISSION_EVENT", Map.of(
                 "missionId", missionId,
                 "status", "CANCELLED",
-                "message", "Misi dibatalkan oleh pengguna",
+                "message", message,
                 "simulated", true,
-                "requestCode", activeRequestCode,
-                "wardCode", activeWardCode
+                "requestCode", requestCode == null ? "" : requestCode,
+                "wardCode", wardCode == null ? "" : wardCode
         ));
-
-        return Map.of("missionId", missionId, "cancelled", true);
     }
 
     // ---- Perintah downlink (kontrak docs/api-contracts/robot-command.md) ----
@@ -368,8 +481,30 @@ public class SimulatedRobotService implements RobotAdapter {
                 case "CMD_RETURN_TO_DOCK" -> {
                     UUID dockId = parseUuid(params == null ? null : params.get("waypointId"));
                     if (dockId == null) throw new IllegalArgumentException("waypointId wajib UUID");
+                    // Kontrak perintah tetap tegas: robot yang sedang bertugas menolak pulang ke dock
+                    // (antrian hanya berlaku untuk POST /missions, bukan perintah downlink).
+                    if (!"IDLE".equals(status)) {
+                        throw new IllegalStateException("Robot NEVO-01 sedang menjalankan misi aktif lain");
+                    }
                     // Misi biasa dengan room_code/request_code kosong (tanpa terusan SIMRS/gateway; mirror lokal tetap jalan).
                     dispatchMission(dockId, "", userName, "", null);
+                }
+                case "CMD_SET_SPEED" -> {
+                    double next = number(params, "speed");
+                    if (next < 0 || next > 2.0) throw new IllegalArgumentException("speed harus 0..2 m/s");
+                    configuredSpeed = next;
+                    if ("NAVIGATING".equals(status)) speed = next;
+                }
+                case "CMD_TELEOP_DRIVE" -> {
+                    if (!"IDLE".equals(status)) throw new IllegalStateException("Robot sedang menjalankan misi aktif");
+                    teleopLinear = number(params, "linear");
+                    teleopAngular = number(params, "angular");
+                    if (Math.abs(teleopLinear) > 1.0 || Math.abs(teleopAngular) > 2.0) {
+                        throw new IllegalArgumentException("teleop di luar batas");
+                    }
+                    currentYaw += teleopAngular * 0.5;
+                    currentX += Math.cos(currentYaw) * teleopLinear * 0.5;
+                    currentY += Math.sin(currentYaw) * teleopLinear * 0.5;
                 }
                 default -> throw new IllegalArgumentException("Perintah tidak dikenal: " + command);
             }
@@ -387,6 +522,13 @@ public class SimulatedRobotService implements RobotAdapter {
         db.update("UPDATE t_robot_command SET status=?, reason_code=?, finished_at=now() WHERE command_id=?", result, reason, commandId);
         wsHandler.publishCommand("ROBOT_COMMAND_RESULT", Map.of(
                 "commandId", commandId, "robotId", robotId, "result", result, "reason", reason));
+    }
+
+    private static double number(Map<String, Object> params, String key) {
+        Object raw = params == null ? null : params.get(key);
+        if (raw instanceof Number n) return n.doubleValue();
+        try { return Double.parseDouble(Objects.toString(raw)); }
+        catch (Exception e) { throw new IllegalArgumentException(key + " wajib angka"); }
     }
 
     private static UUID parseUuid(Object raw) {
@@ -457,6 +599,11 @@ public class SimulatedRobotService implements RobotAdapter {
 
                 // Push kedatangan ke SIMRS (fire-and-forget; serah-terima tetap manual via scan)
                 postSimrsArrival(completedMissionId);
+                activeRequestCode = "";
+                activeWardCode = "";
+
+                // Misi antrian berikutnya (bila ada) langsung mengambil alih.
+                startNextQueued();
             } else {
                 wsHandler.broadcast("MISSION_EVENT", Map.of(
                         "missionId", activeMissionId,
