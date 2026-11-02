@@ -6,6 +6,8 @@ import { ArrowLeft, Truck, Info } from "lucide-react";
 import DeliveryStatusActions from "@/components/DeliveryStatusActions";
 import { StatusBadge, cardCls } from "@/components/ui";
 import { bedDisplayName } from "@/lib/bed-info";
+import { patientScanPath } from "@/lib/wristband";
+import { signScanToken } from "@/lib/qr-token";
 
 export const dynamic = "force-dynamic";
 
@@ -129,7 +131,12 @@ export default async function PengantaranDetailPage({
       </div>
 
       {/* Actions */}
-      <DeliveryStatusActions delivery={delivery} user={user!} />
+      <DeliveryStatusActions
+        delivery={delivery}
+        user={user!}
+        scanHref={patientScanPath(delivery.prescription.patient.mrn, signScanToken(delivery.prescription.patient.mrn))}
+        patientHref={`/pasien/${delivery.prescription.patient.id}`}
+      />
 
       {/* Event timeline */}
       <div className={cardCls}>

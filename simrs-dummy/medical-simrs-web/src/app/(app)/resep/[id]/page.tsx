@@ -5,7 +5,7 @@ import Link from "next/link";
 import { ArrowLeft, FileText, AlertTriangle, Truck } from "lucide-react";
 import PrescriptionActions from "@/components/PrescriptionActions";
 import { StatusBadge, cardCls, btnPrimary } from "@/components/ui";
-import { deliveryStatusLabel } from "@/lib/delivery-status";
+import { ACTIVE_DELIVERY_STATUSES, deliveryStatusLabel } from "@/lib/delivery-status";
 import { PERMISSION_CODES } from "@/lib/rbac";
 import { bedDisplayName } from "@/lib/bed-info";
 
@@ -38,7 +38,7 @@ export default async function ResepDetailPage({
     user?.roles.includes("SYSTEM_ADMIN") ||
     user?.permissions.includes(PERMISSION_CODES.DELIVERY_CREATE);
   const hasActiveDelivery = rx.deliveryRequests.some((d) =>
-    ["DELIVERY_REQUESTED", "PENDING_INTEGRATION", "MOCK_IN_TRANSIT"].includes(d.status)
+    ACTIVE_DELIVERY_STATUSES.includes(d.status)
   );
 
   return (

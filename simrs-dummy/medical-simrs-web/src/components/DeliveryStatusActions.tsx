@@ -4,13 +4,18 @@ import { useTransition, useState } from "react";
 import { advanceDeliveryStatusAction } from "@/app/actions/delivery";
 import { UserAuthContext } from "@/lib/rbac";
 import { DeliveryStatus } from "@prisma/client";
-import { AlertTriangle, ChevronRight } from "lucide-react";
+import Link from "next/link";
+import { AlertTriangle, ChevronRight, QrCode, BedDouble } from "lucide-react";
 import { cardCls } from "@/components/ui";
 import { useToast } from "@/components/Toast";
 
 interface Props {
   delivery: { id: string; status: DeliveryStatus };
   user: UserAuthContext;
+  /** Tautan QR bertoken ke /scan/{mrn} — satu-satunya jalur serah-terima. */
+  scanHref: string;
+  /** Halaman pasien (ada aksi "Selesaikan rawat inap"). */
+  patientHref: string;
 }
 
 const TRANSITIONS: Partial<Record<DeliveryStatus, { to: DeliveryStatus; label: string; cls: string }>> = {
@@ -31,7 +36,7 @@ const TRANSITIONS: Partial<Record<DeliveryStatus, { to: DeliveryStatus; label: s
   },
 };
 
-export default function DeliveryStatusActions({ delivery, user }: Props) {
+export default function DeliveryStatusActions({ delivery, user, scanHref, patientHref }: Props) {
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const toast = useToast();
@@ -41,7 +46,35 @@ export default function DeliveryStatusActions({ delivery, user }: Props) {
     user.roles.includes("SYSTEM_ADMIN") ||
     user.permissions.includes("delivery:create");
 
-  if (!next || !canAct) return null;
+  if (!canAct) return null;
+
+  // Sudah tiba: serah-terima HANYA lewat scan QR, jadi tidak ada tombol
+  // transisi di sini. Yang ditawarkan hanya jalan keluar yang sah.
+  if (!next && delivery.status === "MOCK_ARRIVED_AT_ROOM") {
+    return (
+      <div className={cardCls}>
+        <h2 className="mb-4 text-sm font-semibold text-slate-900">Tindakan</h2>
+        <p className="mb-4 text-sm text-slate-600">
+          Robot sudah tiba. Serah-terima hanya bisa dikonfirmasi lewat scan QR gelang pasien.
+        </p>
+        <div className="flex flex-wrap gap-2">
+          <Link href={scanHref} className="inline-flex items-center gap-2 rounded-lg bg-emerald-100 px-4 py-2 text-sm font-medium text-emerald-800 ring-1 ring-emerald-200 transition hover:bg-emerald-200">
+            <QrCode className="h-4 w-4" />
+            Buka Scan QR Pasien
+          </Link>
+          <Link href={patientHref} className="inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium text-slate-600 ring-1 ring-slate-300 transition hover:bg-slate-100">
+            <BedDouble className="h-4 w-4" />
+            Selesaikan Rawat Inap
+          </Link>
+        </div>
+        <p className="mt-3 text-xs text-slate-400">
+          Pengantaran ulang memerlukan resep baru; resep ini tidak bisa diajukan lagi selama pengantaran aktif.
+        </p>
+      </div>
+    );
+  }
+
+  if (!next) return null;
 
   function handleAdvance() {
     setError(null);

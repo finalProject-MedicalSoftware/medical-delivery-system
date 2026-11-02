@@ -3,6 +3,7 @@ import { getCurrentUser } from "@/lib/auth";
 import { redirect } from "next/navigation";
 import { PERMISSION_CODES } from "@/lib/rbac";
 import CreateDeliveryForm from "@/components/CreateDeliveryForm";
+import { ACTIVE_DELIVERY_STATUSES } from "@/lib/delivery-status";
 
 export const metadata = { title: "Ajukan Pengantaran - SIMRS Dummy" };
 
@@ -37,7 +38,7 @@ export default async function BuatPengantaranPage({
           },
         },
         deliveryRequests: {
-          where: { status: { in: ["DELIVERY_REQUESTED", "PENDING_INTEGRATION", "MOCK_IN_TRANSIT"] } },
+          where: { status: { in: ACTIVE_DELIVERY_STATUSES } },
           select: { id: true },
         },
       },

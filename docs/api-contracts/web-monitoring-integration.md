@@ -89,6 +89,31 @@ Resep SIMRS dapat membawa jadwal minum; generator SIMRS membuat
 - Keterbatasan: prediksi habis obat dari `daysOfStock = floor(stock/perDay)` dihitung dari HARI INI (stok dipotong sekali saat PREPARING→READY); tidak ada view admin untuk mengelola slot terjadwal.
 - Env baru: `DELIVERY_SCHEDULE_HORIZON_HOURS` (default `24`).
 
+### 1.3 Klarifikasi: status "tiba" masih aktif, serah-terima tetap QR (2026-11-02)
+
+Bug yang dilaporkan: pengantaran yang sudah `MOCK_ARRIVED_AT_ROOM` masih bisa diajukan ulang dari resep dan
+tombol aksi di halaman pengantaran hilang (tidak ada jalan keluar).
+
+Akar masalah: daftar status aktif untuk cek duplikat masih versi lama (3 status) yang tidak memuat
+`MOCK_ARRIVED_AT_ROOM`, sedangkan read API monitoring sudah memakai 4 status.
+
+Penetapan (tidak ada perubahan kontrak read/write):
+
+- **Satu sumber kebenaran status aktif** = `ACTIVE_DELIVERY_STATUSES` di
+  `simrs-dummy/medical-simrs-web/src/lib/delivery-status.ts`
+  (`DELIVERY_REQUESTED`, `PENDING_INTEGRATION`, `MOCK_IN_TRANSIT`, `MOCK_ARRIVED_AT_ROOM`).
+  Gate duplikat server action, guard tombol "Ajukan Pengantaran", dan filter `/pengantaran/baru` memakai
+  konstanta itu — bukan array hardcoded.
+- Implikasi bagi konsumen: selama `status` masih di daftar itu (termasuk sudah tiba), resep **tidak bisa**
+  diajukan pengantaran baru. Pengantaran ulang baru boleh setelah `MOCK_HANDOVER_CONFIRMED` (resep kembali
+  tidak punya pengantaran aktif).
+- `DELIVERY_TRANSITIONS` tidak berubah: `MOCK_ARRIVED_AT_ROOM → MOCK_HANDOVER_CONFIRMED` hanya lewat scan QR
+  manusia di `/scan/[mrn]?t=…`. Aturan 5 di §1 tetap berlaku; status "tiba" masih bisa `CANCELLED` lewat
+  endpoint monitoring sesuai tabel transisi.
+- UI halaman pengantaran untuk status tiba hanya menampilkan tautan: **Buka Scan QR Pasien** (jalur
+  serah-terima) dan **Selesaikan Rawat Inap** (discharge pasien, bukan transisi status pengantaran). Tidak ada
+  tombol yang menambah jalur transisi baru.
+
 ## 2. Bagian WebSocket (BASELINE AKTIF — gateway `medical-ws`; perlu verifikasi E2E ulang)
 
 > **Status implementasi (2026-10-30):** server WS berjalan di `medical-ws`

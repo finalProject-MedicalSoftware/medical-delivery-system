@@ -6,7 +6,7 @@ import { PERMISSION_CODES } from "@/lib/rbac";
 import { createDeliveryRequestSchema } from "@/lib/validations";
 import { revalidatePath } from "next/cache";
 import { DeliveryStatus } from "@prisma/client";
-import { DELIVERY_TRANSITIONS } from "@/lib/delivery-status";
+import { ACTIVE_DELIVERY_STATUSES, DELIVERY_TRANSITIONS } from "@/lib/delivery-status";
 import { enqueueOutbox } from "@/lib/outbox";
 
 async function generateDeliveryCode(): Promise<string> {
@@ -62,7 +62,7 @@ export async function createDeliveryRequestAction(
   const existing = await prisma.deliveryRequest.findFirst({
     where: {
       prescriptionId: parsed.data.prescriptionId,
-      status: { in: ["DELIVERY_REQUESTED", "PENDING_INTEGRATION", "MOCK_IN_TRANSIT"] },
+      status: { in: ACTIVE_DELIVERY_STATUSES },
     },
   });
   if (existing) {
