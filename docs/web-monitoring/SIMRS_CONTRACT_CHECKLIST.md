@@ -1,6 +1,6 @@
 # Checklist Kontrak SIMRS
 
-Sumber aktual kontrak berada di root workspace (`monitoring-events.md` dan `web-monitoring-integration.md`), karena kedua file belum diletakkan di `medical-dashboard-monitoring/docs/api-contracts/`.
+Sumber aktual kontrak: `../../api-contracts/` (`web-monitoring-integration.md`, `monitoring-events.md`) — lihat `../README.md`.
 
 | Method/path | Kontrak utama | Implementasi | Uji |
 |---|---|---|---|

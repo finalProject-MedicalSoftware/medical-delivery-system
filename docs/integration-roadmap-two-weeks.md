@@ -1,3 +1,5 @@
+> **Status: catatan riwayat/plan — bukan sumber kebenaran.** Kontrak = `docs/api-contracts/`; indeks = `docs/README.md`.
+
 # Integrasi Medical Delivery — Ringkasan dan Roadmap 2 Minggu
 
 **Tanggal acuan:** 31 Oktober 2026 · **Horizon:** 10 hari kerja berikutnya (relatif)

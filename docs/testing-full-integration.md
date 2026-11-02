@@ -1,3 +1,5 @@
+> **Status: catatan riwayat/plan — bukan sumber kebenaran.** Kontrak = `docs/api-contracts/`; indeks = `docs/README.md`.
+
 # Testing — Full Integration (F2 Sprint)
 
 > Jalur default dokumen ini adalah demo lokal dengan data sintetis

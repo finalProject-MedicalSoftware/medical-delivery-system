@@ -1,3 +1,5 @@
+> **Status: catatan riwayat/plan — bukan sumber kebenaran.** Kontrak = `docs/api-contracts/`; indeks = `docs/README.md`.
+
 # Findings
 
 - :3001 was occupied by SIMRS `next-server` PID 61086 started in prior session; stopped. SIMRS should bind :3001 when :3000 is occupied by dashboard.

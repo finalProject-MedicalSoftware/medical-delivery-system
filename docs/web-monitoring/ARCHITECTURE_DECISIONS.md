@@ -1,3 +1,5 @@
+> **Status: catatan riwayat/plan — bukan sumber kebenaran.** Kontrak = `docs/api-contracts/`; indeks = `docs/README.md`.
+
 # Keputusan Arsitektur NEVO
 
 ## 20 Oktober 2026 — SIMRS melalui environment backend

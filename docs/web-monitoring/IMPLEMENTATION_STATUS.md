@@ -1,3 +1,5 @@
+> **Status: catatan riwayat/plan — bukan sumber kebenaran.** Kontrak = `docs/api-contracts/`; indeks = `docs/README.md`.
+
 # Status Implementasi NEVO Web Monitoring
 
 **Tanggal evaluasi awal:** 20 Oktober 2026  

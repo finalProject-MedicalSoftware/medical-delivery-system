@@ -1,128 +1,486 @@
 {
-  "info": {
-    "name": "medical-delivery — F2 (robot, webhook, WS relay)",
-    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
-    "description": "Sintetis [MOCK]/SIMULATED. Variables: backend http://localhost:8080, bff http://localhost:3000, simrs http://localhost:3001, ws http://localhost:8081. Dokumen lengkap: docs/testing-full-integration.md"
-  },
-  "variable": [
-    { "key": "backend", "value": "http://localhost:8080/api/v1" },
-    { "key": "bff", "value": "http://localhost:3000" },
-    { "key": "simrs", "value": "http://localhost:3001" },
-    { "key": "ws", "value": "http://localhost:8081" },
-    { "key": "publishSecret", "value": "", "description": "Set lokal di environment Postman dari INTERNAL_PUBLISH_SECRET (medical-ws/.env). Jangan simpan nilai secret di file." },
-    { "key": "monitoringToken", "value": "", "description": "Set lokal di environment Postman dari nilai .env komponen terkait (backend SIMRS_MONITORING_TOKEN / SIMRS Dummy MONITORING_TOKEN). Jangan simpan nilai secret di file." },
-    { "key": "wsAuthToken", "value": "", "description": "Set lokal di environment Postman dari WS_AUTH_TOKEN (medical-ws/.env). Jangan simpan nilai secret di file." }
-  ],
-  "item": [
-    {
-      "name": "Robot REST (backend :8080)",
-      "item": [
-        { "name": "GET /robots", "request": { "method": "GET", "url": "{{backend}}/robots" } },
-        { "name": "POST /missions (dispatch) — harap EXECUTING atau QUEUED+queuePosition", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\"waypointId\":\"DUMMY-WP-R-MAWAR-202\",\"roomCode\":\"R-MAWAR-202\",\"requestCode\":\"REQ-…\",\"compartmentNo\":3}" }, "url": "{{backend}}/missions" } },
-        { "name": "POST /missions/{id}/cancel", "request": { "method": "POST", "url": "{{backend}}/missions/1/cancel" } },
-        { "name": "POST /robots/NEVO-01/commands — cancel mission", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\"command\":\"CMD_CANCEL_MISSION\"}" }, "url": "{{backend}}/robots/NEVO-01/commands" } },
-        { "name": "POST /robots/NEVO-01/commands — return to dock", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\"command\":\"CMD_RETURN_TO_DOCK\"}" }, "url": "{{backend}}/robots/NEVO-01/commands" } },
-        { "name": "GET /missions (queuePosition + compartmentNo)", "request": { "method": "GET", "url": "{{backend}}/missions" } },
-        { "name": "GET /missions/{id}", "request": { "method": "GET", "url": "{{backend}}/missions/1" } },
-        { "name": "GET /integrations/simrs/status", "request": { "method": "GET", "url": "{{backend}}/integrations/simrs/status" } },
-        { "name": "GET /integrations/simrs/deliveries (antrian manifest)", "request": { "method": "GET", "url": "{{backend}}/integrations/simrs/deliveries" } }
-      ]
+    "info": {
+        "name": "medical-delivery — F2 (robot, webhook, WS relay)",
+        "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+        "description": "Sintetis [MOCK]/SIMULATED. Variables: backend http://localhost:8080, bff http://localhost:3000, simrs http://localhost:3001, ws http://localhost:8081. Dokumen lengkap: docs/testing-full-integration.md"
     },
-    {
-      "name": "Admin SIMRS (backend :8080)",
-      "item": [
-        { "name": "GET /simrs/admin/config", "request": { "method": "GET", "url": "{{backend}}/simrs/admin/config" } },
-        { "name": "POST /simrs/admin/config (ganti penuh)", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\"enabled\":true,\"writeEnabled\":false,\"baseUrl\":\"http://localhost:3001\",\"pollIntervalSeconds\":30,\"connectTimeoutMs\":3000,\"readTimeoutMs\":5000,\"writeMaxAttempts\":3}" }, "url": "{{backend}}/simrs/admin/config" } },
-        { "name": "PATCH /simrs/admin/config (sebagian)", "request": { "method": "PATCH", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\"pollIntervalSeconds\":15}" }, "url": "{{backend}}/simrs/admin/config" } },
-        { "name": "POST /simrs/admin/mission/reassign (QUEUED saja)", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\"missionId\":\"00000000-0000-0000-0000-000000000000\",\"robotId\":\"NEVO-01\"}" }, "url": "{{backend}}/simrs/admin/mission/reassign" } },
-        { "name": "POST /simrs/admin/mission/reassign-batch", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "[{\"missionId\":\"00000000-0000-0000-0000-000000000000\",\"robotId\":\"NEVO-01\"}]" }, "url": "{{backend}}/simrs/admin/mission/reassign-batch" } }
-      ]
-    },
-    {
-      "name": "WS relay (BFF :3000)",
-      "item": [
-        { "name": "GET /api/ws/session", "request": { "method": "GET", "url": "{{bff}}/api/ws/session" } },
-        { "name": "POST session turnOn", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\"action\":\"turnOn\"}" }, "url": "{{bff}}/api/ws/session" } },
-        { "name": "POST session lock", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\"action\":\"lock\",\"user\":\"admin\"}" }, "url": "{{bff}}/api/ws/session" } },
-        { "name": "POST session unlock", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\"action\":\"unlock\"}" }, "url": "{{bff}}/api/ws/session" } },
-        { "name": "POST session turnOff", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\"action\":\"turnOff\"}" }, "url": "{{bff}}/api/ws/session" } },
-        { "name": "GET /api/ws/stream (SSE, sesi ON)", "request": { "method": "GET", "header": [{ "key": "Accept", "value": "text/event-stream" }], "url": { "raw": "{{bff}}/api/ws/stream?channels=all", "host": ["{{bff}}"], "path": ["api", "ws", "stream"], "query": [{ "key": "channels", "value": "all" }] } } },
-        { "name": "GET /api/ws/stream (harap 409 saat OFF)", "request": { "method": "GET", "url": "{{bff}}/api/ws/stream" } }
-      ]
-    },
-    {
-      "name": "Robot WS stand-in (Postman, medical-ws :8081)",
-      "item": [
+    "variable": [
         {
-          "name": "WS SI — Postman sebagai robot TIFA (kontrak robot-ws-tifa.md)",
-          "request": {
-            "method": "WS",
-            "header": [
-              { "key": "Authorization", "value": "Bearer {{wsAuthToken}}" }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\"code\":\"SI\",\"data\":{\"type\":\"ROBOT\",\"robot_id\":\"NEVO-01\"}}"
-            },
-            "url": "ws://127.0.0.1:8081/ws/v1/deliveries"
-          }
+            "key": "backend",
+            "value": "http://127.0.0.1:8082/api/v1",
+            "description": "Port host sesuai simrs-dummy/compose.yaml (kontainer 8080/8081 → host 8082/8083)."
         },
         {
-          "name": "WS uplink STATUS (setelah SI; enrich robot_id+timestamp, broadcast ke UI robot:NEVO-01)",
-          "request": {
-            "method": "WS",
-            "header": [
-              { "key": "Authorization", "value": "Bearer {{wsAuthToken}}" }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\"code\":\"STATUS\",\"data\":{\"status\":\"MOVING\",\"mission_code\":\"DELIV-1\"}}"
-            },
-            "url": "ws://127.0.0.1:8081/ws/v1/deliveries"
-          }
+            "key": "bff",
+            "value": "http://127.0.0.1:3100",
+            "description": "Port host sesuai simrs-dummy/compose.yaml (kontainer 8080/8081 → host 8082/8083)."
         },
         {
-          "name": "WS SI duplikat (harap ERROR DUPLICATE lalu close 4002)",
-          "request": {
-            "method": "WS",
-            "header": [
-              { "key": "Authorization", "value": "Bearer {{wsAuthToken}}" }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\"code\":\"SI\",\"data\":{\"type\":\"ROBOT\",\"robot_id\":\"NEVO-01\"}}"
-            },
-            "url": "ws://127.0.0.1:8081/ws/v1/deliveries"
-          }
+            "key": "simrs",
+            "value": "http://127.0.0.1:3000",
+            "description": "Port host sesuai simrs-dummy/compose.yaml (kontainer 8080/8081 → host 8082/8083)."
         },
         {
-          "name": "WS subscribe robot:NEVO-01 (jalur UI stand-in, {action:subscribe})",
-          "request": {
-            "method": "WS",
-            "header": [
-              { "key": "Authorization", "value": "Bearer {{wsAuthToken}}" }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\"action\":\"subscribe\",\"channels\":[\"robot:NEVO-01\"]}"
-            },
-            "url": "ws://127.0.0.1:8081/ws/v1/deliveries"
-          }
+            "key": "ws",
+            "value": "http://127.0.0.1:8083",
+            "description": "Port host sesuai simrs-dummy/compose.yaml (kontainer 8080/8081 → host 8082/8083)."
+        },
+        {
+            "key": "publishSecret",
+            "value": "",
+            "description": "Set lokal di environment Postman dari INTERNAL_PUBLISH_SECRET (medical-ws/.env). Jangan simpan nilai secret di file."
+        },
+        {
+            "key": "monitoringToken",
+            "value": "",
+            "description": "Set lokal di environment Postman dari nilai .env komponen terkait (backend SIMRS_MONITORING_TOKEN / SIMRS Dummy MONITORING_TOKEN). Jangan simpan nilai secret di file."
+        },
+        {
+            "key": "wsAuthToken",
+            "value": "",
+            "description": "Set lokal di environment Postman dari WS_AUTH_TOKEN (medical-ws/.env). Jangan simpan nilai secret di file."
         }
-      ]
-    },
-    {
-      "name": "Publish bridge (medical-ws :8081)",
-      "item": [
-        { "name": "POST /internal/publish (TELEMETRY)", "request": { "method": "POST", "header": [{ "key": "X-Internal-Secret", "value": "{{publishSecret}}" }, { "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\"v\":1,\"eventId\":\"evt-1\",\"type\":\"TELEMETRY\",\"occurredAt\":\"2026-10-29T10:00:00Z\",\"requestCode\":\"DELIV-1\",\"wardCode\":\"A\",\"data\":{\"robotId\":\"NEVO-01\",\"battery\":78}}" }, "url": "{{ws}}/internal/publish" } },
-        { "name": "POST /internal/publish (MISSION_EVENT ward A)", "request": { "method": "POST", "header": [{ "key": "X-Internal-Secret", "value": "{{publishSecret}}" }, { "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\"v\":1,\"eventId\":\"evt-2\",\"type\":\"MISSION_EVENT\",\"occurredAt\":\"2026-10-29T10:01:00Z\",\"requestCode\":\"DELIV-1\",\"wardCode\":\"A\",\"data\":{\"status\":\"IN_PROGRESS\",\"progress\":50}}" }, "url": "{{ws}}/internal/publish" } }
-      ]
-    },
-    {
-      "name": "Webhook monitoring → SIMRS (:3001)",
-      "item": [
-        { "name": "POST /api/v1/monitoring/delivery-status", "request": { "method": "POST", "header": [{ "key": "x-monitoring-token", "value": "{{monitoringToken}}" }, { "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\"requestCode\":\"REQ-…\",\"toStatus\":\"MOCK_IN_TRANSIT\",\"note\":\"Departed from dock\",\"compartmentNo\":3,\"idempotencyKey\":\"nevomock-deliv-0001-step1\"}" }, "url": "{{simrs}}/api/v1/monitoring/delivery-status" } }
-      ]
-    }
-  ]
+    ],
+    "item": [
+        {
+            "name": "Robot REST (backend :8080)",
+            "item": [
+                {
+                    "name": "GET /robots",
+                    "request": {
+                        "method": "GET",
+                        "url": "{{backend}}/robots"
+                    }
+                },
+                {
+                    "name": "POST /missions (dispatch) — harap EXECUTING atau QUEUED+queuePosition",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\"waypointId\":\"DUMMY-WP-R-MAWAR-202\",\"roomCode\":\"R-MAWAR-202\",\"requestCode\":\"REQ-…\",\"compartmentNo\":3}"
+                        },
+                        "url": "{{backend}}/missions"
+                    }
+                },
+                {
+                    "name": "POST /missions/{id}/cancel",
+                    "request": {
+                        "method": "POST",
+                        "url": "{{backend}}/missions/1/cancel"
+                    }
+                },
+                {
+                    "name": "POST /robots/NEVO-01/commands — cancel mission",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\"command\":\"CMD_CANCEL_MISSION\"}"
+                        },
+                        "url": "{{backend}}/robots/NEVO-01/commands"
+                    }
+                },
+                {
+                    "name": "POST /robots/NEVO-01/commands — return to dock",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\"command\":\"CMD_RETURN_TO_DOCK\"}"
+                        },
+                        "url": "{{backend}}/robots/NEVO-01/commands"
+                    }
+                },
+                {
+                    "name": "GET /missions (queuePosition + compartmentNo)",
+                    "request": {
+                        "method": "GET",
+                        "url": "{{backend}}/missions"
+                    }
+                },
+                {
+                    "name": "GET /missions/{id}",
+                    "request": {
+                        "method": "GET",
+                        "url": "{{backend}}/missions/1"
+                    }
+                },
+                {
+                    "name": "GET /integrations/simrs/status",
+                    "request": {
+                        "method": "GET",
+                        "url": "{{backend}}/integrations/simrs/status"
+                    }
+                },
+                {
+                    "name": "GET /integrations/simrs/deliveries (antrian manifest)",
+                    "request": {
+                        "method": "GET",
+                        "url": "{{backend}}/integrations/simrs/deliveries"
+                    }
+                }
+            ]
+        },
+        {
+            "name": "Admin SIMRS (backend :8080)",
+            "item": [
+                {
+                    "name": "GET /simrs/admin/config",
+                    "request": {
+                        "method": "GET",
+                        "url": "{{backend}}/simrs/admin/config"
+                    }
+                },
+                {
+                    "name": "POST /simrs/admin/config (ganti penuh)",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\"enabled\":true,\"writeEnabled\":false,\"baseUrl\":\"http://localhost:3001\",\"pollIntervalSeconds\":30,\"connectTimeoutMs\":3000,\"readTimeoutMs\":5000,\"writeMaxAttempts\":3}"
+                        },
+                        "url": "{{backend}}/simrs/admin/config"
+                    }
+                },
+                {
+                    "name": "PATCH /simrs/admin/config (sebagian)",
+                    "request": {
+                        "method": "PATCH",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\"pollIntervalSeconds\":15}"
+                        },
+                        "url": "{{backend}}/simrs/admin/config"
+                    }
+                },
+                {
+                    "name": "POST /simrs/admin/mission/reassign (QUEUED saja)",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\"missionId\":\"00000000-0000-0000-0000-000000000000\",\"robotId\":\"NEVO-01\"}"
+                        },
+                        "url": "{{backend}}/simrs/admin/mission/reassign"
+                    }
+                },
+                {
+                    "name": "POST /simrs/admin/mission/reassign-batch",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "[{\"missionId\":\"00000000-0000-0000-0000-000000000000\",\"robotId\":\"NEVO-01\"}]"
+                        },
+                        "url": "{{backend}}/simrs/admin/mission/reassign-batch"
+                    }
+                }
+            ]
+        },
+        {
+            "name": "WS relay (BFF :3000)",
+            "item": [
+                {
+                    "name": "GET /api/ws/session",
+                    "request": {
+                        "method": "GET",
+                        "url": "{{bff}}/api/ws/session"
+                    }
+                },
+                {
+                    "name": "POST session turnOn",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\"action\":\"turnOn\"}"
+                        },
+                        "url": "{{bff}}/api/ws/session"
+                    }
+                },
+                {
+                    "name": "POST session lock",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\"action\":\"lock\",\"user\":\"admin\"}"
+                        },
+                        "url": "{{bff}}/api/ws/session"
+                    }
+                },
+                {
+                    "name": "POST session unlock",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\"action\":\"unlock\"}"
+                        },
+                        "url": "{{bff}}/api/ws/session"
+                    }
+                },
+                {
+                    "name": "POST session turnOff",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\"action\":\"turnOff\"}"
+                        },
+                        "url": "{{bff}}/api/ws/session"
+                    }
+                },
+                {
+                    "name": "GET /api/ws/stream (SSE, sesi ON)",
+                    "request": {
+                        "method": "GET",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "text/event-stream"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{bff}}/api/ws/stream?channels=all",
+                            "host": [
+                                "{{bff}}"
+                            ],
+                            "path": [
+                                "api",
+                                "ws",
+                                "stream"
+                            ],
+                            "query": [
+                                {
+                                    "key": "channels",
+                                    "value": "all"
+                                }
+                            ]
+                        }
+                    }
+                },
+                {
+                    "name": "GET /api/ws/stream (harap 409 saat OFF)",
+                    "request": {
+                        "method": "GET",
+                        "url": "{{bff}}/api/ws/stream"
+                    }
+                }
+            ]
+        },
+        {
+            "name": "Robot WS stand-in (Postman, medical-ws :8081)",
+            "item": [
+                {
+                    "name": "WS SI — Postman sebagai robot TIFA (kontrak robot-ws-tifa.md)",
+                    "request": {
+                        "method": "WS",
+                        "header": [
+                            {
+                                "key": "Authorization",
+                                "value": "Bearer {{wsAuthToken}}"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\"code\":\"SI\",\"data\":{\"type\":\"ROBOT\",\"robot_id\":\"NEVO-01\"}}"
+                        },
+                        "url": "ws://127.0.0.1:8081/ws/v1/deliveries"
+                    }
+                },
+                {
+                    "name": "WS uplink STATUS (setelah SI; enrich robot_id+timestamp, broadcast ke UI robot:NEVO-01)",
+                    "request": {
+                        "method": "WS",
+                        "header": [
+                            {
+                                "key": "Authorization",
+                                "value": "Bearer {{wsAuthToken}}"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\"code\":\"STATUS\",\"data\":{\"status\":\"MOVING\",\"mission_code\":\"DELIV-1\"}}"
+                        },
+                        "url": "ws://127.0.0.1:8081/ws/v1/deliveries"
+                    }
+                },
+                {
+                    "name": "WS SI duplikat (harap ERROR DUPLICATE lalu close 4002)",
+                    "request": {
+                        "method": "WS",
+                        "header": [
+                            {
+                                "key": "Authorization",
+                                "value": "Bearer {{wsAuthToken}}"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\"code\":\"SI\",\"data\":{\"type\":\"ROBOT\",\"robot_id\":\"NEVO-01\"}}"
+                        },
+                        "url": "ws://127.0.0.1:8081/ws/v1/deliveries"
+                    }
+                },
+                {
+                    "name": "WS subscribe robot:NEVO-01 (jalur UI stand-in, {action:subscribe})",
+                    "request": {
+                        "method": "WS",
+                        "header": [
+                            {
+                                "key": "Authorization",
+                                "value": "Bearer {{wsAuthToken}}"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\"action\":\"subscribe\",\"channels\":[\"robot:NEVO-01\"]}"
+                        },
+                        "url": "ws://127.0.0.1:8081/ws/v1/deliveries"
+                    }
+                }
+            ]
+        },
+        {
+            "name": "Publish bridge (medical-ws :8081)",
+            "item": [
+                {
+                    "name": "POST /internal/publish (TELEMETRY)",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "X-Internal-Secret",
+                                "value": "{{publishSecret}}"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\"v\":1,\"eventId\":\"evt-1\",\"type\":\"TELEMETRY\",\"occurredAt\":\"2026-10-29T10:00:00Z\",\"requestCode\":\"DELIV-1\",\"wardCode\":\"A\",\"data\":{\"robotId\":\"NEVO-01\",\"battery\":78}}"
+                        },
+                        "url": "{{ws}}/internal/publish"
+                    }
+                },
+                {
+                    "name": "POST /internal/publish (MISSION_EVENT ward A)",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "X-Internal-Secret",
+                                "value": "{{publishSecret}}"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\"v\":1,\"eventId\":\"evt-2\",\"type\":\"MISSION_EVENT\",\"occurredAt\":\"2026-10-29T10:01:00Z\",\"requestCode\":\"DELIV-1\",\"wardCode\":\"A\",\"data\":{\"status\":\"IN_PROGRESS\",\"progress\":50}}"
+                        },
+                        "url": "{{ws}}/internal/publish"
+                    }
+                }
+            ]
+        },
+        {
+            "name": "Webhook monitoring → SIMRS (:3001)",
+            "item": [
+                {
+                    "name": "POST /api/v1/monitoring/delivery-status",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "x-monitoring-token",
+                                "value": "{{monitoringToken}}"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\"requestCode\":\"REQ-…\",\"toStatus\":\"MOCK_IN_TRANSIT\",\"note\":\"Departed from dock\",\"compartmentNo\":3,\"idempotencyKey\":\"nevomock-deliv-0001-step1\"}"
+                        },
+                        "url": "{{simrs}}/api/v1/monitoring/delivery-status"
+                    }
+                }
+            ]
+        }
+    ]
 }

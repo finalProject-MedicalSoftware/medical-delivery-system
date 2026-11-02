@@ -1,6 +1,9 @@
 # Test Case Manual Postman — SIMRS ↔ Web Monitoring
 
-Koleksi: `docs/postman-f2.postman_collection.json`. Variabel: `{{backend}}` (:8080), `{{bff}}` (:3000), `{{simrs}}` (:3001), `{{ws}}` (:8081).
+Koleksi: `docs/postman-f2.postman_collection.json`. Variabel default koleksi sudah disetel ke port host saat ini
+(`{{backend}}` = `http://127.0.0.1:8082/api/v1`, `{{bff}}` = `http://127.0.0.1:3100` dev dashboard,
+`{{simrs}}` = `http://127.0.0.1:3000`, `{{ws}}` = `http://127.0.0.1:8083`).
+Port ini mengikuti pemetaan host `simrs-dummy/compose.yaml` (kontainer 8080/8081 → host 8082/8083).
 Token/secret **tidak** ditulis di sini; ambil dari `.env` masing-masing komponen dan kirim via header.
 
 Status kolom **Bukti**: `Maven` = tercakup tes otomatis (suite
@@ -14,8 +17,10 @@ live.
 > Semua hasil command robot di mode `ROBOT_MODE=sim` adalah SIMULATED. HTTP 202 bukan bukti ROS/Gazebo atau gerak robot fisik.
 
 ## Prasyarat
-1. DB SIMRS (:5433) hidup; `cd simrs-dummy/medical-simrs-web && npm run wipe-demo && npm run seed-e2e` → `DELIV-YYYYMMDD-0001…0003`.
-2. Jalankan: SIMRS (:3001), `medical-ws` (:8081, satu instance), backend (:8080), dashboard produksi (:3000).
+1. DB SIMRS host :5433 hidup; `cd simrs-dummy/medical-simrs-web && npm run wipe-demo && npm run seed-e2e` → `DELIV-YYYYMMDD-0001…0003`.
+2. Jalankan: SIMRS (:3000), `medical-ws` (:8083, satu instance), backend (:8082), dashboard dev (:3100).
+3. Secret/token diambil dari `simrs-dummy/.env` (nilai aktual kontainer), bukan dari `.env` lokal `medical-ws`
+   atau `medical-backend` — kedua `.env` itu pernah berbeda dari kontainer (lihat G4).
 
 ## A. Command robot (backend)
 | ID | Request | Ekspektasi | Bukti |
@@ -60,7 +65,7 @@ live.
 |---|---|---|
 | D1 | `POST {{ws}}/internal/publish`, header `X-Internal-Secret`, body envelope `{v,eventId,type,occurredAt,requestCode,wardCode,data}` | `{"accepted":true}` |
 | D2 | Publish tanpa/salah secret | Ditolak |
-| D3 | WS `ws://127.0.0.1:8081/ws/v1/deliveries`, kirim SI | Terhubung sesuai `robot-ws-tifa.md` |
+| D3 | WS `ws://127.0.0.1:8083/ws/v1/deliveries` (`WS_PORT=8081` di kontainer), kirim SI | Terhubung sesuai `robot-ws-tifa.md` |
 | D4 | Kirim STATUS | Di-enrich `robot_id`+`timestamp`, broadcast ke `robot:NEVO-01` |
 | D5 | SI kedua dengan identitas sama | `ERROR DUPLICATE` lalu close 4002 |
 | D6 | Channel valid: `all`, `ward:<code>`, `delivery:<requestCode>`, `robot:<robotId>` | Hanya subscriber channel terkait yang menerima |
@@ -134,3 +139,28 @@ generik ini aman ditampilkan.
 - Sesikan event via `/api/ws/session` (E1) lalu `GET /api/ws/stream`
   bertahan; `curl -N` merekam `sse.log` (exit 18 normal saat close).
 - Dashboard `/robots` menerima update live (pemilih target, cancel).
+
+### G4 — Bukti live sesi 2/11/2026 (bridge → Kafka → WS → BFF)
+
+Semua dijalankan terhadap stack Docker yang hidup (`simrs-dummy/compose.yaml`,
+profil `apps`+`ws`) plus dashboard dev native :3100.
+
+| # | Uji | Hasil |
+|---|---|---|
+| G4.1 | Health: SIMRS `:3000` → 200, dashboard `:3100` → 200, backend `:8082/actuator/health` → 200 UP, `medical-ws :8083/healthz` → 200 | PASS |
+| G4.2 | `GET :8083/webhooks/simrs/health` | `{"configured":true,"tokenPrefix":"webh***","status":"ok"}` (token hanya prefix 4 karakter, AGENTS aturan 7) |
+| G4.3 | `GET :8082/api/v1/monitoring/active-deliveries` (Bearer MONITORING_TOKEN) | 200 dengan 3 delivery aktif; dua berstatus `MOCK_ARRIVED_AT_ROOM` (`DELIV-20261101-0003`, `DELIV-20261101-0002`) — bukti 4a: status "tiba" tetap terhitung aktif |
+| G4.4 | E2E bridge (`medical-ws/e2e.mjs`) `POST :8083/internal/publish` dengan `X-Internal-Secret` dari `simrs-dummy/.env` | `202 {"accepted":true}` |
+| G4.5 | Publish ulang `eventId` sama | `400 {"error":"DUPLICATE"}` → broadcast dilakukan tepat 1× |
+| G4.6 | Klien WS (token `WS_AUTH_TOKEN` dari `simrs-dummy/.env`) | frame `SNAPSHOT_REQUIRED` → kirim `SUBSCRIBED{channels:["all"]}` → terima `DELIVERY_REQUESTED` |
+
+**Akar masalah 401 pada uji pertama (tercatat agar tidak terulang):**
+`INTERNAL_PUBLISH_SECRET` di `simrs-dummy/.env` (prefix `beba…`) BERBEDA dari
+yang tertulis di `medical-ws/.env` dan `medical-backend/.env` lokal (prefix
+`brid…`). Kontainer membaca env dari `simrs-dummy/.env`, jadi request manual
+harus memakai nilai itu. Konvensi menjadi: **`simrs-dummy/.env` adalah sumber
+env satu-satunya untuk seluruh compose**, `.env` di folder komponen hanya
+untuk menjalankan komponen secara native di luar Docker.
+
+Jalankan ulang G4 kapan saja: `node e2e.mjs` di `medical-ws/` (salin secret
+dari `simrs-dummy/.env`; skrip membaca env, tidak menyimpan secret).
