@@ -3,7 +3,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useApp } from '../components/AppShell';
 import { useLanguage } from '../components/LanguageProvider';
-import { WS_URL } from '../lib/ws-config';
 import { statusPillClass } from '../lib/mission-status';
 import { Bell, Wifi, AlertTriangle, Radio } from 'lucide-react';
 
@@ -17,46 +16,27 @@ type EventRow = {
 };
 
 export default function NotificationsPage() {
-  const { wsConnected } = useApp();
+  const { wsConnected, missionEvents } = useApp();
   const { dict } = useLanguage();
   const t = dict.notifications;
   const tc = dict.common;
 
   const [rows, setRows] = useState<EventRow[]>([]);
   const [statusFilter, setStatusFilter] = useState<string>('ALL');
-  const [internalWs, setInternalWs] = useState(false);
   const seq = useRef(0);
 
   useEffect(() => {
-    const ws = new WebSocket(WS_URL);
-    ws.onopen = () => setInternalWs(true);
-    ws.onclose = () => setInternalWs(false);
-    ws.onmessage = (e) => {
-      try {
-        const msg = JSON.parse(e.data);
-        if (msg.type === 'MISSION_EVENT' && msg.data) {
-          setRows((prev) =>
-            [
-              {
-                key: `ev${++seq.current}`,
-                time: new Date().toLocaleTimeString(),
-                status: msg.data.status || 'INFO',
-                message: msg.data.message || '',
-                missionId: msg.data.missionId,
-                progress: msg.data.progress,
-              },
-              ...prev,
-            ].slice(0, 120),
-          );
-        }
-      } catch {
-        // ignore
-      }
-    };
-    return () => ws.close();
-  }, []);
+    setRows(missionEvents.map((event) => ({
+      key: event.eventId || `ev${++seq.current}`,
+      time: event.timestamp ? new Date(event.timestamp).toLocaleTimeString() : new Date().toLocaleTimeString(),
+      status: event.status || 'INFO',
+      message: event.message || '',
+      missionId: event.missionId,
+      progress: event.progress,
+    })));
+  }, [missionEvents]);
 
-  const live = wsConnected || internalWs;
+  const live = wsConnected;
   const filtered = statusFilter === 'ALL' ? rows : rows.filter((r) => r.status === statusFilter);
 
   const STATUSES = ['ALL', 'CREATED', 'PENDING', 'EXECUTING', 'SUCCEEDED', 'CANCELLED', 'FAILED'];

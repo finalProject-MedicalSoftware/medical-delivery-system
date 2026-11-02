@@ -3,147 +3,107 @@
 import React, { useEffect, useState } from 'react';
 import { useApp } from '../components/AppShell';
 import { useLanguage } from '../components/LanguageProvider';
-import { simrsMode, SIMRS_TONE_DOT } from '../lib/simrs-mode';
-import { WS_URL } from '../lib/ws-config';
-import {
-  Settings, Shield, Server, Database, Bot, KeyRound, Building2, Cpu, HardDrive,
-} from 'lucide-react';
+import { RefreshCw, Save, Settings, Wifi } from 'lucide-react';
+
+const DEFAULT_SIMRS_URL = 'http://127.0.0.1:3000/api/v1';
+const DEFAULT_WS_URL = 'ws://127.0.0.1:8081/ws/v1/deliveries';
+
+type ConnectionState = { simrsUrl: string; wsUrl: string; wsEnabled: boolean };
 
 export default function SettingsPage() {
-  const { user, request } = useApp();
+  const { request } = useApp();
   const { dict } = useLanguage();
   const t = dict.settings;
-  const ts = dict.simrs;
-
-  const [simrs, setSimrs] = useState<any>(null);
-  const role = (user?.role || '').toUpperCase();
+  const [saved, setSaved] = useState<ConnectionState>({ simrsUrl: DEFAULT_SIMRS_URL, wsUrl: DEFAULT_WS_URL, wsEnabled: false });
+  const [draft, setDraft] = useState(saved);
+  const [testing, setTesting] = useState(false);
+  const [tested, setTested] = useState(false);
+  const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
   useEffect(() => {
-    request('integrations/simrs/status')
-      .then(setSimrs)
-      .catch(() => setSimrs({ mode: 'OFFLINE' }));
-  }, [request]);
+    const raw = localStorage.getItem('nevo_connection_settings');
+    if (!raw) return;
+    try {
+      const next = { ...saved, ...JSON.parse(raw) } as ConnectionState;
+      setSaved(next);
+      setDraft(next);
+    } catch { /* ignore malformed local settings */ }
+  }, []);
 
-  const tone = simrsMode(simrs?.mode).tone;
-  const modeLabel = ts.modes[(simrs?.mode || 'default') as keyof typeof ts.modes] ?? ts.modes.default;
+  const update = (patch: Partial<ConnectionState>) => {
+    setDraft((current) => ({ ...current, ...patch }));
+    setTested(false);
+    setMessage(null);
+  };
 
-  const roleCard = (key: 'OPERATOR' | 'FARMASI' | 'ADMIN', name: string, desc: string) => (
-    <div
-      className={`p-4 rounded-xl border text-xs transition-colors ${
-        role === key
-          ? 'bg-accent-muted border-accent txt-main'
-          : 'bg-elevated/60 border-base txt-sec'
-      }`}
-    >
-      <strong className="text-sm block txt-main">
-        {name} {role === key && <span className="text-accent">{t.activeRole}</span>}
-      </strong>
-      <p className="mt-1 leading-relaxed">{desc}</p>
-    </div>
-  );
+  const testConnection = async () => {
+    setTesting(true);
+    setTested(false);
+    setMessage(null);
+    try {
+      new URL(draft.simrsUrl);
+      new URL(draft.wsUrl);
+      await request('integrations/simrs/status');
+      setTested(true);
+      setMessage({ type: 'success', text: 'Connection test passed. Save to apply these settings.' });
+    } catch (error) {
+      setMessage({ type: 'error', text: error instanceof Error ? error.message : 'Connection test failed.' });
+    } finally {
+      setTesting(false);
+    }
+  };
+
+  const save = async () => {
+    try {
+      const response = await fetch('/api/ws/session', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ action: draft.wsEnabled ? 'turnOn' : 'turnOff' }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Unable to update relay session.');
+      localStorage.setItem('nevo_connection_settings', JSON.stringify(draft));
+      setSaved(draft);
+      setTested(false);
+      window.dispatchEvent(new Event('nevo:ws-session-changed'));
+      setMessage({ type: 'success', text: `Connection settings saved. Relay ${data.conn?.on ? 'ON' : 'OFF'}.` });
+    } catch (error) {
+      setMessage({ type: 'error', text: error instanceof Error ? error.message : 'Unable to save connection settings.' });
+    }
+  };
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
+    <div className="max-w-3xl mx-auto space-y-5">
       <div className="glass-panel p-6">
-        <h2 className="text-xl font-bold txt-main flex items-center gap-2">
-          <Settings className="text-accent" size={24} />
-          {t.title}
-        </h2>
-        <p className="text-xs txt-sec mt-1">{t.subtitle}</p>
+        <h1 className="text-xl font-bold txt-main flex items-center gap-2"><Settings className="text-accent" size={22} />{t.title}</h1>
+        <p className="text-xs txt-sec mt-1">Configure the SIMRS and robot WebSocket connections.</p>
       </div>
 
-      {/* Integration cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <div className="glass-panel p-5 space-y-2">
-          <span className="text-xs txt-sec font-medium flex items-center gap-1.5">
-            <Server size={13} /> {t.backendApi}
-          </span>
-          <p className="text-sm font-mono txt-main truncate">/api/proxy/*</p>
-          <p className="text-[11px] txt-sec">{t.port}: 8080 · BFF Next.js → Spring Boot</p>
+      <section className="glass-panel p-6 space-y-5">
+        <div className="flex items-center gap-2 border-b border-base pb-3"><Wifi size={17} className="text-accent" /><h2 className="font-bold text-sm txt-main">Connection endpoints</h2></div>
+        {message && <p className={`text-xs ${message.type === 'success' ? 'text-success' : 'text-error'}`}>{message.text}</p>}
+        <label className="block space-y-1.5 text-xs txt-sec">
+          <span>SIMRS URL</span>
+          <input value={draft.simrsUrl} onChange={(e) => update({ simrsUrl: e.target.value })} className="input-field w-full font-mono" />
+        </label>
+        <label className="block space-y-1.5 text-xs txt-sec">
+          <span>WebSocket URL</span>
+          <input value={draft.wsUrl} onChange={(e) => update({ wsUrl: e.target.value })} className="input-field w-full font-mono" />
+        </label>
+        <label className="flex items-center gap-3 text-sm txt-main cursor-pointer">
+          <input type="checkbox" checked={draft.wsEnabled} onChange={(e) => update({ wsEnabled: e.target.checked })} className="accent-accent" />
+          WebSocket enabled
+        </label>
+        <div className="flex flex-wrap gap-3 pt-2">
+          <button type="button" onClick={testConnection} disabled={testing} className="btn-secondary inline-flex items-center gap-2 disabled:opacity-50">
+            <RefreshCw size={15} className={testing ? 'animate-spin' : ''} />{testing ? 'Testing…' : 'Test Connection'}
+          </button>
+          <button type="button" onClick={save} disabled={!tested} className="btn-primary inline-flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed">
+            <Save size={15} />Save Connection
+          </button>
         </div>
-
-        <div className="glass-panel p-5 space-y-2">
-          <span className="text-xs txt-sec font-medium flex items-center gap-1.5">
-            <Cpu size={13} /> {t.webSocket}
-          </span>
-          <p className="text-sm font-mono txt-main truncate">{WS_URL}</p>
-          <p className="text-[11px] txt-sec">TELEMETRY · MISSION_EVENT</p>
-        </div>
-
-        <div className="glass-panel p-5 space-y-2">
-          <span className="text-xs txt-sec font-medium flex items-center gap-1.5">
-            <Building2 size={13} /> {t.simrsIntegration}
-          </span>
-          <div className="flex items-center gap-2">
-            <span className={`w-2.5 h-2.5 rounded-full ${SIMRS_TONE_DOT[tone]}`} />
-            <strong className="text-sm txt-main">{modeLabel}</strong>
-          </div>
-          <p className="text-[11px] txt-sec font-mono">[{simrs?.mode || ts.modes.default}]</p>
-        </div>
-
-        <div className="glass-panel p-5 space-y-2">
-          <span className="text-xs txt-sec font-medium flex items-center gap-1.5">
-            <Bot size={13} /> {t.robotService}
-          </span>
-          <div className="flex items-center gap-2">
-            <span className="status-pill status-warning">{dict.common.robotModeSim}</span>
-          </div>
-          <p className="text-[11px] txt-sec">{t.robotSimNote}</p>
-        </div>
-      </div>
-
-      {/* RBAC */}
-      <div className="glass-panel p-6 space-y-4">
-        <h3 className="font-bold text-sm txt-main flex items-center gap-2 pb-3 border-b border-base">
-          <Shield className="text-accent" size={16} />
-          {t.rbac}
-        </h3>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          {roleCard('OPERATOR', t.roleOperator, t.roleOperatorDesc)}
-          {roleCard('FARMASI', t.roleFarmasi, t.roleFarmasiDesc)}
-          {roleCard('ADMIN', t.roleAdmin, t.roleAdminDesc)}
-        </div>
-      </div>
-
-      {/* Architecture */}
-      <div className="glass-panel p-6 space-y-4">
-        <h3 className="font-bold text-sm txt-main flex items-center gap-2 pb-3 border-b border-base">
-          <Database className="text-accent" size={16} />
-          {t.architecture}
-        </h3>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
-          <div className="p-4 rounded-xl bg-elevated/60 border border-base space-y-1">
-            <span className="txt-sec flex items-center gap-1.5"><Server size={12} /> {t.backendApi}</span>
-            <strong className="text-sm txt-main block">{t.backendVersion}</strong>
-          </div>
-          <div className="p-4 rounded-xl bg-elevated/60 border border-base space-y-1">
-            <span className="txt-sec flex items-center gap-1.5"><Database size={12} /> {t.db}</span>
-            <strong className="text-sm txt-main block">{t.dbVersion}</strong>
-            <p className="txt-sec text-[11px]">{t.dbMigrations}</p>
-          </div>
-          <div className="p-4 rounded-xl bg-elevated/60 border border-base space-y-1">
-            <span className="txt-sec flex items-center gap-1.5"><HardDrive size={12} /> {t.storage}</span>
-            <strong className="text-sm txt-main block">{t.storagePath}</strong>
-          </div>
-        </div>
-
-        <div className="space-y-3">
-          <div className="p-4 rounded-xl border border-accent/30 bg-accent-muted/50">
-            <h4 className="text-xs font-bold txt-main flex items-center gap-1.5">
-              <KeyRound size={13} className="text-accent" /> {t.simrsReadonly}
-            </h4>
-            <p className="text-[11px] txt-sec mt-1 leading-relaxed">{t.simrsEnvNote}</p>
-          </div>
-
-          <div className="p-4 rounded-xl border border-warning/30 bg-warning/5">
-            <h4 className="text-xs font-bold txt-main flex items-center gap-1.5">
-              <Bot size={13} className="text-warning" /> {t.robotSimTitle}
-            </h4>
-            <p className="text-[11px] txt-sec mt-1 leading-relaxed">{t.robotSimDesc}</p>
-          </div>
-        </div>
-      </div>
+        <p className="text-[11px] txt-sec">Test Connection does not save changes. Save Connection is enabled only after a successful test.</p>
+      </section>
     </div>
   );
 }

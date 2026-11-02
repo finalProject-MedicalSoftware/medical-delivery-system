@@ -225,6 +225,31 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
   color: var(--text-main);
 }
 
+/* Battery bar tipis (mockup fleet/detail robot). */
+.battery-track {
+  height: 6px;
+  border-radius: 999px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-color);
+  overflow: hidden;
+}
+.battery-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: var(--accent);
+  transition: width 0.4s ease;
+}
+.battery-fill.mid { background: var(--color-warning); }
+.battery-fill.low { background: var(--color-error); }
+
+/* Status progress mini-stepper baris tabel misi (dari status, bukan event). */
+.step-track { display: flex; align-items: center; gap: 3px; }
+.step-seg { height: 5px; width: 22px; border-radius: 999px; background: var(--bg-elevated); border: 1px solid var(--border-color); }
+.step-seg.done { background: var(--accent); border-color: var(--accent); }
+.step-seg.active { background: var(--accent); border-color: var(--accent); animation: step-pulse 1.6s ease-in-out infinite; }
+.step-seg.failed { background: var(--color-error); border-color: var(--color-error); }
+@keyframes step-pulse { 50% { opacity: 0.35; } }
+
 /* ============================================================
    SKELETON & MOTION UTILITIES
    ============================================================ */

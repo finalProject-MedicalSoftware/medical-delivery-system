@@ -6,7 +6,7 @@ import { useParams } from 'next/navigation';
 import { useApp } from '../../components/AppShell';
 import { useLanguage } from '../../components/LanguageProvider';
 import { statusPillClass, missionStatusLabel } from '../../lib/mission-status';
-import { ArrowLeft, Navigation, Ban, Clock, User, MapPin, KeyRound, Bot, RefreshCw } from 'lucide-react';
+import { ArrowLeft, Navigation, Ban, Clock, User, MapPin, KeyRound, Bot, RefreshCw, Package } from 'lucide-react';
 
 export default function MissionDetailPage() {
   const params = useParams();
@@ -64,7 +64,7 @@ export default function MissionDetailPage() {
     );
   }
 
-  const isActive = ['CREATED', 'PENDING', 'EXECUTING'].includes(mission.status);
+  const isActive = ['SUBMITTED', 'BACKEND_ACCEPTED', 'QUEUED', 'ROBOT_ACKNOWLEDGED', 'CREATED', 'PENDING', 'EXECUTING'].includes(mission.status);
   const coords = mission.targetCoordinates;
 
   return (
@@ -93,6 +93,11 @@ export default function MissionDetailPage() {
           <span className={`status-pill ${statusPillClass(mission.status)} ml-2`}>
             {missionStatusLabel(mission.status, dict)}
           </span>
+          {mission.status === 'QUEUED' && mission.queuePosition != null && (
+            <span className="status-pill status-warning ml-1 font-mono">
+              {t.queuePosition}: #{mission.queuePosition}
+            </span>
+          )}
         </div>
       </div>
 
@@ -128,6 +133,25 @@ export default function MissionDetailPage() {
             <Bot size={12} /> {t.robot}
           </p>
           <p className="text-sm font-bold txt-main font-mono">{mission.robotId || '-'}</p>
+        </div>
+
+        <div className="glass-panel p-4 card-hover">
+          <p className="text-[10px] txt-sec uppercase tracking-widest font-medium flex items-center gap-1.5 mb-1.5">
+            <User size={12} /> {t.patientName}
+          </p>
+          <p className="text-sm font-bold txt-main">{mission.patientName || '-'}</p>
+          {mission.patientRoomName && (
+            <p className="text-[10px] txt-sec mt-0.5">{mission.patientRoomName}</p>
+          )}
+        </div>
+
+        <div className="glass-panel p-4 card-hover">
+          <p className="text-[10px] txt-sec uppercase tracking-widest font-medium flex items-center gap-1.5 mb-1.5">
+            <Package size={12} /> {t.compartment}
+          </p>
+          <p className="text-sm font-bold txt-main font-mono">
+            {mission.compartmentNo != null ? mission.compartmentNo : '-'}
+          </p>
         </div>
 
         <div className="glass-panel p-4 card-hover">

@@ -19,6 +19,7 @@ export default function DashboardPage() {
   const [simrsStatus, setSimrsStatus] = useState<any>(null);
   const [deliveries, setDeliveries] = useState<any[]>([]);
   const [recentMissions, setRecentMissions] = useState<any[]>([]);
+  const [robots, setRobots] = useState<any[]>([]);
 
   useEffect(() => {
     const load = () => {
@@ -27,7 +28,8 @@ export default function DashboardPage() {
         if (ros) setActiveMap(ros);
       }).catch(() => {});
       request('integrations/simrs/status').then(setSimrsStatus).catch(() => {});
-      request('integrations/simrs/deliveries').then(setDeliveries).catch(() => {});
+      request('integrations/simrs/deliveries').then((res: any) => setDeliveries(Array.isArray(res) ? res : res?.deliveries ?? [])).catch(() => {});
+      request('robots').then((res: any) => setRobots(Array.isArray(res) ? res : [])).catch(() => {});
       request('missions?limit=5').then(setRecentMissions).catch(() => {});
     };
     load();
@@ -71,6 +73,7 @@ export default function DashboardPage() {
             <Radio size={16} className={telemetry.status === 'NAVIGATING' ? 'text-info animate-pulse' : 'txt-sec'} />
           </div>
           <p className="text-xl font-bold txt-main font-mono">{telemetry.status}</p>
+          <p className="text-[11px] txt-sec mt-2">{robots.length} robot(s) · {robots.filter((robot) => robot.status !== 'OFFLINE').length} online</p>
           <div className="flex items-center justify-between text-xs txt-sec mt-3 pt-3 border-t border-base">
             <span>{dict.common.status}: <strong className="txt-main">{telemetry.mode}</strong></span>
             <span className={`status-pill ${telemetry.simulated ? 'status-warning' : 'status-success'}`}>
@@ -226,9 +229,9 @@ export default function DashboardPage() {
                       </span>
                     </div>
                     <p className="txt-sec text-[11px]">
-                      {t.patient}: <strong className="txt-main">{del.patientName}</strong> ({del.mrn})
+                      {t.patient}: <strong className="txt-main">{del.patientName ?? del.patient?.fullName ?? '—'}</strong> ({del.patientMrn ?? del.mrn ?? del.patient?.mrn ?? '—'})
                     </p>
-                    <p className="txt-sec text-[11px] truncate">{t.medicine}: {del.medicine}</p>
+                    <p className="txt-sec text-[11px] truncate">{t.medicine}: {del.medicineName ?? del.medicine ?? del.prescription?.medicineName ?? '—'}</p>
                     {del.isInfectious && (
                       <div className="bg-error/10 border border-error/30 text-error text-[11px] p-2 rounded-lg flex items-center gap-1.5 font-medium">
                         <ShieldAlert size={14} className="shrink-0" />

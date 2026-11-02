@@ -8,10 +8,12 @@ import { useLanguage } from '../components/LanguageProvider';
 export interface MapMetadata {
   id: string;
   fileName: string;
-  resolution: number;
-  origin: [number, number, number]; // [x, y, yaw]
-  width: number;
-  height: number;
+  // Backend boleh mengembalikan null saat metadata ROS belum tersedia
+  // (atau untuk peta dummy). Jangan biarkan field ini meledakkan render.
+  resolution?: number;
+  origin?: [number, number, number]; // [x, y, yaw]
+  width?: number;
+  height?: number;
   frameId: string;
   previewUrl: string;
   active: boolean;
@@ -31,6 +33,12 @@ export interface WaypointItem {
   created_by?: string;
   updated_at?: string;
 }
+
+// Null-safe accessors + penanda peta dummy (field meta boleh null dari backend).
+const originOf = (m: MapMetadata): [number, number, number] => m.origin ?? [0, 0, 0];
+const resolutionOf = (m: MapMetadata): number => m.resolution ?? 0.05;
+const isDummyMap = (m: MapMetadata): boolean =>
+  m.id.startsWith('DUMMY-') || m.fileName.includes('[SIMULASI]') || (!m.width && !m.height);
 
 interface MapViewerProps {
   meta: MapMetadata;
@@ -79,6 +87,12 @@ export default function MapViewer({
     setImgLoaded(false);
     setLoadError(null);
 
+    // Peta dummy tidak punya citra; langsung dianggap siap render.
+    if (isDummyMap(meta)) {
+      setImgLoaded(true);
+      return;
+    }
+
     const imageUrl = `/api/proxy/maps/${meta.id}/preview`;
     fetch(imageUrl, {
       credentials: 'include',
@@ -114,17 +128,19 @@ export default function MapViewer({
 
   // Fit to screen helper
   const fitToScreen = useCallback(() => {
+    const w = meta.width ?? 0;
+    const h = meta.height ?? 0;
     const canvas = canvasRef.current;
-    if (!canvas || !meta.width || !meta.height) return;
+    if (!canvas || !w || !h) return;
     const padding = 40;
     const availW = canvas.clientWidth - padding * 2;
     const availH = canvas.clientHeight - padding * 2;
-    const s = Math.min(availW / meta.width, availH / meta.height, 2.5);
+    const s = Math.min(availW / w, availH / h, 2.5);
     const newScale = Math.max(s, 0.2);
     setScale(newScale);
-    setPanX((canvas.clientWidth - meta.width * newScale) / 2);
-    setPanY((canvas.clientHeight - meta.height * newScale) / 2);
-  }, [meta.width, meta.height]);
+    setPanX((canvas.clientWidth - w * newScale) / 2);
+    setPanY((canvas.clientHeight - h * newScale) / 2);
+  }, [meta]);
 
   // Initial fit when image loads or dimensions change
   useEffect(() => {
@@ -136,15 +152,16 @@ export default function MapViewer({
   // Helper coordinate transforms
   const rosToCanvasCoords = useCallback(
     (rosX: number, rosY: number) => {
-      const dx = rosX - meta.origin[0];
-      const dy = rosY - meta.origin[1];
-      const yaw = meta.origin[2] || 0;
+      const origin = originOf(meta);
+      const dx = rosX - origin[0];
+      const dy = rosY - origin[1];
+      const yaw = origin[2] || 0;
       const rotDx = dx * Math.cos(-yaw) - dy * Math.sin(-yaw);
       const rotDy = dx * Math.sin(-yaw) + dy * Math.cos(-yaw);
-      const gridX = rotDx / meta.resolution;
-      const gridY = rotDy / meta.resolution;
+      const gridX = rotDx / resolutionOf(meta);
+      const gridY = rotDy / resolutionOf(meta);
       const imgPx = gridX;
-      const imgPy = meta.height - gridY;
+      const imgPy = (meta.height ?? 0) - gridY;
       const screenX = panX + imgPx * scale;
       const screenY = panY + imgPy * scale;
       return { screenX, screenY, imgPx, imgPy };
@@ -157,12 +174,13 @@ export default function MapViewer({
       const imgPx = (canvasX - panX) / scale;
       const imgPy = (canvasY - panY) / scale;
       const gridX = imgPx;
-      const gridY = meta.height - imgPy;
-      const dx = gridX * meta.resolution;
-      const dy = gridY * meta.resolution;
-      const yaw = meta.origin[2] || 0;
-      const rosX = meta.origin[0] + (dx * Math.cos(yaw) - dy * Math.sin(yaw));
-      const rosY = meta.origin[1] + (dx * Math.sin(yaw) + dy * Math.cos(yaw));
+      const gridY = (meta.height ?? 0) - imgPy;
+      const dx = gridX * resolutionOf(meta);
+      const dy = gridY * resolutionOf(meta);
+      const origin = originOf(meta);
+      const yaw = origin[2] || 0;
+      const rosX = origin[0] + (dx * Math.cos(yaw) - dy * Math.sin(yaw));
+      const rosY = origin[1] + (dx * Math.sin(yaw) + dy * Math.cos(yaw));
       return { rosX, rosY, px: Math.round(imgPx), py: Math.round(imgPy) };
     },
     [meta, panX, panY, scale]
@@ -191,44 +209,50 @@ export default function MapViewer({
     ctx.fillStyle = '#0f172a'; // Deep slate dark mode for contrast
     ctx.fillRect(0, 0, rect.width, rect.height);
 
-    if (imgElement && imgLoaded) {
+    const mapW = meta.width ?? 0;
+    const mapH = meta.height ?? 0;
+    const res = resolutionOf(meta);
+    if ((imgElement && imgLoaded) || isDummyMap(meta)) {
       ctx.save();
       ctx.translate(panX, panY);
       ctx.scale(scale, scale);
 
       // Disable smoothing for crisp occupancy grid pixels when zoomed
       ctx.imageSmoothingEnabled = scale < 1.5;
-      ctx.drawImage(imgElement, 0, 0, meta.width, meta.height);
+      if (imgElement && imgLoaded) {
+        // Peta dummy tidak punya citra; grid + border tetap digambar.
+        ctx.drawImage(imgElement, 0, 0, mapW, mapH);
+      }
 
       // 1. Metric Grid overlay (1 meter spacing)
       if (showGrid) {
-        const pxPerMeter = 1.0 / meta.resolution;
+        const pxPerMeter = 1.0 / res;
         ctx.strokeStyle = 'rgba(56, 189, 248, 0.15)'; // cyan subtle
         ctx.lineWidth = 1 / scale;
 
         ctx.beginPath();
-        for (let x = 0; x <= meta.width; x += pxPerMeter) {
+        for (let x = 0; x <= mapW; x += pxPerMeter) {
           ctx.moveTo(x, 0);
-          ctx.lineTo(x, meta.height);
+          ctx.lineTo(x, mapH);
         }
-        for (let y = 0; y <= meta.height; y += pxPerMeter) {
+        for (let y = 0; y <= mapH; y += pxPerMeter) {
           ctx.moveTo(0, y);
-          ctx.lineTo(meta.width, y);
+          ctx.lineTo(mapW, y);
         }
         ctx.stroke();
 
         // 5-meter major grid lines
-        const pxPer5M = 5.0 / meta.resolution;
+        const pxPer5M = 5.0 / res;
         ctx.strokeStyle = 'rgba(56, 189, 248, 0.35)';
         ctx.lineWidth = 1.5 / scale;
         ctx.beginPath();
-        for (let x = 0; x <= meta.width; x += pxPer5M) {
+        for (let x = 0; x <= mapW; x += pxPer5M) {
           ctx.moveTo(x, 0);
-          ctx.lineTo(x, meta.height);
+          ctx.lineTo(x, mapH);
         }
-        for (let y = 0; y <= meta.height; y += pxPer5M) {
+        for (let y = 0; y <= mapH; y += pxPer5M) {
           ctx.moveTo(0, y);
-          ctx.lineTo(meta.width, y);
+          ctx.lineTo(mapW, y);
         }
         ctx.stroke();
       }
@@ -236,13 +260,14 @@ export default function MapViewer({
       // Map boundary border
       ctx.strokeStyle = 'rgba(148, 163, 184, 0.4)';
       ctx.lineWidth = 2 / scale;
-      ctx.strokeRect(0, 0, meta.width, meta.height);
+      ctx.strokeRect(0, 0, mapW, mapH);
 
       ctx.restore();
     }
 
     // Draw Map Origin (x, y) indicator
-    const originCanvas = rosToCanvasCoords(meta.origin[0], meta.origin[1]);
+    const origin = originOf(meta);
+    const originCanvas = rosToCanvasCoords(origin[0], origin[1]);
     ctx.save();
     ctx.translate(originCanvas.screenX, originCanvas.screenY);
     ctx.strokeStyle = '#ef4444'; // X-axis Red
@@ -433,7 +458,6 @@ export default function MapViewer({
 
   // Mouse wheel zoom
   const handleWheel = (e: React.WheelEvent<HTMLCanvasElement>) => {
-    e.preventDefault();
     const canvas = canvasRef.current;
     if (!canvas) return;
     const rect = canvas.getBoundingClientRect();
@@ -595,7 +619,11 @@ export default function MapViewer({
         <span className={`text-xs px-2.5 py-1 rounded-full font-medium flex items-center gap-1 backdrop-blur-md border ${telemetry.simulated ? 'bg-warning/10 text-warning border-warning/30' : 'bg-success/15 text-success border-success/30'}`}>
           <Compass size={13} /> {telemetry.simulated ? dict.common.simulated : dict.common.live}
         </span>
-        {meta.active ? (
+        {isDummyMap(meta) ? (
+          <span className="bg-warning/10 text-warning border border-warning/30 text-xs px-2.5 py-1 rounded-full font-semibold flex items-center gap-1 backdrop-blur-md">
+            <Tag size={13} /> Peta Dummy
+          </span>
+        ) : meta.active ? (
           <span className="bg-success/15 text-success border border-success/30 text-xs px-2.5 py-1 rounded-full font-semibold flex items-center gap-1 backdrop-blur-md">
             <CheckCircle2 size={13} /> Peta Aktif Web
           </span>
@@ -636,14 +664,15 @@ export default function MapViewer({
       <div className="absolute bottom-0 inset-x-0 bg-card/90 backdrop-blur-md border-t border-base px-4 py-2 flex flex-wrap items-center justify-between text-xs txt-sec gap-2">
         <div className="flex items-center gap-4">
           <span className="txt-sec">
-            Resolusi: <strong className="txt-main font-mono">{meta.resolution.toFixed(3)} m/px</strong>
+            Resolusi: <strong className="txt-main font-mono">{(meta.resolution ?? 0.05).toFixed(3)} m/px</strong>
           </span>
           <span className="txt-sec">
             Dimensi:{' '}
             <strong className="txt-main font-mono">
-              {meta.width} × {meta.height} px
+              {meta.width ?? 0} × {meta.height ?? 0} px
             </strong>{' '}
-            ({(meta.width * meta.resolution).toFixed(1)} × {(meta.height * meta.resolution).toFixed(1)} m)
+            ({((meta.width ?? 0) * (meta.resolution ?? 0.05)).toFixed(1)} ×{' '}
+            {((meta.height ?? 0) * (meta.resolution ?? 0.05)).toFixed(1)} m)
           </span>
           <span className="txt-sec hidden sm:inline">
             Frame: <strong className="text-accent font-mono">{meta.frameId || 'map'}</strong>

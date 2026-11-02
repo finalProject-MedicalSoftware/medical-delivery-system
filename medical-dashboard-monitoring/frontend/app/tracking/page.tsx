@@ -7,16 +7,16 @@ import MapViewer, { MapMetadata, WaypointItem } from '../maps/MapViewer';
 import {
   Activity, Radio, AlertTriangle, Terminal, Wifi, Navigation,
 } from 'lucide-react';
-import { WS_URL } from '../lib/ws-config';
 
 export default function TrackingPage() {
-  const { telemetry, request, wsConnected } = useApp();
+  const { telemetry, request, wsConnected, missionEvents } = useApp();
   const { dict } = useLanguage();
   const t = dict.tracking;
 
   const [activeMap, setActiveMap] = useState<MapMetadata | null>(null);
   const [waypoints, setWaypoints] = useState<WaypointItem[]>([]);
   const [eventLogs, setEventLogs] = useState<string[]>([]);
+  const seenEvents = React.useRef(new Set<string>());
   const [lastHeartbeat, setLastHeartbeat] = useState<number>(Date.now());
 
   useEffect(() => {
@@ -40,25 +40,15 @@ export default function TrackingPage() {
   }, [request]);
 
   useEffect(() => {
-    const ws = new WebSocket(WS_URL);
-
-    ws.onmessage = (e) => {
-      try {
-        const msg = JSON.parse(e.data);
-        if (msg.type === 'MISSION_EVENT' && msg.data) {
-          const time = new Date().toLocaleTimeString();
-          const line = `[${time}] [${msg.data.status}] ${msg.data.message || ''} (${msg.data.progress || 0}%)`;
-          setEventLogs((prev) => [line, ...prev.slice(0, 40)]);
-        }
-      } catch {
-        // ignore
-      }
-    };
-
-    return () => {
-      ws.close();
-    };
-  }, []);
+    for (const event of missionEvents) {
+      const key = event.eventId || `${event.missionId || ''}:${event.status}:${event.timestamp || ''}`;
+      if (seenEvents.current.has(key)) continue;
+      seenEvents.current.add(key);
+      const time = event.timestamp ? new Date(event.timestamp).toLocaleTimeString() : new Date().toLocaleTimeString();
+      const line = `[${time}] [${event.status}] ${event.message || ''} (${event.progress || 0}%)`;
+      setEventLogs((prev) => [line, ...prev.slice(0, 40)]);
+    }
+  }, [missionEvents]);
 
   return (
     <div className="space-y-6">
@@ -115,10 +105,15 @@ export default function TrackingPage() {
         <div className="lg:col-span-4 space-y-5">
           {/* Pose card */}
           <div className="glass-panel p-5 space-y-3">
-            <h3 className="font-bold text-sm txt-main flex items-center gap-2 pb-3 border-b border-base">
-              <Radio size={16} className="text-accent" />
-              {t.pose}
-            </h3>
+            <div className="flex items-center justify-between gap-2 pb-3 border-b border-base">
+              <h3 className="font-bold text-sm txt-main flex items-center gap-2">
+                <Radio size={16} className="text-accent" />
+                {t.pose}
+              </h3>
+              <span className={`status-pill ${telemetry.status === 'NAVIGATING' ? 'status-info' : telemetry.status === 'ERROR' || telemetry.status === 'OFFLINE' ? 'status-danger' : 'status-success'}`}>
+                {telemetry.status}
+              </span>
+            </div>
             <div className="grid grid-cols-2 gap-3 text-xs">
               <div className="bg-elevated p-3 rounded-xl border border-base">
                 <span className="text-[10px] txt-sec block mb-0.5">X</span>
@@ -153,11 +148,17 @@ export default function TrackingPage() {
                 <span className="txt-sec">{dict.common.mode}:</span>
                 <strong className="txt-main">{telemetry.mode}</strong>
               </div>
-              <div className="flex justify-between">
-                <span className="txt-sec">{t.battery}:</span>
-                <strong className={`font-mono ${telemetry.battery <= 20 ? 'text-error' : 'text-success'}`}>
-                  {telemetry.battery.toFixed(1)}%
-                </strong>
+              <div>
+                <div className="flex justify-between mb-1.5">
+                  <span className="txt-sec">{t.battery}:</span>
+                  <strong className="font-mono txt-main">{telemetry.battery.toFixed(1)}%</strong>
+                </div>
+                <div className="battery-track" role="meter" aria-valuenow={Math.round(telemetry.battery)} aria-valuemin={0} aria-valuemax={100} aria-label={t.battery}>
+                  <div
+                    className={`battery-fill ${telemetry.battery <= 20 ? 'low' : telemetry.battery <= 40 ? 'mid' : ''}`}
+                    style={{ width: `${Math.min(100, Math.max(0, telemetry.battery))}%` }}
+                  />
+                </div>
               </div>
             </div>
           </div>
@@ -169,7 +170,7 @@ export default function TrackingPage() {
                 <Terminal size={14} className="text-accent" />
                 {t.eventLog}
               </h3>
-              <span className="text-[10px] font-mono txt-sec">{t.connectedTo} {WS_URL.replace(/^ws:\/\/[^/]+/, '')}</span>
+              <span className="text-[10px] font-mono txt-sec">{t.connectedTo} /api/ws/stream</span>
             </div>
             <div className="flex-1 overflow-y-auto font-mono text-[11px] space-y-1.5 pr-1">
               {eventLogs.length === 0 ? (

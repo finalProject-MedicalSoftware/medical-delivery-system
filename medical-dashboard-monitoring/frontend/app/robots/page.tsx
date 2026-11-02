@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useApp } from '../components/AppShell';
 import { useLanguage } from '../components/LanguageProvider';
-import { RefreshCw, XCircle, Anchor } from 'lucide-react';
+import { RefreshCw, XCircle, Anchor, ArrowUp, ArrowDown, ArrowLeft, ArrowRight } from 'lucide-react';
 
 export default function RobotsPage() {
   const { request, telemetry, lastCommandResult } = useApp();
@@ -18,6 +18,9 @@ export default function RobotsPage() {
   const [issuedId, setIssuedId] = useState<string | null>(null);
   const [dockId, setDockId] = useState('');
   const [docks, setDocks] = useState<{ id: string; name: string }[]>([]);
+  const [speed, setSpeed] = useState(telemetry.speed || 0);
+  // Target perintah dapat dipilih Robot ID, bukan hanya robot dari telemetry (kontrak §6).
+  const [targetId, setTargetId] = useState('');
 
   const loadRobots = useCallback(() => {
     setLoading(true);
@@ -46,12 +49,20 @@ export default function RobotsPage() {
     ? lastCommandResult
     : null;
 
-  const send = async (command: 'CMD_CANCEL_MISSION' | 'CMD_RETURN_TO_DOCK', params: Record<string, unknown>) => {
+  // Robot target = pilihan dropdown, fallback telemetry; misi aktif diambil dari data robot target.
+  const target = targetId || telemetry.robotId;
+  const targetRobot = robots.find((r) => r.robotId === target);
+  const targetStatus = targetRobot?.status || telemetry.status;
+  const targetMissionId = targetRobot?.activeMissionId
+    || (target === telemetry.robotId ? telemetry.activeMissionId : undefined);
+  const targetOptions = robots.length ? robots : [{ robotId: telemetry.robotId, name: telemetry.name }];
+
+  const send = async (command: 'CMD_CANCEL_MISSION' | 'CMD_RETURN_TO_DOCK' | 'CMD_SET_SPEED' | 'CMD_TELEOP_DRIVE', params: Record<string, unknown>) => {
     setError('');
     setSending(true);
     setIssuedId(null);
     try {
-      const res = await request('robots/NEVO-01/commands', {
+      const res = await request(`robots/${target}/commands`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ command, params }),
@@ -95,6 +106,21 @@ export default function RobotsPage() {
 
       {error && <div className="glass-panel p-3 text-sm text-error">{error}</div>}
 
+      {/* KPI armada (mockup monitoring-robots): total, pengiriman aktif, rata-rata baterai, online */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        {[
+          { label: t.fleetTotal, value: String(robots.length), cls: 'txt-main' },
+          { label: t.fleetMissions, value: String(robots.filter((robot) => robot.activeMissionId).length), cls: 'text-accent' },
+          { label: t.fleetAvgBattery, value: `${(robots.reduce((sum, robot) => sum + Number(robot.battery || 0), 0) / Math.max(robots.length, 1)).toFixed(0)}%`, cls: 'txt-main' },
+          { label: t.fleetOnline, value: String(robots.filter((robot) => robot.status !== 'OFFLINE').length), cls: 'text-success' },
+        ].map((kpi) => (
+          <div key={kpi.label} className="glass-panel card-hover p-4">
+            <p className="text-xs txt-sec">{kpi.label}</p>
+            <p className={`text-2xl font-bold tabular-nums mt-1 ${kpi.cls}`}>{kpi.value}</p>
+          </div>
+        ))}
+      </div>
+
       {issuedId && (
         <div className={`glass-panel p-4 text-sm ${!result ? 'txt-sec' : result.result === 'OK' ? 'text-success' : 'text-error'}`}>
           {!result
@@ -108,8 +134,19 @@ export default function RobotsPage() {
       <section className="glass-panel p-4 md:p-6 space-y-5">
         <div className="flex items-center justify-between gap-3 flex-wrap">
           <div className="flex items-center gap-2 min-w-0">
-            <h2 className="font-semibold txt-main truncate">{telemetry.name}</h2>
-            <span className="font-mono text-xs txt-sec shrink-0">{telemetry.robotId}</span>
+            <label className="text-xs txt-sec shrink-0" htmlFor="robot-target">{t.targetRobot}</label>
+            <select
+              id="robot-target"
+              className="bg-input border border-border-base rounded-xl px-3 py-2 text-sm txt-main"
+              value={target}
+              onChange={(e) => setTargetId(e.target.value)}
+            >
+              {targetOptions.map((r) => (
+                <option key={r.robotId} value={r.robotId}>
+                  {r.name ? `${r.name} (${r.robotId})` : r.robotId}
+                </option>
+              ))}
+            </select>
           </div>
           <div className="flex items-center gap-2">
             <span className={`status-pill ${telemetry.simulated ? 'status-warning' : 'status-success'}`}>
@@ -123,6 +160,14 @@ export default function RobotsPage() {
           <div className="bg-elevated rounded-xl p-3 border border-border-base">
             <dt className="txt-sec text-xs">{dict.header.battery}</dt>
             <dd className="font-mono txt-main mt-1">{telemetry.battery.toFixed(1)}%</dd>
+            <dd className="mt-2">
+              <div className="battery-track" role="meter" aria-valuenow={Math.round(telemetry.battery)} aria-valuemin={0} aria-valuemax={100} aria-label={dict.header.battery}>
+                <div
+                  className={`battery-fill ${telemetry.battery <= 20 ? 'low' : telemetry.battery <= 40 ? 'mid' : ''}`}
+                  style={{ width: `${Math.min(100, Math.max(0, telemetry.battery))}%` }}
+                />
+              </div>
+            </dd>
           </div>
           <div className="bg-elevated rounded-xl p-3 border border-border-base">
             <dt className="txt-sec text-xs">{dict.header.pose}</dt>
@@ -134,7 +179,13 @@ export default function RobotsPage() {
           </div>
           <div className="bg-elevated rounded-xl p-3 border border-border-base">
             <dt className="txt-sec text-xs">{t.activeMission}</dt>
-            <dd className="font-mono text-xs txt-main mt-1 break-all">{telemetry.activeMissionId || t.none}</dd>
+            <dd className="font-mono text-xs txt-main mt-1 break-all">{targetMissionId || t.none}</dd>
+          </div>
+          <div className="bg-elevated rounded-xl p-3 border border-border-base">
+            <dt className="txt-sec text-xs">{t.queueLength}</dt>
+            <dd className={`font-mono mt-1 ${telemetry.queueLength ? 'text-warning' : 'txt-main'}`}>
+              {telemetry.queueLength ?? 0}
+            </dd>
           </div>
         </dl>
 
@@ -142,9 +193,9 @@ export default function RobotsPage() {
           <button
             type="button"
             className="btn-primary inline-flex items-center gap-2"
-            disabled={!telemetry.activeMissionId || sending}
-            title={telemetry.activeMissionId ? undefined : t.noActiveMission}
-            onClick={() => send('CMD_CANCEL_MISSION', { missionId: telemetry.activeMissionId })}
+            disabled={!targetMissionId || sending}
+            title={targetMissionId ? undefined : t.noActiveMission}
+            onClick={() => send('CMD_CANCEL_MISSION', { missionId: targetMissionId })}
           >
             <XCircle size={16} />
             {t.cancelMission}
@@ -172,6 +223,26 @@ export default function RobotsPage() {
           </button>
         </div>
 
+        <div className="border-t border-border-base pt-4 space-y-3">
+          <div className="flex items-center gap-3 flex-wrap">
+            <label className="text-xs txt-sec" htmlFor="robot-speed">{t.speed}</label>
+            <input id="robot-speed" type="number" min="0" max="2" step="0.1" value={speed} onChange={(e) => setSpeed(Number(e.target.value))} className="input-field w-24 font-mono text-xs" />
+            <button type="button" className="btn-secondary text-xs" disabled={sending} onClick={() => send('CMD_SET_SPEED', { speed })}>{t.setSpeed}</button>
+          </div>
+          <div className="flex items-center gap-2 flex-wrap">
+            {[
+              ['forward', ArrowUp, { linear: 1, angular: 0 }],
+              ['left', ArrowLeft, { linear: 0, angular: 1 }],
+              ['stop', XCircle, { linear: 0, angular: 0 }],
+              ['right', ArrowRight, { linear: 0, angular: -1 }],
+              ['reverse', ArrowDown, { linear: -1, angular: 0 }],
+            ].map(([key, Icon, params]) => (
+              <button key={key as string} type="button" className="btn-secondary inline-flex items-center gap-1 text-xs" disabled={sending || targetStatus !== 'IDLE'} onClick={() => send('CMD_TELEOP_DRIVE', params as Record<string, unknown>)}>
+                {React.createElement(Icon as React.ElementType, { size: 14 })} {key as string}
+              </button>
+            ))}
+          </div>
+        </div>
         <p className="text-xs txt-sec">
           {telemetry.simulated ? `${t.simNotice} · ` : ''}
           {t.lastSeen}: {new Date(telemetry.lastSeen).toLocaleTimeString(locale)}

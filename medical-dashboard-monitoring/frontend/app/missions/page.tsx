@@ -9,7 +9,17 @@ import {
   History, Search, Filter, ChevronRight, RefreshCw, Plus,
 } from 'lucide-react';
 
-const STATUS_FILTERS = ['ALL', 'EXECUTING', 'SUCCEEDED', 'CANCELLED', 'FAILED'];
+const STATUS_FILTERS = ['ALL', 'QUEUED', 'EXECUTING', 'SUCCEEDED', 'CANCELLED', 'FAILED'];
+
+// ponytail: stepper & KPI diturunkan dari status lifecycle, bukan event MISSION_EVENT per fase — upgrade: derive dari MISSION_EVENT saat konsumsi Kafka aktif.
+const stepNum = (s: string) => (s === 'SUCCEEDED' ? 4 : s === 'EXECUTING' ? 2 : 1);
+
+const KPI_GROUPS = [
+  { statuses: ['QUEUED', 'CREATED', 'PENDING', 'SUBMITTED', 'BACKEND_ACCEPTED', 'ROBOT_ACKNOWLEDGED'] },
+  { statuses: ['EXECUTING'] },
+  { statuses: ['SUCCEEDED'] },
+  { statuses: ['CANCELLED', 'FAILED'] },
+];
 
 export default function MissionsPage() {
   const { request } = useApp();
@@ -21,16 +31,19 @@ export default function MissionsPage() {
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [loading, setLoading] = useState(true);
 
-  const loadMissions = useCallback(() => {
-    setLoading(true);
+  const loadMissions = useCallback((silent = false) => {
+    if (!silent) setLoading(true);
     request('missions?limit=100')
       .then(setMissions)
       .catch(() => {})
-      .finally(() => setLoading(false));
+      .finally(() => { if (!silent) setLoading(false); });
   }, [request]);
 
   useEffect(() => {
     loadMissions();
+    // Auto-refresh agar status QUEUED → EXECUTING terlihat tanpa reload manual.
+    const timer = window.setInterval(() => loadMissions(true), 5000);
+    return () => window.clearInterval(timer);
   }, [loadMissions]);
 
   const filteredMissions = missions.filter((m) => {
@@ -38,6 +51,7 @@ export default function MissionsPage() {
     if (searchQuery) {
       const query = searchQuery.toLowerCase();
       return (
+        m.patientName?.toLowerCase().includes(query) ||
         m.waypointName?.toLowerCase().includes(query) ||
         m.roomCode?.toLowerCase().includes(query) ||
         m.requestCode?.toLowerCase().includes(query) ||
@@ -62,10 +76,23 @@ export default function MissionsPage() {
           <Link href="/missions/create" className="btn-primary flex items-center gap-2 text-xs">
             <Plus size={14} /> {t.newMission}
           </Link>
-          <button onClick={loadMissions} className="btn-secondary flex items-center gap-2 text-xs">
+          <button onClick={() => loadMissions()} className="btn-secondary flex items-center gap-2 text-xs">
             <RefreshCw size={14} /> {dict.common.refresh}
           </button>
         </div>
+      </div>
+
+      {/* KPI strip misi per status (mockup monitoring-missions) */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        {KPI_GROUPS.map((g) => {
+          const count = missions.filter((m) => g.statuses.includes(m.status)).length;
+          return (
+            <div key={g.statuses[0]} className="glass-panel card-hover p-4">
+              <p className="text-xs txt-sec">{missionStatusLabel(g.statuses[0], dict)}</p>
+              <p className="text-2xl font-bold tabular-nums mt-1">{count}</p>
+            </div>
+          );
+        })}
       </div>
 
       {/* Filter & Search */}
@@ -104,9 +131,11 @@ export default function MissionsPage() {
             <thead>
               <tr className="border-b border-base bg-elevated txt-sec">
                 <th className="py-3 px-4 font-semibold">ID</th>
+                <th className="py-3 px-4 font-semibold">{t.patientName}</th>
                 <th className="py-3 px-4 font-semibold">{t.remoteRoom}</th>
                 <th className="py-3 px-4 font-semibold">{t.requestCode}</th>
                 <th className="py-3 px-4 font-semibold">{dict.common.status}</th>
+                <th className="py-3 px-4 font-semibold">{t.progress}</th>
                 <th className="py-3 px-4 font-semibold">{t.createdBy}</th>
                 <th className="py-3 px-4 font-semibold">{t.createdAt}</th>
                 <th className="py-3 px-4 text-right font-semibold">{dict.common.actions}</th>
@@ -115,16 +144,28 @@ export default function MissionsPage() {
             <tbody className="divide-y divide-[var(--border-color)]">
               {loading ? (
                 <tr>
-                  <td colSpan={7} className="text-center py-8 txt-sec">{dict.common.loading}</td>
+                  <td colSpan={9} className="text-center py-8 txt-sec">{dict.common.loading}</td>
                 </tr>
               ) : filteredMissions.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="text-center py-8 txt-sec italic">{t.noMissions}</td>
+                  <td colSpan={9} className="text-center py-8 txt-sec italic">{t.noMissions}</td>
                 </tr>
               ) : (
                 filteredMissions.map((m) => (
                   <tr key={m.id} className="hover:bg-elevated/60 transition-colors">
                     <td className="py-3 px-4 font-mono text-[11px] txt-sec">{m.id.slice(0, 8)}…</td>
+                    <td className="py-3 px-4">
+                      {m.patientName ? (
+                        <>
+                          <span className="font-semibold txt-main">{m.patientName}</span>
+                          {m.patientRoomName && (
+                            <span className="block text-[10px] txt-sec">{m.patientRoomName}</span>
+                          )}
+                        </>
+                      ) : (
+                        <span className="txt-sec">-</span>
+                      )}
+                    </td>
                     <td className="py-3 px-4">
                       <span className="font-semibold txt-main">{m.waypointName || dict.maps.waypoints}</span>
                       {m.roomCode && (
@@ -136,6 +177,16 @@ export default function MissionsPage() {
                       <span className={`status-pill ${statusPillClass(m.status)}`}>
                         {missionStatusLabel(m.status, dict)}
                       </span>
+                    </td>
+                    <td className="py-3 px-4">
+                      <div className="step-track" title={missionStatusLabel(m.status, dict)}>
+                        {(m.status === 'CANCELLED' || m.status === 'FAILED')
+                          ? [0, 1, 2, 3].map((i) => <span key={i} className="step-seg failed" />)
+                          : [0, 1, 2, 3].map((i) => {
+                              const n = stepNum(m.status);
+                              return <span key={i} className={`step-seg ${i < n - 1 ? 'done' : i === n - 1 ? 'active' : ''}`} />;
+                            })}
+                      </div>
                     </td>
                     <td className="py-3 px-4 txt-sec">{m.createdBy}</td>
                     <td className="py-3 px-4 txt-sec">{new Date(m.createdAt).toLocaleString(locale)}</td>

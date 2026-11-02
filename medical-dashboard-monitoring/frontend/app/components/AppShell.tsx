@@ -7,9 +7,9 @@ import {
   Bot, LayoutDashboard, Activity, ClipboardList, Database,
   Map as MapIcon, Settings, ChevronLeft, ChevronRight, Menu,
   Radio, Battery, BatteryCharging, LucideIcon,
-  Users as UsersIcon, FileText, Bell, UserCircle,
+  Users as UsersIcon, FileText, Bell, UserCircle, Cpu,
 } from 'lucide-react';
-import { WS_URL } from '../lib/ws-config';
+import { WS_RELAY_PATH } from '../lib/ws-config';
 import { csrfHeaders } from '../lib/csrf';
 import { useLanguage } from './LanguageProvider';
 import LanguageSwitcher from './LanguageSwitcher';
@@ -24,6 +24,7 @@ export interface RobotTelemetry {
   pose: { x: number; y: number; yaw: number };
   speed: number;
   activeMissionId: string | null;
+  queueLength: number;
   simulated: boolean;
   lastSeen: string;
 }
@@ -34,6 +35,15 @@ export interface CommandResult {
   reason: string;
 }
 
+export interface MissionEvent {
+  status: string;
+  message?: string;
+  missionId?: number;
+  progress?: number;
+  eventId?: string;
+  timestamp?: string;
+}
+
 interface AppContextType {
   user: { username: string; role: string } | null;
   logout: () => Promise<void>;
@@ -42,6 +52,7 @@ interface AppContextType {
   simrsStatus: string;
   wsConnected: boolean;
   lastCommandResult: CommandResult | null;
+  missionEvents: MissionEvent[];
   request: (path: string, init?: RequestInit) => Promise<any>;
 }
 
@@ -54,6 +65,7 @@ const defaultTelemetry: RobotTelemetry = {
   pose: { x: -5.0, y: -5.0, yaw: 0.0 },
   speed: 0.0,
   activeMissionId: null,
+  queueLength: 0,
   simulated: true,
   lastSeen: new Date().toISOString(),
 };
@@ -66,6 +78,7 @@ const AppContext = createContext<AppContextType>({
   simrsStatus: 'UNKNOWN',
   wsConnected: false,
   lastCommandResult: null,
+  missionEvents: [],
   request: async () => ({}),
 });
 
@@ -78,7 +91,7 @@ type Role = (typeof ROLE_ALL)[number];
 
 interface NavItem {
   href: string;
-  labelKey: 'dashboard' | 'missions' | 'tracking' | 'robots' | 'maps' | 'simrs' | 'users' | 'reports' | 'notifications' | 'account' | 'settings';
+  labelKey: 'dashboard' | 'missions' | 'tracking' | 'robots' | 'robotRegistry' | 'maps' | 'simrs' | 'users' | 'reports' | 'notifications' | 'account' | 'settings';
   icon: LucideIcon;
   roles: Role[];
 }
@@ -98,6 +111,7 @@ const NAV_SECTIONS: { sectionKey: 'sectionOps' | 'sectionSystem'; items: NavItem
     sectionKey: 'sectionSystem',
     items: [
       { href: '/maps', labelKey: 'maps', icon: MapIcon, roles: ['ADMIN'] },
+      { href: '/robots/registry', labelKey: 'robotRegistry', icon: Cpu, roles: ['ADMIN'] },
       { href: '/users', labelKey: 'users', icon: UsersIcon, roles: ['ADMIN'] },
       { href: '/reports', labelKey: 'reports', icon: FileText, roles: ROLE_ALL },
       { href: '/notifications', labelKey: 'notifications', icon: Bell, roles: ROLE_ALL },
@@ -148,11 +162,17 @@ function StatusChip({ label, ok, text }: { label: string; ok: boolean; text?: st
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<AppContextType['user']>(null);
   const [authChecked, setAuthChecked] = useState(false);
+  // pathname yang sudah selesai dicek auth-nya; guard redirect hanya boleh
+  // menendang jika cek untuk pathname AKTIF sudah selesai (hindari race
+  // antara reset authChecked dan guard pada commit navigasi yang sama).
+  const [authFor, setAuthFor] = useState<string | null>(null);
   const [telemetry, setTelemetry] = useState<RobotTelemetry>(defaultTelemetry);
   const [backendConnected, setBackendConnected] = useState(false);
   const [simrsStatus, setSimrsStatus] = useState('UNKNOWN');
   const [wsConnected, setWsConnected] = useState(false);
+  const [wsEnabled, setWsEnabled] = useState(false);
   const [lastCommandResult, setLastCommandResult] = useState<AppContextType['lastCommandResult']>(null);
+  const [missionEvents, setMissionEvents] = useState<MissionEvent[]>([]);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const pathname = usePathname();
@@ -160,9 +180,17 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const { dict } = useLanguage();
 
   const request = useCallback(async (path: string, init: RequestInit = {}) => {
-    const headers = new Headers(init.headers);
-    for (const [key, value] of Object.entries(csrfHeaders())) headers.set(key, value);
-    const res = await fetch(`/api/proxy/${path}`, { ...init, headers, credentials: 'include', cache: 'no-store' });
+    const doFetch = () => {
+      const headers = new Headers(init.headers);
+      for (const [key, value] of Object.entries(csrfHeaders())) headers.set(key, value);
+      return fetch(`/api/proxy/${path}`, { ...init, headers, credentials: 'include', cache: 'no-store' });
+    };
+    let res = await doFetch();
+    // Token CSRF bisa hilang/berotasi di cookie browser — refresh sekali lalu ulang.
+    if (res.status === 403 && init.method && init.method !== 'GET') {
+      await fetch('/api/proxy/auth/csrf', { credentials: 'include', cache: 'no-store' }).catch(() => {});
+      res = await doFetch();
+    }
     const ct = res.headers.get('content-type') || '';
     const data = ct.includes('json') ? await res.json() : await res.text();
     if (!res.ok) {
@@ -173,16 +201,21 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   }, []);
 
   useEffect(() => {
-    if (pathname === '/login') { setAuthChecked(true); return; }
+    // Reset authChecked tiap perubahan route: cek /auth/me untuk route BARU
+    // harus selesai sebelum guard redirect (di bawah) boleh menendang ke /login.
+    if (pathname === '/login') { setUser(null); setAuthChecked(true); setAuthFor(pathname); return; }
+    setAuthChecked(false);
+    let cancelled = false;
     fetch('/api/proxy/auth/me', { credentials: 'include', cache: 'no-store' })
       .then(async (res) => res.ok ? setUser(await res.json()) : setUser(null))
       .catch(() => setUser(null))
-      .finally(() => setAuthChecked(true));
+      .finally(() => { if (!cancelled) { setAuthChecked(true); setAuthFor(pathname); } });
+    return () => { cancelled = true; };
   }, [pathname]);
 
   useEffect(() => {
-    if (authChecked && pathname !== '/login' && !user) router.replace('/login');
-  }, [authChecked, pathname, user, router]);
+    if (authFor === pathname && authChecked && pathname !== '/login' && !user) router.replace('/login');
+  }, [authFor, authChecked, pathname, user, router]);
 
   const logout = async () => {
     await fetch('/api/proxy/auth/logout', { method: 'POST', credentials: 'include', headers: csrfHeaders() });
@@ -192,6 +225,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
   // Poll robot REST state once on mount
   useEffect(() => {
+    if (!user) return; // jangan poll di /login / sebelum auth — hindari 403 spam
     const refresh = () => {
       request('robots').then((list: any[]) => {
         setBackendConnected(true);
@@ -204,54 +238,78 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     return () => window.clearInterval(timer);
   }, [user, request]);
 
-  // WebSocket real-time connection
+  // SSE relay — BFF memegang koneksi WS ke medical-ws (Bearer server-side, lihat /api/ws/stream).
+  // Session relay dikendalikan operator melalui /settings; browser tidak membuka stream implisit.
   useEffect(() => {
-    let ws: WebSocket | null = null;
-    let reconnectTimeout: any = null;
+    if (!user) return;
+    let cancelled = false;
+    fetch('/api/ws/session', { cache: 'no-store' })
+      .then((response) => response.json())
+      .then((session) => { if (!cancelled) setWsEnabled(session.conn?.on === true); })
+      .catch(() => { if (!cancelled) setWsEnabled(false); });
+    return () => { cancelled = true; };
+  }, [user]);
+
+  useEffect(() => {
+    const refreshSession = () => {
+      fetch('/api/ws/session', { cache: 'no-store' })
+        .then((response) => response.json())
+        .then((session) => setWsEnabled(session.conn?.on === true))
+        .catch(() => setWsEnabled(false));
+    };
+    window.addEventListener('nevo:ws-session-changed', refreshSession);
+    return () => window.removeEventListener('nevo:ws-session-changed', refreshSession);
+  }, []);
+
+  useEffect(() => {
+    if (!user || !wsEnabled) {
+      setWsConnected(false);
+      return;
+    }
+    let es: EventSource | null = null;
+    let timer: ReturnType<typeof setTimeout> | null = null;
 
     const connect = () => {
-      ws = new WebSocket(WS_URL);
-
-      ws.onopen = () => {
+      es = new EventSource(WS_RELAY_PATH);
+      es.onopen = () => {
         setWsConnected(true);
-        // Reconcile robot state after reconnect; no command queue is used.
+        // Reconcile robot state setelah reconnect.
         request('robots').then((list: any[]) => {
           setBackendConnected(true);
           if (list?.[0]) setTelemetry(list[0]);
-        }).catch(() => { setBackendConnected(false); setWsConnected(false); });
+        }).catch(() => setBackendConnected(false));
       };
 
-      ws.onmessage = (event) => {
+      es.onmessage = (event) => {
         try {
-          const msg = JSON.parse(event.data);
-          if (msg.type === 'TELEMETRY' && msg.data) {
-            setTelemetry(msg.data);
-          } else if (msg.type === 'ROBOT_COMMAND_RESULT' && msg.data) {
-            setLastCommandResult(msg.data);
+          const env = JSON.parse(event.data);
+          if (env.type === 'TELEMETRY' && env.data) {
+            setTelemetry(env.data);
+          } else if (env.type === 'ROBOT_COMMAND_RESULT' && env.data) {
+            setLastCommandResult(env.data);
+          } else if (env.type === 'MISSION_EVENT' && env.data) {
+            setMissionEvents((previous) => [env.data, ...previous].slice(0, 120));
           }
         } catch {
           // ignore
         }
       };
 
-      ws.onclose = () => {
+      // EventSource berhenti permanen pada non-200 (sesi OFF = 409) — retry manual.
+      es.onerror = () => {
         setWsConnected(false);
-        reconnectTimeout = setTimeout(connect, 3000);
-      };
-
-      ws.onerror = () => {
-        setWsConnected(false);
-        ws?.close();
+        es?.close();
+        timer = setTimeout(connect, 3000);
       };
     };
 
     connect();
 
     return () => {
-      if (reconnectTimeout) clearTimeout(reconnectTimeout);
-      if (ws) ws.close();
+      if (timer) clearTimeout(timer);
+      es?.close();
     };
-  }, []);
+  }, [user, request, wsEnabled]);
 
   // Tutup drawer mobile saat pindah rute
   useEffect(() => {
@@ -290,6 +348,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         simrsStatus,
         wsConnected,
         lastCommandResult,
+        missionEvents,
         request,
       }}
     >
