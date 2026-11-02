@@ -21,10 +21,21 @@ export async function createPrescriptionAction(
 ): Promise<{ ok: boolean; to?: string; error?: string }> {
   const actor = await requirePermission(PERMISSION_CODES.PRESCRIPTION_CREATE);
 
+  let doseTimesRaw: string[] = [];
+  try {
+    doseTimesRaw = JSON.parse((formData.get("doseTimes-json") as string) || "[]");
+  } catch {
+    // dikosongkan; zod tetap memvalidasi
+  }
+  const intervalDaysRaw = formData.get("intervalDays");
+
   const raw = {
     patientId: formData.get("patientId") as string,
     notes: (formData.get("notes") as string) || null,
     items: JSON.parse((formData.get("items") as string) || "[]"),
+    doseTimes: doseTimesRaw,
+    repeatMode: formData.get("repeatMode") || undefined,
+    intervalDays: intervalDaysRaw != null && intervalDaysRaw !== "" ? Number(intervalDaysRaw) : undefined,
   };
 
   const parsed = createPrescriptionSchema.safeParse(raw);
@@ -42,6 +53,10 @@ export async function createPrescriptionAction(
         doctorId: actor.userId,
         notes: parsed.data.notes,
         status: "SUBMITTED",
+        doseTimes: parsed.data.doseTimes,
+        repeatMode: parsed.data.repeatMode,
+        intervalDays:
+          parsed.data.repeatMode === "INTERVAL" ? parsed.data.intervalDays ?? null : null,
         items: {
           create: parsed.data.items.map((item) => ({
             medicineId: item.medicineId,

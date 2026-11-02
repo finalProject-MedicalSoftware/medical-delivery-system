@@ -1,5 +1,4 @@
 import { NextRequest } from "next/server";
-import prisma from "@/lib/prisma";
 import { checkMonitoringToken } from "@/lib/monitoring";
 import type { DeliveryStatus, PrescriptionStatus } from "@prisma/client";
 import {
@@ -75,6 +74,7 @@ export async function GET(req: NextRequest) {
   const gate = checkMonitoringToken(req);
   if (!gate.ok) return gate.response;
 
+  const { default: prisma } = await import("@/lib/prisma");
   const wards = await prisma.ward.findMany({
     orderBy: { code: "asc" },
     include: {

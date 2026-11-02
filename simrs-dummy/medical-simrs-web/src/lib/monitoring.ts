@@ -1,4 +1,3 @@
-import prisma from "@/lib/prisma";
 import { checkRateLimit } from "@/lib/rate-limit";
 
 /**
@@ -24,6 +23,7 @@ async function recordInvalidTokenAttempt(ip: string, got: string | null): Promis
   try {
     // actorId adalah FK non-nullable ke user; butuh akun monitoring_service.
     // Bila belum di-seed, audit di-skip agar tidak memblokir response.
+    const { default: prisma } = await import("@/lib/prisma");
     const actorId = await getMonitoringActorId();
     if (!actorId) return;
     await prisma.auditLog.create({
@@ -104,6 +104,7 @@ export function checkMonitoringToken(
 
 /** ID akun layanan untuk FK audit. Null = belum di-seed. */
 export async function getMonitoringActorId(): Promise<string | null> {
+  const { default: prisma } = await import("@/lib/prisma");
   const u = await prisma.user.findUnique({
     where: { username: MONITORING_SERVICE_USERNAME },
     select: { id: true },

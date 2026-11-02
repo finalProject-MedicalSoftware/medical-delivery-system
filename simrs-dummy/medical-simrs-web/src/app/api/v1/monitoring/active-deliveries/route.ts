@@ -1,5 +1,4 @@
 import { NextRequest } from "next/server";
-import prisma from "@/lib/prisma";
 import { checkMonitoringToken } from "@/lib/monitoring";
 import { ACTIVE_DELIVERY_STATUSES, deliveryStatusLabel } from "@/lib/delivery-status";
 
@@ -25,6 +24,7 @@ export async function GET(req: NextRequest) {
     limit = Math.min(parsed, 200);
   }
 
+  const { default: prisma } = await import("@/lib/prisma");
   const deliveries = await prisma.deliveryRequest.findMany({
     where: { status: { in: ACTIVE_DELIVERY_STATUSES } },
     orderBy: { requestedAt: "desc" },
@@ -34,11 +34,15 @@ export async function GET(req: NextRequest) {
       prescription: {
         select: {
           code: true,
+          doseTimes: true,
+          repeatMode: true,
+          intervalDays: true,
           patient: {
             select: {
               mrn: true,
               fullName: true,
               gender: true,
+              isInfectious: true,
               roomCode: true,
               dischargedAt: true,
               bed: {
@@ -68,10 +72,21 @@ export async function GET(req: NextRequest) {
         roomCode: d.room.roomCode,
         roomName: d.room.name,
         prescriptionCode: d.prescription.code,
+        // doseTimes adalah metadata informasional resep, bukan penjadwalan otomatis.
+        schedule: d.prescription.doseTimes.length > 0
+          ? {
+              doseTimes: d.prescription.doseTimes,
+              repeatMode: d.prescription.repeatMode,
+              ...(d.prescription.intervalDays != null
+                ? { intervalDays: d.prescription.intervalDays }
+                : {}),
+            }
+          : null,
         patient: {
           mrn: p.mrn,
           fullName: p.fullName,
           gender: p.gender, // "L" / "P"
+          isInfectious: p.isInfectious,
           // Ruang PASIEN saat ini (bisa beda bila pasien pindah bed).
           roomCode: p.roomCode,
           roomName: p.bed?.room.name ?? null,

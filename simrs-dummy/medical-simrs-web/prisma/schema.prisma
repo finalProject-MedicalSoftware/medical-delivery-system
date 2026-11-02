@@ -189,6 +189,12 @@ enum PrescriptionStatus {
   CANCELLED
 }
 
+// Pengulangan pengajuan otomatis (kontrak web-monitoring-integration.md §1.2)
+enum RepeatMode {
+  DAILY
+  INTERVAL
+}
+
 model Prescription {
   id              String             @id @default(cuid())
   code            String             @unique // e.g. RX-20261012-0001
@@ -202,6 +208,9 @@ model Prescription {
   verifiedAt      DateTime?          @map("verified_at")
   rejectionReason String?            @map("rejection_reason")
   notes           String?
+  doseTimes       String[]           @default([]) // jam minum "HH:mm" per slot; kosong = resep tanpa jadwal (alur manual)
+  repeatMode      RepeatMode         @default(DAILY)
+  intervalDays    Int?               // mode INTERVAL: pengajuan ulang tiap N hari
   createdAt       DateTime           @default(now()) @map("created_at")
   updatedAt       DateTime           @updatedAt @map("updated_at")
 
@@ -292,4 +301,25 @@ model AuditLog {
   @@index([actorId])
   @@index([createdAt])
   @@map("h_audit_log")
+}
+
+// F2 Outbox: event yang akan dikirim middleware Web Monitoring via relay.
+// Insert DALAM transaksi yang sama dengan perubahan status (at-least-once relay).
+model OutboxEvent {
+  id             String    @id @default(cuid())
+  eventId        String    @unique @map("event_id")
+  idempotencyKey String    @unique @map("idempotency_key") // dedupe pengiriman relay
+  type           String // DELIVERY_CREATED, DELIVERY_STATUS_CHANGED, DELIVERY_ARRIVED, HANDOVER_CONFIRMED, DELIVERY_CANCELLED
+  requestCode    String    @map("request_code")
+  wardCode       String?   @map("ward_code")
+  payload        Json // Envelope lengkap §2.3 kontrak
+  status         String    @default("PENDING") // PENDING, SENT, DEAD
+  attempts       Int       @default(0)
+  nextAttemptAt  DateTime  @default(now()) @map("next_attempt_at")
+  sentAt         DateTime? @map("sent_at")
+  lastError      String?   @map("last_error")
+  createdAt      DateTime  @default(now()) @map("created_at")
+
+  @@index([status, nextAttemptAt])
+  @@map("h_outbox_event")
 }

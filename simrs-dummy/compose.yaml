@@ -1,33 +1,146 @@
+# Local Docker workflow: see DOCKER.md for profiles and startup commands.
+# PostgreSQL runs by default. `apps` starts SIMRS web + backend; `ws` adds
+# the gateway with Kafka (Redpanda). Use --profile apps --profile ws together.
 name: medical-delivery-system
 
 services:
   simrs-postgres:
     image: postgres:17-alpine
-    container_name: simrs-postgres
     restart: unless-stopped
     environment:
       POSTGRES_DB: simrs_dummy
       POSTGRES_USER: simrs_app
-      POSTGRES_PASSWORD: ${SIMRS_DB_PASSWORD:?Set SIMRS_DB_PASSWORD di file .env}
+      POSTGRES_PASSWORD: ${SIMRS_DB_PASSWORD:?Set SIMRS_DB_PASSWORD in simrs-dummy/.env}
     ports:
-      # Bind ke localhost saja; pgAdmin di Mac konek ke localhost:5433.
       - "127.0.0.1:5433:5432"
     volumes:
       - simrs_postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: [ "CMD-SHELL", "pg_isready -U simrs_app -d simrs_dummy" ]
+      test: ["CMD-SHELL", "pg_isready -U simrs_app -d simrs_dummy"]
       interval: 5s
       timeout: 3s
       retries: 20
-    security_opt:
-      - no-new-privileges:true
 
-# FASE 2 (BELUM AKTIF — sesuai AGENTS.md aturan 9, jangan odkomentari dulu):
-# - simrs-backend (Java Spring Boot): folder simrs-dummy/medical-simrs-backend (draft, belum di-build)
-# - simrs-web (Next.js): aplikasinya di root simrs-dummy, jalan lokal via `npm run dev`
-# - medical-ws: folder root `medical-ws/` (Node.js ws + kafkajs; Kafka→WS ke dashboard monitoring/HMI)
-# - kafka/zookeeper: HANYA setelah kontrak event lintas layanan dirumuskan (dilarang AGENTS.md aturan 2 & 9).
-# Jangan tambah service di bawah sebelum kontrak API/event disepakati dan ditulis di docs/api-contracts/.
+  simrs-web:
+    profiles: ["apps"]
+    build: ./medical-simrs-web
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://simrs_app:${SIMRS_DB_PASSWORD:?Set SIMRS_DB_PASSWORD in simrs-dummy/.env}@simrs-postgres:5432/simrs_dummy?schema=public
+      NEXTAUTH_URL: ${NEXTAUTH_URL:-http://localhost:3000}
+      NEXTAUTH_SECRET: ${NEXTAUTH_SECRET:?Set NEXTAUTH_SECRET in simrs-dummy/.env}
+      AUTH_SECRET: ${AUTH_SECRET:?Set AUTH_SECRET in simrs-dummy/.env}
+      MONITORING_TOKEN: ${MONITORING_TOKEN:-}
+    depends_on:
+      simrs-postgres:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:${SIMRS_WEB_PORT:-3000}:3000"
+
+  medical-postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: nevo
+      POSTGRES_USER: nevo
+      POSTGRES_PASSWORD: ${MEDICAL_DB_PASSWORD:?Set MEDICAL_DB_PASSWORD in simrs-dummy/.env}
+    ports:
+      - "127.0.0.1:5434:5432"
+    volumes:
+      - medical_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nevo -d nevo"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  medical-backend:
+    profiles: ["apps"]
+    build: ../medical-backend
+    restart: unless-stopped
+    environment:
+      SERVER_PORT: 8080
+      DATABASE_URL: jdbc:postgresql://medical-postgres:5432/nevo
+      DATABASE_USER: nevo
+      DATABASE_PASSWORD: ${MEDICAL_DB_PASSWORD:?Set MEDICAL_DB_PASSWORD in simrs-dummy/.env}
+      NEVO_STORAGE_DIR: /app/data/uploads
+      SIMRS_ENABLED: ${SIMRS_ENABLED:-false}
+      SIMRS_BASE_URL: ${SIMRS_BASE_URL:-http://simrs-web:3000}
+      SIMRS_MONITORING_TOKEN: ${MONITORING_TOKEN:-}
+      SIMRS_WRITE_ENABLED: ${SIMRS_WRITE_ENABLED:-false}
+      SIMRS_WEBHOOK_TOKEN: ${SIMRS_WEBHOOK_TOKEN:-}
+      INTERNAL_PUBLISH_URL: http://medical-ws:8081/internal/publish
+      INTERNAL_PUBLISH_SECRET: ${INTERNAL_PUBLISH_SECRET:-}
+    depends_on:
+      medical-postgres:
+        condition: service_healthy
+    volumes:
+      - medical_uploads:/app/data/uploads
+    user: "0:0"
+    entrypoint: ["sh", "-c", "mkdir -p /app/data/uploads && chown 10001:999 /app/data/uploads && exec su -s /bin/sh appuser -c 'exec /opt/java/openjdk/bin/java -jar /app/app.jar'"]
+    ports:
+      - "127.0.0.1:${MEDICAL_BACKEND_PORT:-8082}:8080"
+
+  simrs-relay:
+    profiles: ["apps"]
+    build: ./medical-simrs-web
+    restart: unless-stopped
+    command: ["sh", "-c", "npx tsx scripts/outbox-relay.ts"]
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://simrs_app:${SIMRS_DB_PASSWORD:?Set SIMRS_DB_PASSWORD in simrs-dummy/.env}@simrs-postgres:5432/simrs_dummy?schema=public
+      MONITORING_CALLBACK_URL: ${MONITORING_CALLBACK_URL:-http://medical-backend:8080}
+      MONITORING_CALLBACK_TOKEN: ${SIMRS_WEBHOOK_TOKEN:-}
+    depends_on:
+      simrs-postgres:
+        condition: service_healthy
+
+  redpanda:
+    profiles: ["ws"]
+    image: docker.redpanda.com/redpandadata/redpanda:v24.2.18
+    restart: unless-stopped
+    command:
+      - redpanda start
+      - --smp 1
+      - --memory 512M
+      - --reserve-memory=0
+      - --overprovisioned
+      - --node-id 0
+      - --kafka-addr PLAINTEXT://0.0.0.0:9092,OUTSIDE://0.0.0.0:9093
+      - --advertise-kafka-addr PLAINTEXT://redpanda:9092,OUTSIDE://localhost:9093
+      - --rpc-addr redpanda:33145
+      - --advertise-rpc-addr redpanda:33145
+    ports:
+      - "127.0.0.1:9093:9093"
+    healthcheck:
+      test: ["CMD-SHELL", "rpk cluster info || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  medical-ws:
+    profiles: ["ws"]
+    build: ../medical-ws
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      WS_PORT: 8081
+      KAFKA_ENABLED: "true"
+      KAFKA_BROKERS: redpanda:9092
+      KAFKA_CLIENT_ID: medical-ws
+      KAFKA_GROUP_ID: medical-ws-group
+      TOPIC_EVENTS: simrs.delivery.events.v1
+      TOPIC_DLQ: simrs.delivery.events.dlq
+      WS_AUTH_TOKEN: ${WS_AUTH_TOKEN:-}
+      INTERNAL_PUBLISH_SECRET: ${INTERNAL_PUBLISH_SECRET:-}
+    depends_on:
+      redpanda:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:${MEDICAL_WS_PORT:-8083}:8081"
 
 volumes:
   simrs_postgres_data:
+  medical_postgres_data:
+  medical_uploads:

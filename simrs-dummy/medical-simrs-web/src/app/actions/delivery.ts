@@ -7,6 +7,7 @@ import { createDeliveryRequestSchema } from "@/lib/validations";
 import { revalidatePath } from "next/cache";
 import { DeliveryStatus } from "@prisma/client";
 import { DELIVERY_TRANSITIONS } from "@/lib/delivery-status";
+import { enqueueOutbox } from "@/lib/outbox";
 
 async function generateDeliveryCode(): Promise<string> {
   const today = new Date().toISOString().slice(0, 10).replace(/-/g, "");
@@ -35,12 +36,21 @@ export async function createDeliveryRequestAction(
   // Validate prescription is READY_FOR_DELIVERY
   const rx = await prisma.prescription.findUnique({
     where: { id: parsed.data.prescriptionId },
+    include: { patient: true },
   });
   if (!rx) return { ok: false, error: "Resep tidak ditemukan" };
   if (rx.status !== "READY_FOR_DELIVERY") {
     return {
       ok: false,
       error: `Resep harus berstatus READY_FOR_DELIVERY (saat ini: ${rx.status})`,
+    };
+  }
+
+  // Gate: hanya pasien menular
+  if (!rx.patient.isInfectious) {
+    return {
+      ok: false,
+      error: `Pengantaran hanya untuk pasien menular. Pasien ${rx.patient.fullName} (${rx.patient.mrn}) bukan pasien menular.`,
     };
   }
 
@@ -98,6 +108,13 @@ export async function createDeliveryRequestAction(
         details: { requestCode, prescriptionId: parsed.data.prescriptionId, roomCode: parsed.data.roomCode },
       },
     });
+
+    // Outbox F2: event awal dikirim relay ke Web Monitoring (kontrak §2.2).
+    await enqueueOutbox(tx, {
+      requestCode,
+      from: null,
+      to: "DELIVERY_REQUESTED",
+    });
   });
 
   revalidatePath("/pengantaran");
@@ -152,6 +169,18 @@ export async function advanceDeliveryStatusAction(
         actorId: actor.userId,
         details: { from: delivery.status, to: newStatus },
       },
+    });
+
+    // Outbox F2: transisi ini juga diterbitkan ke Web Monitoring.
+    // ponytail: compartmentNo tidak ikut di sini karena DeliveryRequest tidak
+    // menyimpannya (hanya di payload event arrival, ditulis route monitoring) —
+    // bila nanti SIMRS juga bisa mengumumkan kedatangan, resolve dari
+    // DeliveryEvent terakhir berstatus MOCK_ARRIVED_AT_ROOM seperti resolveHandover.
+    await enqueueOutbox(tx, {
+      requestCode: delivery.requestCode,
+      from: delivery.status,
+      to: newStatus,
+      note: notes ?? null,
     });
   });
 

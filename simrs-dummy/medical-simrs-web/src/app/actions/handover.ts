@@ -6,6 +6,7 @@ import { PERMISSION_CODES } from "@/lib/rbac";
 import { resolveHandover } from "@/lib/handover";
 import { canConfirmHandover } from "@/lib/handover-status";
 import { verifyScanToken } from "@/lib/qr-token";
+import { enqueueOutbox } from "@/lib/outbox";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 
@@ -74,6 +75,16 @@ export async function confirmHandoverAction(mrn: string, token: string): Promise
           patientMrn: info.patient.mrn,
         },
       },
+    });
+
+    // Outbox F2: satu-satunya jalur HANDOVER_CONFIRMED (kontrak §2.3; data
+    // khusus {patientMrn, compartmentNo, method} berasal dari manusia).
+    await enqueueOutbox(tx, {
+      requestCode: delivery.requestCode,
+      from: delivery.status,
+      to: "MOCK_HANDOVER_CONFIRMED",
+      patientMrn: info.patient.mrn,
+      compartmentNo: delivery.compartmentNo,
     });
   });
 

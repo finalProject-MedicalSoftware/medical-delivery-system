@@ -1,5 +1,4 @@
 import { NextRequest } from "next/server";
-import prisma from "@/lib/prisma";
 import { checkMonitoringToken } from "@/lib/monitoring";
 
 /**
@@ -23,6 +22,7 @@ export async function GET(req: NextRequest) {
       { status: 400 }
     );
   }
+  const { default: prisma } = await import("@/lib/prisma");
   const limit = Math.min(Number(searchParams.get("limit") ?? 200), 200);
 
   const [patients, deliveries, rooms] = await Promise.all([

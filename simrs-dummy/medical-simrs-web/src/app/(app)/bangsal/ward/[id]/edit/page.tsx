@@ -1,4 +1,3 @@
-import prisma from "@/lib/prisma";
 import { getCurrentUser } from "@/lib/auth";
 import { redirect, notFound } from "next/navigation";
 import { PERMISSION_CODES } from "@/lib/rbac";
@@ -20,6 +19,7 @@ export default async function UbahBangsalPage({
 
   if (!canEdit) redirect("/bangsal");
 
+  const { default: prisma } = await import("@/lib/prisma");
   const ward = await prisma.ward.findUnique({ where: { id } });
   if (!ward) notFound();
 

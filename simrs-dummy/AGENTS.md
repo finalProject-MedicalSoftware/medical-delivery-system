@@ -81,7 +81,7 @@ Role harus disimpan di database dan bisa ditetapkan lebih dari satu kepada user.
 6. Jangan menutupi kegagalan test. Jika ada error, cari akar masalah dan perbaiki penyebabnya, bukan hanya menonaktifkan test atau lint.
 7. Jika ditemukan kebutuhan baru, bug flow, atau perubahan requirement, usulkan pembaruan PRD/AGENTS dan dokumentasikan alasan serta dampaknya. Jangan diam-diam mengubah kebutuhan inti.
 8. Jangan mengubah/memigrasikan database nyata atau menghapus volume tanpa persetujuan.
-9. Jangan menambah Kafka, WebSocket robot, ROS 2, HMI, atau fitur semantic perception ke aplikasi SIMRS pada fase awal.
+9. Jangan menambah Kafka, WebSocket robot, ROS 2, HMI, atau fitur semantic perception ke aplikasi SIMRS pada fase awal. Kafka dan gateway WS kini berjalan di `medical-ws` (repo terpisah); SIMRS tetap outbox + relay webhook dan tidak menyentuh broker.
 10. Jangan menyebut sistem layak klinis/produksi; proyek ini prototipe akademik dengan data dummy.
 
 ## 8. Definition of done untuk setiap slice

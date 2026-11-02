@@ -13,7 +13,10 @@
     "db:migrate": "prisma migrate dev",
     "db:push": "prisma db push",
     "db:seed": "tsx prisma/seed.ts",
-    "db:studio": "prisma studio"
+    "db:studio": "prisma studio",
+    "relay": "tsx scripts/outbox-relay.ts",
+    "wipe-demo": "tsx scripts/wipe-demo-data.ts",
+    "seed-e2e": "tsx scripts/seed-e2e-deliveries.ts"
   },
   "dependencies": {
     "@prisma/adapter-pg": "^7.10.0",

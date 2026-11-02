@@ -1,5 +1,4 @@
 import { NextRequest } from "next/server";
-import prisma from "@/lib/prisma";
 import { checkMonitoringToken } from "@/lib/monitoring";
 import { ACTIVE_DELIVERY_STATUSES, deliveryStatusLabel } from "@/lib/delivery-status";
 
@@ -16,6 +15,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ mrn: string
   if (!gate.ok) return gate.response;
 
   const { mrn } = await ctx.params;
+  const { default: prisma } = await import("@/lib/prisma");
   const patient = await prisma.patient.findUnique({
     where: { mrn },
     include: {

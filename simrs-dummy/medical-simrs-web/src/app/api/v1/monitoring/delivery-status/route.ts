@@ -1,9 +1,9 @@
 import { NextRequest } from "next/server";
-import prisma from "@/lib/prisma";
 import { checkMonitoringToken, getMonitoringActorId } from "@/lib/monitoring";
 import { revalidatePath } from "next/cache";
 import { DeliveryStatus, Prisma } from "@prisma/client";
 import { DELIVERY_STATUS_LABELS, DELIVERY_TRANSITIONS } from "@/lib/delivery-status";
+import { enqueueOutbox } from "@/lib/outbox";
 
 /**
  * Kontrak FINAL (fase mock) - Monitoring → SIMRS.
@@ -107,6 +107,7 @@ export async function POST(req: NextRequest) {
     compartment = compartmentNo;
   }
 
+  const { default: prisma } = await import("@/lib/prisma");
   const delivery = await prisma.deliveryRequest.findUnique({
     where: { requestCode },
   });
@@ -203,6 +204,15 @@ export async function POST(req: NextRequest) {
           actorId,
           details: { from: delivery.status, to, requestCode, idempotencyKey },
         },
+      });
+
+      // Outbox F2: perubahan status ini diterbitkan ke Web Monitoring (§2.2).
+      await enqueueOutbox(tx, {
+        requestCode,
+        from: delivery.status,
+        to,
+        note: typeof note === "string" && note ? note : null,
+        compartmentNo: compartment,
       });
     });
   } catch (err) {

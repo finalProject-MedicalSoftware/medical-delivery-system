@@ -1,8 +1,7 @@
-import prisma from "./prisma";
 import bcrypt from "bcryptjs";
 import { headers } from "next/headers";
 import { createSessionCookie, clearSessionCookie, getSession, SessionPayload } from "./session";
-import { hasPermission, hasAnyRole, ROLE_CODES, UserAuthContext } from "./rbac";
+import { hasPermission, hasAnyRole, UserAuthContext } from "./rbac";
 import { checkRateLimit } from "./rate-limit";
 
 const LOGIN_MAX_ATTEMPTS = 5;
@@ -35,6 +34,7 @@ export async function authenticateCredentials(
     return { success: false, error: "Username dan password wajib diisi" };
   }
 
+  const { default: prisma } = await import("./prisma");
   const user = await prisma.user.findUnique({
     where: { username },
     include: {
@@ -123,7 +123,7 @@ export async function loginUser(username: string, password: string): Promise<Log
 
   await createSessionCookie(payload);
 
-  // Record audit log
+  const { default: prisma } = await import("./prisma");
   await prisma.auditLog.create({
     data: {
       entityType: "USER",
@@ -147,6 +147,7 @@ export async function logoutUser(): Promise<void> {
   const session = await getSession();
   if (session) {
     try {
+      const { default: prisma } = await import("./prisma");
       await prisma.auditLog.create({
         data: {
           entityType: "USER",
@@ -173,6 +174,7 @@ export async function getCurrentUser(): Promise<UserAuthContext | null> {
   // Cookie sesi (JWT 24 jam) tetap valid setelah migrate reset/seed ulang,
   // padahal ID user di DB dibuat ulang. Verifikasi ke DB agar actorId audit
   // tidak menunjuk user yang sudah tidak ada (FK audit_logs_actor_id_fkey).
+  const { default: prisma } = await import("./prisma");
   const user = await prisma.user.findUnique({
     where: { id: session.userId },
     select: { id: true, isActive: true },
@@ -230,6 +232,7 @@ export async function assignUserRole(
   roleCode: string,
   actorId: string
 ): Promise<{ success: boolean; message: string }> {
+  const { default: prisma } = await import("./prisma");
   const role = await prisma.role.findUnique({ where: { code: roleCode } });
   if (!role) {
     throw new Error(`Role '${roleCode}' tidak ditemukan`);
@@ -273,6 +276,7 @@ export async function revokeUserRole(
   roleCode: string,
   actorId: string
 ): Promise<{ success: boolean; message: string }> {
+  const { default: prisma } = await import("./prisma");
   const role = await prisma.role.findUnique({ where: { code: roleCode } });
   if (!role) {
     throw new Error(`Role '${roleCode}' tidak ditemukan`);

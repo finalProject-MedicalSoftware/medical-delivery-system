@@ -13,7 +13,6 @@ import {
   Truck,
   ClipboardList,
   Settings,
-  Radio,
   LogOut,
   AlertTriangle,
   ShieldCheck,
@@ -29,56 +28,69 @@ interface NavItem {
   roles?: string[];
 }
 
-const NAV_ITEMS: NavItem[] = [
-  { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
+interface NavSection {
+  title: string;
+  items: NavItem[];
+}
+
+// Dirampingkan: halaman Integrasi tidak lagi di menu (halaman tetap ada untuk akses langsung).
+const NAV_SECTIONS: NavSection[] = [
   {
-    href: "/pasien",
-    label: "Pasien Sintetis",
-    icon: Users,
-    permissions: ["prescription:read", "prescription:create"],
+    title: "Utama",
+    items: [{ href: "/dashboard", label: "Dashboard", icon: LayoutDashboard }],
   },
   {
-    href: "/bangsal",
-    label: "Bangsal & Ruang",
-    icon: BedDouble,
-    permissions: ["master:manage", "delivery:read"],
+    title: "Operasional",
+    items: [
+      {
+        href: "/pasien",
+        label: "Pasien Sintetis",
+        icon: Users,
+        permissions: ["prescription:read", "prescription:create"],
+      },
+      {
+        href: "/bangsal",
+        label: "Bangsal & Ruang",
+        icon: BedDouble,
+        permissions: ["master:manage", "delivery:read"],
+      },
+      {
+        href: "/obat",
+        label: "Katalog Obat",
+        icon: Pill,
+        permissions: ["prescription:read", "master:manage"],
+      },
+      {
+        href: "/resep",
+        label: "Resep",
+        icon: FileText,
+        permissions: ["prescription:read", "prescription:create"],
+      },
+      {
+        href: "/pengantaran",
+        label: "Pengantaran",
+        icon: Truck,
+        permissions: ["delivery:read", "delivery:create"],
+      },
+    ],
   },
   {
-    href: "/obat",
-    label: "Katalog Obat",
-    icon: Pill,
-    permissions: ["prescription:read", "master:manage"],
-  },
-  {
-    href: "/resep",
-    label: "Resep",
-    icon: FileText,
-    permissions: ["prescription:read", "prescription:create"],
-  },
-  {
-    href: "/pengantaran",
-    label: "Pengantaran",
-    icon: Truck,
-    permissions: ["delivery:read", "delivery:create"],
-  },
-  {
-    href: "/audit",
-    label: "Audit Trail",
-    icon: ClipboardList,
-    permissions: ["audit:read"],
-    roles: ["SYSTEM_ADMIN"],
-  },
-  {
-    href: "/pengguna",
-    label: "Pengguna & Role",
-    icon: Settings,
-    roles: ["SYSTEM_ADMIN", "SIMRS_ADMIN"],
-  },
-  {
-    href: "/integrasi",
-    label: "Integrasi Monitoring",
-    icon: Radio,
-    roles: ["SYSTEM_ADMIN", "SIMRS_ADMIN"],
+    title: "Admin",
+    items: [
+      {
+        href: "/audit",
+        label: "Audit Trail",
+        icon: ClipboardList,
+        permissions: ["audit:read"],
+        roles: ["SYSTEM_ADMIN"],
+      },
+      {
+        href: "/pengguna",
+        label: "Pengguna & Role",
+        icon: Settings,
+        roles: ["SYSTEM_ADMIN", "SIMRS_ADMIN"],
+      },
+    ],
   },
 ];
 
@@ -104,15 +116,15 @@ function canAccess(user: UserAuthContext, item: NavItem): boolean {
 
 function getRoleBadgeColor(role: string): string {
   const colors: Record<string, string> = {
-    SYSTEM_ADMIN: "bg-rose-100 text-rose-800",
-    SIMRS_ADMIN: "bg-sky-100 text-sky-800",
-    DOCTOR: "bg-teal-100 text-teal-800",
-    PHARMACIST: "bg-emerald-100 text-emerald-800",
-    PHARMACY_STAFF: "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200",
-    NURSE: "bg-amber-100 text-amber-800",
-    WARD_ADMIN: "bg-slate-200 text-slate-700",
+    SYSTEM_ADMIN: "bg-rose-500/15 text-rose-300",
+    SIMRS_ADMIN: "bg-sky-500/15 text-sky-300",
+    DOCTOR: "bg-teal-500/15 text-teal-300",
+    PHARMACIST: "bg-emerald-500/15 text-emerald-300",
+    PHARMACY_STAFF: "bg-emerald-500/10 text-emerald-300 ring-1 ring-emerald-500/30",
+    NURSE: "bg-amber-500/15 text-amber-300",
+    WARD_ADMIN: "bg-slate-500/15 text-slate-300",
   };
-  return colors[role] ?? "bg-slate-100 text-slate-600";
+  return colors[role] ?? "bg-white/10 text-slate-300";
 }
 
 export default function AppShell({
@@ -124,59 +136,70 @@ export default function AppShell({
 }) {
   const pathname = usePathname();
 
-  const visibleNav = NAV_ITEMS.filter((item) => canAccess(user, item));
-
   return (
-    <div className="flex min-h-screen bg-slate-100 text-slate-900">
-      {/* Sidebar */}
-      <aside className="hidden w-60 shrink-0 flex-col border-r border-slate-200 bg-white md:flex">
+    <div className="flex min-h-screen bg-page text-txt-main">
+      {/* Sidebar gelap (gaya tifa-web) */}
+      <aside className="hidden w-60 shrink-0 flex-col bg-sidebar md:flex">
         {/* Logo */}
-        <div className="border-b border-slate-200 px-4 py-4">
-          <SimrsLogo tileClassName="h-8 w-8 rounded-lg" iconClassName="h-4 w-4" />
+        <div className="border-b border-white/10 px-4 py-4">
+          <SimrsLogo
+            tileClassName="h-8 w-8 rounded-lg bg-accent"
+            iconClassName="h-4 w-4"
+            titleClassName="text-white"
+            subtitleClassName="text-slate-400"
+          />
         </div>
 
-        {/* Nav items */}
+        {/* Nav per seksi */}
         <nav className="flex-1 overflow-y-auto px-2 py-3">
-          <p className="mb-1.5 px-2 text-[10px] font-semibold uppercase tracking-wider text-slate-400">
-            Menu
-          </p>
-          <ul className="space-y-0.5">
-            {visibleNav.map((item) => {
-              const isActive =
-                pathname === item.href ||
-                (item.href !== "/dashboard" && pathname.startsWith(item.href));
-              return (
-                <li key={item.href}>
-                  <Link
-                    href={item.href}
-                    className={`group flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
-                      isActive
-                        ? "bg-teal-700 text-white"
-                        : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"
-                    }`}
-                  >
-                    <item.icon className="h-4 w-4 shrink-0" />
-                    <span className="flex-1">{item.label}</span>
-                    {isActive && (
-                      <ChevronRight className="h-3 w-3 opacity-70" />
-                    )}
-                  </Link>
-                </li>
-              );
-            })}
-          </ul>
+          {NAV_SECTIONS.map((section) => {
+            const items = section.items.filter((item) => canAccess(user, item));
+            if (!items.length) return null;
+            return (
+              <div key={section.title} className="mb-3">
+                <p className="mb-1.5 px-3 text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+                  {section.title}
+                </p>
+                <ul className="space-y-0.5">
+                  {items.map((item) => {
+                    const isActive =
+                      pathname === item.href ||
+                      (item.href !== "/dashboard" && pathname.startsWith(item.href));
+                    return (
+                      <li key={item.href}>
+                        <Link
+                          href={item.href}
+                          className={`group flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
+                            isActive
+                              ? "bg-accent text-white"
+                              : "text-slate-400 hover:bg-white/5 hover:text-white"
+                          }`}
+                        >
+                          <item.icon className="h-4 w-4 shrink-0" />
+                          <span className="flex-1">{item.label}</span>
+                          {isActive && (
+                            <ChevronRight className="h-3 w-3 opacity-70" />
+                          )}
+                        </Link>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
+            );
+          })}
         </nav>
 
         {/* User info + logout */}
-        <div className="border-t border-slate-200 p-3">
-          <div className="mb-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5">
+        <div className="border-t border-white/10 p-3">
+          <div className="mb-2 rounded-lg bg-white/5 px-3 py-2.5">
             <div className="mb-1.5 flex items-center gap-1.5">
-              <ShieldCheck className="h-3.5 w-3.5 shrink-0 text-teal-700" />
-              <p className="truncate text-xs font-semibold text-slate-900">
+              <ShieldCheck className="h-3.5 w-3.5 shrink-0 text-txt-accent" />
+              <p className="truncate text-xs font-semibold text-white">
                 {user.fullName}
               </p>
             </div>
-            <p className="mb-1.5 font-mono text-[10px] text-slate-500">{user.username}</p>
+            <p className="mb-1.5 font-mono text-[10px] text-slate-400">{user.username}</p>
             <div className="flex flex-wrap gap-1">
               {user.roles.map((r) => (
                 <span
@@ -192,7 +215,7 @@ export default function AppShell({
             <button
               type="submit"
               id="logout-btn"
-              className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-slate-500 transition hover:bg-rose-50 hover:text-rose-700"
+              className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-slate-400 transition hover:bg-rose-500/10 hover:text-rose-300"
             >
               <LogOut className="h-4 w-4" />
               Keluar

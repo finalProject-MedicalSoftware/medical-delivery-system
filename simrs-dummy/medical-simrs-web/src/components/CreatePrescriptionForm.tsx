@@ -8,7 +8,7 @@ import { useToast } from "@/components/Toast";
 import { bedDisplayName } from "@/lib/bed-info";
 import Select from "@/components/Select";
 import Link from "next/link";
-import { ArrowLeft, Plus, Trash2, FileText, AlertTriangle, Biohazard } from "lucide-react";
+import { ArrowLeft, Plus, Trash2, FileText, AlertTriangle, Biohazard, Clock } from "lucide-react";
 import { inputCls, labelCls, cardCls, btnPrimary, btnSecondary } from "@/components/ui";
 
 interface Patient {
@@ -53,6 +53,22 @@ export default function CreatePrescriptionForm({
   ]);
   const confirm = useConfirm();
   const formRef = useRef<HTMLFormElement>(null);
+
+  // F1: jadwal minum berulang (kontrak §1.2) — opsional; kosong = satu kali manual.
+  const [doseTimes, setDoseTimes] = useState<string[]>([]);
+  const [doseTime, setDoseTime] = useState("08:00");
+  const [repeatMode, setRepeatMode] = useState("DAILY");
+  const [intervalDays, setIntervalDays] = useState("1");
+
+  function addDoseTime() {
+    if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(doseTime) || doseTimes.includes(doseTime) || doseTimes.length >= 6) return;
+    setDoseTimes((prev) => [...prev, doseTime].sort());
+    setDoseTime("");
+  }
+
+  function removeDoseTime(t: string) {
+    setDoseTimes((prev) => prev.filter((x) => x !== t));
+  }
 
   function addItem() {
     setItems((prev) => [...prev, { medicineId: "", quantity: 1, instructions: "" }]);
@@ -245,6 +261,91 @@ export default function CreatePrescriptionForm({
                 </div>
               </div>
             ))}
+          </div>
+        </div>
+
+        {/* F1: jadwal minum berulang — bahan slot pengajuan otomatis saat resep READY */}
+        <div className={cardCls}>
+          <h2 className="mb-4 text-sm font-semibold text-slate-900">Jadwal Minum Berulang (opsional)</h2>
+          <div className="space-y-3">
+            <div className="flex items-end gap-2">
+              <div className="w-32">
+                <label htmlFor="doseTime" className={labelCls}>
+                  Jam minum
+                </label>
+                <input
+                  id="doseTime"
+                  type="time"
+                  value={doseTime}
+                  onChange={(e) => setDoseTime(e.target.value)}
+                  className={inputCls}
+                />
+              </div>
+              <button
+                type="button"
+                onClick={addDoseTime}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-600 transition hover:bg-slate-50"
+              >
+                <Plus className="h-3.5 w-3.5" />
+                Tambah Jam
+              </button>
+            </div>
+            <input type="hidden" name="doseTimes-json" value={JSON.stringify(doseTimes)} />
+            {doseTimes.length > 0 && (
+              <>
+                <div className="flex flex-wrap items-center gap-2">
+                  {doseTimes.map((t) => (
+                    <span
+                      key={t}
+                      className="inline-flex items-center gap-1 rounded-full bg-teal-50 px-2.5 py-1 text-xs font-semibold text-teal-700"
+                    >
+                      <Clock className="h-3 w-3" />
+                      {t}
+                      <button
+                        type="button"
+                        onClick={() => removeDoseTime(t)}
+                        aria-label={`Hapus jam ${t}`}
+                        className="ml-0.5 text-teal-400 transition hover:text-rose-600"
+                      >
+                        ×
+                      </button>
+                    </span>
+                  ))}
+                </div>
+                <div className="grid gap-4 md:grid-cols-2">
+                  <div>
+                    <label className={labelCls}>Pengulangan jadwal minum</label>
+                    <Select
+                      name="repeatMode"
+                      ariaLabel="Pengulangan jadwal minum"
+                      value={repeatMode}
+                      onChange={setRepeatMode}
+                      options={[
+                        { value: "DAILY", label: "Setiap hari" },
+                        { value: "INTERVAL", label: "Setiap beberapa hari (interval)" },
+                      ]}
+                    />
+                  </div>
+                  {repeatMode === "INTERVAL" && (
+                    <div>
+                      <label htmlFor="intervalDays" className={labelCls}>
+                        Interval (hari) <span className="text-rose-500">*</span>
+                      </label>
+                      <input
+                        id="intervalDays"
+                        name="intervalDays"
+                        type="number"
+                        min={1}
+                        max={30}
+                        value={intervalDays}
+                        onChange={(e) => setIntervalDays(e.target.value)}
+                        className={inputCls}
+                      />
+                    </div>
+                  )}
+                </div>
+              </>
+            )}
           </div>
         </div>
 
