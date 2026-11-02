@@ -1,7 +1,8 @@
 # Kontrak perintah robot (downlink) — backend → medical-ws → robot
 
-> Status: **FINAL untuk fase mock**. Menambah tipe `ROBOT_COMMAND` dan
-> `ROBOT_COMMAND_RESULT` pada envelope `internal-publish-bridge.md`.
+> Status: **Kontrak target lintas fase — mock → ROS/Gazebo → robot fisik**.
+> Envelope `ROBOT_COMMAND` dan `ROBOT_COMMAND_RESULT` sudah menjadi batas
+> integrasi, tetapi adapter ROS/Gazebo dan adapter robot fisik belum terbukti.
 > Perubahan isi kontrak = diskusi dan tercatat lebih dulu (AGENTS.md
 > aturan 6), bukan diubah diam-diam.
 
@@ -9,7 +10,7 @@
 
 ```
 Dashboard UI (Robot Control)
-  --REST /robots/{id}/commands (fase B)-->  medical-backend
+  --REST /robots/{id}/commands (semua fase)-->  medical-backend
                                               |
                         ROBOT_MODE=sim  ------+------>  RobotAdapter (eksekusi in-process)
                         ROBOT_MODE=real ------------->  POST /internal/publish
@@ -22,10 +23,15 @@ Dashboard UI (Robot Control)
                                                      klien robot (HMI/robot sungguhan, WS)
 ```
 
-- Fase mock: `ROBOT_MODE=sim`, perintah dieksekusi langsung oleh
-  `RobotAdapter` (implementasi: `SimulatedRobotService`) — jalur WS
-  downlink tetap didefinisikan sekarang agar fase robot sungguhan tanpa
-  rework titik tukar (pola sama dengan `internal-publish-bridge.md`).
+- `ROBOT_MODE=sim`: eksekusi in-process oleh `SimulatedRobotService`.
+- `ROBOT_MODE=gazebo`: target adapter ROS 2/Gazebo untuk validasi topic,
+  frame, safety interlock, dan ACK sebelum hardware.
+- `ROBOT_MODE=real`: target adapter robot fisik melalui TIFA/ROS boundary;
+  belum siap dipakai sampai adapter, auth, watchdog, dan acceptance hardware
+  lulus.
+- Semua mode memakai REST facade dan `commandId` yang sama; pergantian mode
+  tidak boleh mengubah enum atau bentuk payload. Jalur WS downlink
+  didefinisikan sejak awal agar titik tukar tidak perlu dirombak.
 - Eksekusi perintah TIDAK mengubah taksonomi status `monitoring-events.md`
   (tetap `EXECUTING/SUCCEEDED/FAILED/CANCELLED` — tidak ada status baru).
 - Serah-terima tetap hanya manusia; tidak ada perintah yang memicu
@@ -66,7 +72,7 @@ Perbedaan aturan field untuk tipe `ROBOT_COMMAND` (di luar tabel lama):
 | `data.issuedBy` | wajib; username dasbor yang menerbitkan |
 | `data.params` | object non-null; isi per jenis perintah di §3 |
 
-## 3. Daftar perintah (fase ini)
+## 3. Daftar perintah (empat command, semua fase)
 
 Enum tertutup. Menambah jenis perintah = revisi kontrak ini.
 
@@ -74,9 +80,15 @@ Enum tertutup. Menambah jenis perintah = revisi kontrak ini.
 |---|---|---|
 | `CMD_CANCEL_MISSION` | `{ "missionId": "<UUID>" }` wajib | batalkan misi berjalan; hasilnya muncul sebagai event misi `CANCELLED` |
 | `CMD_RETURN_TO_DOCK` | `{ "waypointId": "<UUID dock>" }` wajib | kirim robot kembali ke docking; dieksekusi sebagai misi biasa |
+| `CMD_SET_SPEED` | `{ "speed": 0..2 }` wajib | ubah batas kecepatan robot dalam m/s; adapter wajib memetakan ke simulator, ROS/Gazebo, atau controller fisik |
+| `CMD_TELEOP_DRIVE` | `{ "linear": -1..1, "angular": -2..2 }` wajib | perintah manual; adapter wajib memetakan ke simulator, ROS/Gazebo, atau controller fisik |
 
-Tidak ada perintah navigasi bebas atau teleop di fase ini — belum ada
-robot sungguhan; keduanya masuk revisi kontrak bersama fase robot.
+`CMD_SET_SPEED` dan `CMD_TELEOP_DRIVE` bukan command simulator-only. Pada
+setiap adapter, robot harus `IDLE` untuk teleop, nilai harus berada dalam
+batas kontrak, dan safety interlock/watchdog wajib menghentikan gerak saat
+koneksi atau heartbeat hilang. Pemetaan topic/interface ROS dan mapping
+controller fisik adalah pekerjaan implementasi per fase, bukan perubahan enum.
+
 
 ## 4. Hasil eksekusi
 
@@ -120,9 +132,12 @@ mengizinkan tipe baru lolos validasi dan menyediakan kanal
 `commandId` sama diabaikan, bukan dieksekusi dua kali.
 - Perintah untuk robot yang sedang sibuk: `REJECTED`/`ROBOT_BUSY`
   (satu robot, satu misi aktif — konsisten perilaku simulator).
-- Tidak ada mekanisme retry/konfirmasi katup di fase mock ([MOCK] penuh).
+- Pada simulator, retry/konfirmasi transport belum dimodelkan.
+- Pada ROS/Gazebo dan hardware, adapter wajib memiliki ACK/timeout,
+  idempotensi `commandId`, watchdog teleop, dan hasil gagal yang dapat
+  ditelusuri; tidak boleh menganggap HTTP `202` sebagai robot sudah bergerak.
 
-## 6. REST fasad (diimplementasikan fase B, path dikunci di sini)
+## 6. REST fasad (path dikunci lintas fase)
 
 | Method | Path | Isi |
 |---|---|---|
@@ -134,6 +149,63 @@ balik lewat header `X-XSRF-TOKEN`) via BFF `/api/proxy/` dashboard —
 aturan 5 (token lewat header, bukan query param/URL) dan aturan 4
 (tanpa hardcode). Sisi server wajib login: `SecurityConfiguration`
 melindungi `/api/v1/**`; hanya `/auth/**`, `/actuator/health`, `/error`
-yang permitAll, sisanya denyAll. Pemilihan `RobotAdapter` dikendalikan
-`ROBOT_MODE` via env (default `sim`); `ROBOT_MODE=real` adalah
-pekerjaan fase robot, bukan fase ini.
+yang permitAll, sisanya denyAll. Pemilihan adapter dikendalikan env
+(`ROBOT_MODE=sim|gazebo|real`, default `sim`). `gazebo` dan `real` belum
+terbukti siap; keduanya membutuhkan gate keselamatan dan acceptance
+terpisah sebelum perintah diteruskan ke robot bergerak.
+
+## 7. Registrasi robot node
+
+Registrasi robot baru ke tabel `m_robot` — prasyarat agar robot bisa
+menerima perintah §3 dan tampil pada `GET /robots` (§6). Endpoint ini
+berdiri di samping §6; keduanya bagian dari fasad REST perintah.
+
+| Method | Path | Isi |
+|---|---|---|
+| `GET /robots/registry` | daftar robot terdaftar, memetakan `m_robot` → camelCase: `robotId`, `name`, `model`, `registeredAt` (string; `null` bila kolom kosong) |
+| `POST /robots` | body `{ "robotId": "…", "name": "…", "model": "…" }`; backend memvalidasi, cek duplikat, insert `m_robot`, menulis audit; menjawab `201 { "robotId", "name", "model" }` |
+
+Aturan:
+
+- **Validasi `POST`**: `robotId` 3–64 karakter `[A-Za-z0-9_.-]`; `name`
+  1–150 karakter; `model` opsional, maksimal 100 karakter. Pelanggaran
+  → `400` (pesan validasi, tanpa menulis DB).
+- **Body error**: respons `4xx` memakai bentuk default Spring
+  `{timestamp, status, error, message, path}`; field `message`
+  membawa alasan spesifik (mis. `409` → `"robotId sudah terdaftar"`).
+  `message` tersedia sejak `server.error.include-message: always` di
+  `application.yml` (tercatat 1/11/2026); sebelumnya Spring Boot 3
+  memotong field ini sehingga klien hanya melihat `error: Conflict`.
+  Sejak 2/11/2026 setiap body error disaring `ApiErrorSanitizer`
+  (`@Component` yang meng-override `ErrorAttributes` bawaan): hanya
+  pesan bisnis kurasi yang lolos apa adanya (whitelist exact, prefix
+  aman untuk pesan dinamis seperti `"Misi tidak ditemukan: <id>"` /
+  `"SIMRS mengembalikan HTTP <n> setelah <k> percobaan"`, suffix
+  `"<field> wajib angka"`, dan gate berantai `Failed to parse PGM: …`
+  yang hanya menerima pesan konverter PGM); pesan internal Spring/JDK
+  (`Access Denied`, `For input string: …`, `Failed to convert value of
+  type …`, `Validation failed …`, `No static resource …`, CSRF/exception
+  mentah) dan semua `5xx` jatuh ke fallback generik
+  `"Permintaan gagal (HTTP <status>)"` (termasuk pesan kosong).
+  Daftar whitelist ada di `ApiErrorSanitizer.java`; menambah error baru
+  = menambah whitelist + kasus di `ApiErrorSanitizerTest`, dan dianggap
+  perubahan kontrak yang tercatat di dokumen ini.
+- **Duplikat**: `robotId` sudah ada → `409`, tanpa insert dan tanpa audit.
+- **`model` kosong** → insert tanpa kolom `model`; nilai default DB
+  (`NEVO-A1`) berlaku, dan respons menampilkan nilai hasil baca DB agar
+  klien tidak menebak default.
+- **Akses**: `GET /robots/registry` dan `POST /robots` di atas catch-all
+  `SecurityConfiguration`; `POST /robots` hanya
+  `hasRole("ADMIN")` — matcher exact path
+  `HttpMethod.POST /api/v1/robots` dipasang **sebelum** catch-all
+  dibaca, sehingga `POST /robots/{robotId}/commands` (§6) tidak ikut
+  terkena, dan `GET /robots` komposit (§6) tidak berubah. Non-ADMIN →
+  `403`.
+- **Audit**: setiap registrasi sukses menulis
+  `h_mapping_audit(actor, operation, mapping_id NULL)` dengan
+  `operation = ROBOT_REGISTER` (konvensi tabel audit bersama; `actor`
+  = username dasar).
+- Registrasi tidak menyentuh taksonomi status `monitoring-events.md`;
+  robot terdaftar bertahan dengan status awal tabel (`m_robot`).
+- Serah-terima tetap hanya manusia — registrasi robot tidak memicu
+  transisi `ARRIVED→HANDOVER` otomatis (AGENTS.md aturan 3).

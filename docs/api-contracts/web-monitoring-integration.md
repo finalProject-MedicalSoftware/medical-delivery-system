@@ -1,25 +1,26 @@
 # Kontrak Integrasi: SIMRS Dummy ke Web Monitoring (API + WebSocket + Kafka)
 
-> Status: **DRAF** untuk fase integrasi. BAGIAN 1 (HTTP) sudah **FINAL
-> untuk fase mock** dan detail lengkapnya ada di
-> `docs/api-contracts/monitoring-events.md`; dokumen ini TIDAK mengulang
-> detail itu, hanya meringkasnya sebagai acuan. BAGIAN 2 (WebSocket) dan
-> BAGIAN 3 (Kafka) masih **draf** dan dilarang diimplementasi sebelum
-> trigger conditions di masing-masing bagian terpenuhi
-> (AGENTS.md aturan 2 dan 9).
+> Status per 2026-10-31: HTTP read/status tetap kontrak mock; gateway `medical-ws`
+> sudah menjalankan bridge HTTP → Kafka → WebSocket, dan dashboard menerima
+> stream melalui BFF/SSE. SIMRS Dummy memiliki outbox + relay webhook. Jalur
+> keseluruhan masih sintetis/demo; integrasi SIMRS live dan robot fisik belum
+> diverifikasi. BAGIAN 2–3 di bawah mencatat implemented baseline serta target
+> lanjutan; detail status/rencana ada di `docs/web-monitoring/IMPLEMENTATION_STATUS.md`.
+> Sumber label/tone/transisi: `simrs-dummy/medical-simrs-web/src/lib/delivery-status.ts`.
 >
-> Sumber kebenaran label/tone/transisi status:
-> `simrs-dummy/medical-simrs-web/src/lib/delivery-status.ts`.
+> Batas tetap: SIMRS Dummy tidak menjalankan WS atau Kafka. Kafka berada di
+> `medical-ws`; backend mengirim ke HTTP bridge, bukan produce Kafka langsung.
 
 ## 0. Pihak dan komponen
 
 | Komponen | Folder | Status sekarang | Peran |
 |---|---|---|---|
-| SIMRS Dummy (Next.js) | `simrs-dummy/medical-simrs-web/` | Hidup, demo via Cloudflare Tunnel | Sumber data pengantaran, status, pasien |
-| Web Monitoring (dashboard) | `medical-dashboard-monitoring/` | Dibangun oleh rekan | Konsumen status untuk staf; pengelola WebSocket ke browser |
-| HMI robot | `medical-hmi/` | Placeholder | Pengelola kompartemen robot, fase jauh |
-| Robot NEVO | `robot/` | Belum terhubung | Produsen event gerak, fase jauh |
-| websocket-gateway | `websocket-gateway/` | Placeholder kosong | Dilarang diisi sebelum keputusan BAGIAN 2/3 |
+| SIMRS Dummy (Next.js) | `simrs-dummy/medical-simrs-web/` | Outbox + relay webhook tersedia; demo/sintetis | Sumber data pengantaran, status, pasien |
+| Medical backend | `medical-backend/` | REST/mock + HTTP publish bridge client | API robot/simulasi dan pengirim event ke gateway |
+| Web Monitoring (dashboard) | `medical-dashboard-monitoring/` | BFF/SSE stream dan UI monitoring | Konsumen status untuk staf |
+| WS/Kafka gateway | `medical-ws/` | Aktif: HTTP bridge → Kafka → WS | Produksi/konsumsi topik dan broadcast |
+| HMI robot | `medical-hmi/` | Belum dimulai | Konsumen masa depan setelah kontrak/owner tersedia |
+| Robot NEVO | `robot/` | Simulator; hardware belum terhubung | Uplink robot fisik masa depan |
 
 DB SIMRS Dummy dan DB Web Monitoring HARUS terpisah (AGENTS.md aturan 1).
 
@@ -66,28 +67,65 @@ Saat `POST /api/v1/monitoring/delivery-status` gagal:
 - Detail hasil POST memuat field `attempts` (jumlah percobaan terpakai) untuk diagnosis.
 - Endpoint manual admin `POST /api/v1/integrations/simrs/delivery-status` kini mengembalikan body hasil (termasuk `httpStatus` SIMRS) alih-alih 503 untuk semua kegagalan HTTP sisi SIMRS.
 
-## 2. Bagian WebSocket (DRAF; jangan bangun dulu)
+### 1.2 Delta kontrak: pengajuan terjadwal (2026-10-27)
+
+Resep SIMRS dapat membawa jadwal minum; generator SIMRS membuat
+`DeliveryRequest` berulang otomatis. Monitoring hanya membaca.
+
+- `GET /api/v1/monitoring/active-deliveries` — tiap item bertambah:
+  - `dueAt` (ISO string; `null` untuk pengajuan manual tanpa jadwal)
+  - `doseTime` (string `HH:mm`, untuk tampilan; `null` bila `dueAt` null)
+  - `schedule`: `null` atau objek
+    `{ doseTimes: string[], repeatMode: "DAILY" | "INTERVAL", intervalDays?: number, predictedExhaustDate?: string }`
+- Penanda "terlambat" ditentukan sisi monitoring: `dueAt < waktu amatan`. SIMRS tidak mengirim field late.
+- Idempotensi generator: UNIQUE `(prescriptionId, dueAt)` pada `t_delivery_request`. Baris manual (`dueAt` NULL) tidak berinteraksi dengan generator (Postgres mengizinkan banyak NULL pada unique).
+- Pengulangan berhenti pada prediksi habis obat ATAU `patient.dischargedAt`, mana duluan. Generator hanya membuat slot masa depan dalam window look-ahead env `DELIVERY_SCHEDULE_HORIZON_HOURS` (default 24 jam) di sisi SIMRS.
+
+**Status implementasi (2026-10-27)** — sisi SIMRS Dummy (`simrs-dummy/medical-simrs-web`):
+
+- Generator dijalankan di tiga titik: (a) transisi resep ke `READY` di server action simpan resep, (b) polling tiap 15 menit + catch-up 5 detik saat boot via `instrumentation.ts` → `src/lib/schedule-poll.ts` (hanya runtime `nodejs`; bundel edge tidak menyertakan driver PG), (c) tombol "Sinkron Jadwal" di `/pengantaran` (server action, redirect balik dengan `?sync=N`).
+- Idempotensi: `createMany({ skipDuplicates: true })` atas UNIQUE `(prescriptionId, dueAt)`; retry/polling ulang tidak menduplikasi slot.
+- Slot dibuat dengan `notes` `[SIMULATED] pengajuan terjadwal otomatis`, aktor `sysadmin@simrs.local`; `dueAt` = tanggal+jam dose-time masa depan dalam horizon (API monitoring mend derivasi `doseTime` dari jam `dueAt`).
+- Keterbatasan: prediksi habis obat dari `daysOfStock = floor(stock/perDay)` dihitung dari HARI INI (stok dipotong sekali saat PREPARING→READY); tidak ada view admin untuk mengelola slot terjadwal.
+- Env baru: `DELIVERY_SCHEDULE_HORIZON_HOURS` (default `24`).
+
+## 2. Bagian WebSocket (BASELINE AKTIF — gateway `medical-ws`; perlu verifikasi E2E ulang)
+
+> **Status implementasi (2026-10-30):** server WS berjalan di `medical-ws`
+> (Node.js `ws` + `kafkajs`), bukan di dashboard. Komponen:
+> - `medical-ws/src/ws/server.js` — handshake Bearer, subscribe channel,
+>   validasi + dedupe `eventId`, broadcast, heartbeat (ping 15s / pong 15s).
+> - `medical-ws/src/kafka/consumer.js` — consume `simrs.delivery.events.v1` →
+>   `onDeliveryEvent`.
+> - Dashboard (`medical-dashboard-monitoring`) memakai relay SSE di BFF
+>   (`/api/ws/stream`), bukan WS langsung dari browser — lihat §2.2.
 
 ### 2.1 Trigger untuk mulai
 
-Semua harus terpenuhi:
+Baseline gateway WS sudah diimplementasi; syarat berikut tetap menjadi gate sebelum mengaktifkan aliran produksi/live dan menghapus fallback polling:
 
-1. HTTP di BAGIAN 1 sudah teruji end to end dengan alur nyata (SAAT INI SUDAH).
-2. Web monitoring sudah jadi minimal viable (dashboard baca, halaman pengantaran aktif).
-3. Ada kebutuhan nyata yang diukur: jeda polling 30 detik dirasa mengganggu operator, atau scan page butuh update < 1 detik.
-4. Keputusan arsitektur: SIAPA yang menjalankan WebSocket. Jawaban rekomendasi: **web monitoring**, BUKAN SIMRS.
+1. HTTP di BAGIAN 1 teruji end to end dengan kredensial dan data yang disetujui pemilik SIMRS.
+2. Web monitoring minimal viable dan resync snapshot teruji.
+3. Kebutuhan latensi nyata diukur dan disetujui operator.
+4. Owner operasi, auth, observability, dan prosedur rollback disepakati.
+5. Keputusan arsitektur tetap: gateway berada di `medical-ws`; SIMRS bukan host WS.
 
-### 2.2 Arsitektur disepakati
+### 2.2 Arsitektur disepakati dan status
 
-SIMRS Dummy TIDAK akan pernah menjalankan WebSocket. Aliran data:
+SIMRS Dummy TIDAK menjalankan WebSocket. Aliran baseline saat ini:
 
 ```
-SIMRS  --(webhook HTTP POST, opsional)-->  Web Monitoring  --(WebSocket)-->  Browser/HMI
-SIMRS  --(polling snapshot, fallback)-->   Web Monitoring
+SIMRS  --(polling snapshot, fallback)-->   Web Monitoring (dashboard)
+Web Monitoring  --(POST status)-->  SIMRS
+Backend (medical-backend) --(bridge HTTP POST /internal/publish)--> medical-ws --(WebSocket)--> Klien WS
+                                                                    medical-ws --(Kafka produce/consume)--> simrs.delivery.events.v1
+Dashboard  --(SSE /api/ws/stream via BFF)-->  medical-ws
 ```
 
-- Web monitoring menerima push dari SIMRS lalu menyebar ke klien browser lewat WS sendiri.
-- Karena itu SIMRS nanti butuh SATU tambahan kecil: webhook keluar. Work item SIMRS: `POST {MONITORING_CALLBACK_URL}/webhooks/simrs` dengan header `x-simrs-token`, body = Envelope (2.4), retry policy sama dengan 1.1. Sampai work item ini dibuat, monitoring tetap polling snapshot: polling tetap kontrak final dan cukup.
+- Dashboard menggunakan BFF/SSE relay (`/api/ws/stream`) untuk menerima stream dari gateway; polling snapshot tetap fallback dan sumber resync.
+- SIMRS outbox relay mengirim webhook ke callback yang dikonfigurasi: `POST {MONITORING_CALLBACK_URL}/webhooks/simrs`, header `x-simrs-token`, body Envelope (§2.4).
+
+> **Status 2026-10-31:** outbox + relay tersedia di SIMRS Dummy; gateway `medical-ws` dan jalur dashboard BFF/SSE tersedia. Jangan menganggap konektivitas live/Cloudflare, kredensial owner, atau acceptance SIMRS telah terverifikasi tanpa bukti E2E terbaru. Jika callback/dashboard receiver belum terhubung dalam environment aktif, catat sebagai gap verifikasi, bukan mengklaim integrasi selesai. Relay tanpa env callback tidak mengirim event; gunakan konfigurasi lokal aman untuk uji.
 
 ### 2.3 Protokol WS yang diusulkan
 
@@ -143,14 +181,14 @@ SIMRS  --(polling snapshot, fallback)-->   Web Monitoring
 6. Fallback polling: bila gagal connect 5 kali dalam 2 menit, turun ke polling read API tiap 10-30 detik, coba WS lagi tiap 60 detik.
 7. Halaman yang disarankan pakai WS: dashboard dan detail pengantaran. Halaman `/scan/[mrn]` tetap tanpa WS (manusia sedang memegangnya).
 
-### 2.5 Yang dibangun rekan
+### 2.5 Verifikasi dan enhancement berikutnya
 
-- Server WS di `medical-dashboard-monitoring/` dengan auth handshake di atas.
-- Receiver webhook `POST /webhooks/simrs` (validasi token, dedupe `eventId`, simpan ke DB monitoring, broadcast).
-- Poller fallback yang memakai BAGIAN 1 apa adanya.
-- Tidak menyentuh SIMRS: kontrak SIMRS tidak berubah oleh WS.
+- Verifikasi receiver webhook, auth, dedupe, persistensi/outbox, dan relay SSE dashboard dalam satu alur E2E.
+- Selaraskan kontrak event status yang dikirim backend, webhook SIMRS, Kafka, dan konsumen UI; catat mismatch serta fixture Postman.
+- Pertahankan polling fallback dan resync saat connect/reconnect.
+- Jangan menambah broker di SIMRS atau WS browser langsung dari SIMRS.
 
-## 3. Bagian Kafka (DRAF; jangan bangun dulu)
+## 3. Bagian Kafka (AKTIF — gateway `medical-ws`)
 
 ### 3.1 Trigger untuk mulai
 
@@ -163,27 +201,35 @@ Semua harus terpenuhi:
 
 Jika salah satu gagal, jawabannya TETAP webhook + polling dari BAGIAN 1/2.
 
-### 3.2 Topology yang diusulkan
+### 3.2 Topology disepakati
 
 | Topik | Produsen | Key pesan | Catatan |
 |---|---|---|---|
-| `simrs.delivery.events.v1` | SIMRS | `requestCode` | Semua tipe event Envelope di 2.3 |
-| `simrs.robot.events.v1` | NEVO/integrator | `requestCode` | Fase nyata saja; status `REAL_*` setelah migrasi enum |
-| `simrs.delivery.events.dlq` | relay | `requestCode` | Pesan gagal format/dedupe |
+| `simrs.delivery.events.v1` | `medical-ws` (dari bridge HTTP) | `requestCode` | Semua tipe event Envelope v1 di 2.3 |
+| `simrs.delivery.events.dlq` | `medical-ws` | `null` | Pesan gagal format/validasi; header `dlqReason` |
+| `simrs.robot.events.v1` | NEVO/integrator (kelak) | `robotId` | Uplink STATUS/ACK/POSITION; TIDAK dikonsumsi sebelum NEVO nyata |
+| `simrs.robot.command` | integrator robot (kelak) | `robotId` | Downlink perintah (`ROBOT_COMMAND`/`ROBOT_COMMAND_RESULT`) |
 
+- Broker lokal: Redpanda (gambar kompatibel API Kafka, `kafkajs`), `PLAINTEXT://redpanda:9092` intra-compose, `OUTSIDE://localhost:9093` host.
 - Partisi by key: order per pengantaran terjamin; order lintas pengantaran TIDAK dijamin.
-- Semantics: at-least-once. Konsumen dedupe by `eventId` (kolom unique + TTL atau tabel processed_events).
-- Produksi: gunakan pola **outbox** di SIMRS. Event ditulis ke tabel outbox dalam transaksi yang sama dengan perubahan status, lalu relay terpisah mengpublish. Ini menghindari dual-write di mana DB sudah commit tapi Kafka gagal.
+- Semantics: at-least-once. `medical-ws` dedupe by `eventId` (TTL 15 menit); konsumen lain wajib dedupe `eventId`.
+- Consumer group: `medical-ws-group` (gateway).
 - Schema evolution: perubahan bersifat tambah field saja pada `v1`. Perubahan merusak = topic baru `v2`, konsumen migrasi bertahap. Tanpa registry: topic name adalah versi.
-- Retensi: 7 hari. Consumer group: `<consumer-name>` (dashboard, hmi, integrator).
-- Alert: consumer lag > 1000 pesan atau > 60 detik.
-- Setelah semua konsumen pindah ke Kafka, webhook dari BAGIAN 2.2 dimatikan. Selama migrasi, keduanya boleh hidup bersamaan karena dedupe by `eventId`.
+- Retensi: 7 hari. Alert: consumer lag > 1000 pesan atau > 60 detik.
 
-### 3.3 Yang dibangun rekan (bila trigger terpenuhi)
+> **Status implementasi (2026-10-30):** Redpanda tersedia di `simrs-dummy/compose.yaml`
+> (profil `ws`); gateway `medical-ws` mengaktifkan Kafka, memproduksi event
+> dari bridge HTTP ke `simrs.delivery.events.v1` (key `requestCode`) dan
+> mengonsumsi topik yang sama untuk broadcast WS. Backend tetap mengirim HTTP
+> `POST /internal/publish`; direct Kafka dari backend belum diimplementasi.
+> SIMRS tidak menyentuh broker: pola SIMRS adalah outbox + relay webhook.
 
-- Consumer group dashboard, handler envelope + dedupe, fallback ke read API saat gap.
-- DLQ reader + alarm.
-- Tidak boleh membaca topik `simrs.robot.events.v1` sebelum NEVO nyata.
+### 3.3 Enhancement setelah baseline
+
+- Uji consumer lag, reconnect/resync, DLQ, duplikasi, ordering per `requestCode`, dan observability.
+- Direct produce Kafka dari backend hanya dipertimbangkan jika disetujui bersama; harus ada alasan operasional, kontrak delivery, retry/idempotensi, dan rollback dari HTTP bridge.
+- HMI/robot consumer dan topik robot menunggu kebutuhan, kontrak nyata, owner broker, serta persetujuan tim NEVO.
+- Jangan membaca `simrs.robot.events.v1` sebelum integrasi NEVO nyata.
 
 ## 4. Aturan data yang bertahan di semua fase
 

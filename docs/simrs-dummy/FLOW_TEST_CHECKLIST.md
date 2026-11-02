@@ -3,12 +3,12 @@
 Gunakan setelah implementasi tiap slice selesai. Catat hasil `PASS` / `FAIL` / `BLOCKED`, bukti, dan issue terkait.
 
 ## A. Environment dan DB
-- [ ] Docker Desktop aktif.
-- [ ] `docker compose up -d simrs-postgres` sukses.
-- [ ] Healthcheck database sehat.
-- [ ] pgAdmin dapat terhubung ke `localhost:5433`, database `simrs_dummy`.
-- [ ] Migrations sukses pada database kosong yang baru.
-- [ ] Seed dapat dijalankan ulang tanpa duplikasi yang tidak diinginkan.
+- [x] Docker Desktop aktif.
+- [x] `docker compose up -d simrs-postgres` sukses.
+- [x] Healthcheck database sehat.
+- [x] pgAdmin dapat terhubung ke `localhost:5433`, database `simrs_dummy`.
+- [x] Migrations sukses pada database kosong yang baru.
+- [x] Seed dapat dijalankan ulang tanpa duplikasi yang tidak diinginkan.
 
 ## B. Login dan multi-role
 - [ ] Login valid berhasil.
