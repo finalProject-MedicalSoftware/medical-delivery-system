@@ -1,0 +1,2 @@
+# Runtime state BFF (sesi koneksi WS — persist di disk, bukan kode)
+data/settings.json

@@ -39,3 +39,11 @@ target/
 
 # Codegraph tool (symlink lokal)
 .codegraph
+
+#Folder  yang tidak perlu di-track
+sstifa/
+TIFA/
+robot/
+**/samples/ros-mock-map/
+.ustht/
+
