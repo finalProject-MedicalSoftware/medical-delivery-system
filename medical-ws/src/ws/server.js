@@ -6,6 +6,7 @@ const logger = require('../utils/logger');
 const sessionManager = require('./session-manager');
 const router = require('./router');
 const kafkaProducer = require('../kafka/producer');
+const { TOPICS } = require('../kafka/config');
 const { envelopeMatchesAny, isValidEnvelope } = require('../core/channels');
 const Dedupe = require('../core/dedupe');
 
@@ -152,6 +153,11 @@ async function handlePublish(req, res) {
 
   const result = handleEnvelope(envelope);
   if (!result.ok) return send(400, { error: result.reason });
+
+  // Bridge -> Kafka: forward ke `simrs.delivery.events.v1` (key=requestCode) agar
+  // HMI/konsumen lain menerima event jalur backend. No-op saat Kafka off/belum connect.
+  await kafkaProducer.produce(TOPICS.SIMRS_DELIVERY_EVENTS, envelope, envelope.requestCode);
+
   return send(202, { accepted: true });
 }
 

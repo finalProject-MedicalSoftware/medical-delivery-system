@@ -15,6 +15,8 @@ module.exports = {
   KAFKA_GROUP_ID: process.env.KAFKA_GROUP_ID || 'medical-ws-group',
   TOPIC_EVENTS: process.env.TOPIC_EVENTS || 'simrs.delivery.events.v1',
   TOPIC_DLQ: process.env.TOPIC_DLQ || 'simrs.delivery.events.dlq',
+  // Telemetri robot protokol TIFA (uplink {code,data} dari sesi SI ROBOT).
+  TOPIC_ROBOT_EVENTS: process.env.TOPIC_ROBOT_EVENTS || 'simrs.robot.events.v1',
   DEDUPE_TTL_MS: parseInt(process.env.DEDUPE_TTL_MS || '900000', 10), // 15 menit (kontrak 2.4)
   PING_INTERVAL_MS: parseInt(process.env.PING_INTERVAL_MS || '15000', 10),
   PONG_TIMEOUT_MS: parseInt(process.env.PONG_TIMEOUT_MS || '15000', 10),

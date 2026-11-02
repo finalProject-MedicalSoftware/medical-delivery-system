@@ -4,4 +4,8 @@ function generateEventId() {
   return uuidv4();
 }
 
-module.exports = { generateEventId };
+function generateMessageId() {
+  return uuidv4();
+}
+
+module.exports = { generateEventId, generateMessageId };

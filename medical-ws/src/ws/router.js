@@ -1,6 +1,9 @@
 const logger = require('../utils/logger');
 const { parseChannels } = require('../core/channels');
 const sessionManager = require('./session-manager');
+const kafkaProducer = require('../kafka/producer');
+const { TOPICS } = require('../kafka/config');
+const { generateMessageId } = require('../utils/uuid');
 
 function send(socket, payload) {
   if (socket.readyState !== socket.OPEN) return;
@@ -11,9 +14,74 @@ function sendError(socket, code, detail) {
   send(socket, { type: 'ERROR', code, detail });
 }
 
+// ---------------------------------------------------------------------------
+// Protokol robot TIFA (verbatim): frame {code,data}; SI -> ACK_SOFT; duplikat
+// -> ERROR + close 4002. Uplink -> Kafka simrs.robot.events.v1 + broadcast ke
+// sesi UI yang subscribe `robot:<id>` atau `all`. Downlink UI->robot: fase B
+// (ponytail — kontrak robot-command.md envelope sudah mencakupnya).
+// ---------------------------------------------------------------------------
+
+function handleSI(socket, data) {
+  if (!data || data.type !== 'ROBOT' || typeof data.robot_id !== 'string' || !data.robot_id) {
+    send(socket, { code: 'ERROR', data: { error: 'INVALID_SI', message: 'SI wajib {type:"ROBOT", robot_id:string}' } });
+    setTimeout(() => socket.close(4003, 'Invalid SI'), 100);
+    return;
+  }
+  const result = sessionManager.attachRobot(socket, data.robot_id);
+  if (!result.success) {
+    logger.warn(`[Router] SI ditolak (duplikat): ${data.robot_id}`);
+    send(socket, {
+      code: 'ERROR',
+      data: {
+        error: result.error,
+        message: `Duplicate ROBOT_ID: ${data.robot_id}`,
+        timestamp: new Date().toISOString()
+      }
+    });
+    setTimeout(() => socket.close(4002, 'Duplicate ROBOT_ID'), 100);
+    return;
+  }
+  logger.info(`[Router] robot terdaftar (SI): ${data.robot_id}`);
+  send(socket, { code: 'ACK_SOFT', data: { robot_id: data.robot_id, timestamp: new Date().toISOString() } });
+}
+
+async function handleUplink(socket, msg) {
+  const session = sessionManager.get(socket);
+  if (!session || !session.identity || session.identity.type !== 'ROBOT') {
+    return send(socket, { code: 'ERROR', data: { error: 'NO_SESSION', message: 'Kirim SI lebih dulu' } });
+  }
+  const robotId = session.identity.id;
+  // Enrichment: robot_id + timestamp + message_id; bentuk {code,data} tetap verbatim.
+  const enriched = {
+    code: msg.code,
+    message_id: msg.message_id || generateMessageId(),
+    data: { ...msg.data, robot_id: robotId, timestamp: new Date().toISOString() }
+  };
+  await kafkaProducer.produce(TOPICS.SIMRS_ROBOT_EVENTS, enriched, robotId);
+  broadcastToUis(enriched, robotId);
+}
+
+/** Broadcast uplink robot ke sesi UI (tanpa identity) yang match channel. */
+function broadcastToUis(frame, robotId) {
+  for (const [sock, s] of sessionManager.sessions) {
+    if (s.identity || s.channels.size === 0) continue;
+    if (!s.channels.has('all') && !s.channels.has(`robot:${robotId}`)) continue;
+    send(sock, frame);
+  }
+}
+
+async function handleTifa(socket, msg) {
+  if (typeof msg.code !== 'string' || !msg.code) {
+    return send(socket, { code: 'ERROR', data: { error: 'INVALID_MESSAGE', message: 'code wajib string' } });
+  }
+  if (msg.code === 'SI') return handleSI(socket, msg.data);
+  return handleUplink(socket, msg);
+}
+
 /**
  * Router pesan masuk (client -> server):
- * { action: "subscribe", channels: ["all","ward:A","delivery:DELIV-..."] }
+ * - Jalur UI  : { action: "subscribe", channels: ["all","ward:A","delivery:DELIV-...","robot:<id>"] }
+ * - Jalur robot TIFA: { code: "SI"|"STATUS"|"ACK"|..., data: {...} }
  */
 async function handleIncoming(socket, rawData) {
   let msg;
@@ -21,6 +89,16 @@ async function handleIncoming(socket, rawData) {
     msg = JSON.parse(rawData.toString());
   } catch {
     sendError(socket, 'INVALID_JSON', 'message is not valid JSON');
+    return;
+  }
+
+  if (msg && typeof msg === 'object' && 'code' in msg && !('action' in msg)) {
+    try {
+      await handleTifa(socket, msg);
+    } catch (err) {
+      logger.error('[Router] TIFA error:', err.message);
+      send(socket, { code: 'ERROR', data: { error: 'INTERNAL_ERROR' } });
+    }
     return;
   }
 
