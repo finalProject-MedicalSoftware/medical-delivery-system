@@ -1,10 +1,10 @@
 import {NextRequest,NextResponse} from 'next/server';
+import { backendUrl } from '../../../lib/ws-config.server';
 export const dynamic = 'force-dynamic';
-const backend=process.env.BACKEND_URL || 'http://127.0.0.1:8080';
 async function forward(req:NextRequest,ctx:{params:Promise<{path:string[]}>}){
  const {path}=await ctx.params;
  const parts=path.map(encodeURIComponent).join('/');
- const url=`${backend}/api/v1/${parts}${req.nextUrl.search}`;
+ const url=`${backendUrl()}/api/v1/${parts}${req.nextUrl.search}`;
  const headers=new Headers();
  const cookie=req.headers.get('cookie');
  if(cookie) headers.set('cookie', cookie);

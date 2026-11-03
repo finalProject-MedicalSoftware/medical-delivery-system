@@ -7,6 +7,7 @@ process.env.WS_PORT = process.env.WS_PORT || '8099';
 process.env.KAFKA_ENABLED = 'false';
 // HARUS sebelum require env.js (dotenv tidak menimpa process.env yang sudah ada).
 process.env.WS_AUTH_TOKEN = 'selfcheck-token';
+process.env.INTERNAL_PUBLISH_SECRET = 'selfcheck-secret';
 
 const assert = require('assert');
 const WebSocket = require('ws');
@@ -106,6 +107,49 @@ async function main() {
   robot3.send(JSON.stringify({ code: 'SI', data: { type: 'ROBOT', robot_id: 'nevo-01' } }));
   assert.strictEqual((await next(robot3)).code, 'ACK_SOFT', 'SI ulang setelah disconnect harus sukses');
   step('7 resi-setelah-disconnect');
+
+  // 8. GET /internal/robots -> daftar robot SI aktif
+  const listRes = await fetch(`http://localhost:${process.env.WS_PORT}/internal/robots`, {
+    headers: { 'x-internal-secret': process.env.INTERNAL_PUBLISH_SECRET },
+  });
+  assert.strictEqual(listRes.status, 200);
+  assert.deepStrictEqual((await listRes.json()).robots, ['nevo-01']);
+  step('8 list-robots');
+
+  // 9. downlink ke robot terhubung -> frame ROBOT_COMMAND diterima robot, tidak ke topic delivery
+  // Listener dipasang SEBELUM publish: server mengirim frame sinkron sebelum 202.
+  const downlinkP = next(robot3);
+  const cmdEnv = {
+    v: 1, eventId: 'sc-cmd-1', type: 'ROBOT_COMMAND', occurredAt: new Date().toISOString(),
+    requestCode: '', wardCode: '',
+    data: { commandId: 'sc-cmdid-1', robotId: 'nevo-01', command: 'CMD_SET_SPEED', issuedBy: 'self', params: { speed: 1 } },
+  };
+  const r9 = await fetch(`http://localhost:${process.env.WS_PORT}/internal/publish`, {
+    method: 'POST', headers: { 'content-type': 'application/json', 'x-internal-secret': process.env.INTERNAL_PUBLISH_SECRET },
+    body: JSON.stringify(cmdEnv),
+  });
+  assert.strictEqual(r9.status, 202);
+  const downlink = await downlinkP;
+  assert.strictEqual(downlink.code, 'ROBOT_COMMAND');
+  assert.strictEqual(downlink.data.robotId, 'nevo-01');
+  assert.strictEqual(downlink.data.command, 'CMD_SET_SPEED');
+  assert.ok(produced.every((p) => p.topic !== 'simrs.delivery.events.v1'), 'downlink tidak boleh ke topic delivery');
+  step('9 downlink-fwd');
+
+  // 10. downlink ke robot tak dikenal -> uplink sintetis REJECTED/UNKNOWN_ROBOT
+  const ghostEnv = { ...cmdEnv, eventId: 'sc-cmd-2', data: { ...cmdEnv.data, commandId: 'sc-cmdid-2', robotId: 'nevo-ghost' } };
+  const r10 = await fetch(`http://localhost:${process.env.WS_PORT}/internal/publish`, {
+    method: 'POST', headers: { 'content-type': 'application/json', 'x-internal-secret': process.env.INTERNAL_PUBLISH_SECRET },
+    body: JSON.stringify(ghostEnv),
+  });
+  assert.strictEqual(r10.status, 202);
+  await new Promise((r) => setTimeout(r, 100));
+  const last = produced[produced.length - 1];
+  assert.strictEqual(last.topic, 'simrs.robot.events.v1');
+  assert.strictEqual(last.value.code, 'ROBOT_COMMAND_RESULT');
+  assert.strictEqual(last.value.data.robotId, 'nevo-ghost');
+  assert.strictEqual(last.value.data.reason, 'UNKNOWN_ROBOT');
+  step('10 unknown-robot-rejected');
 
   ui.close(); robot3.close();
   console.log('✅ semua assert TIFA lulus (%d produce Kafka tertangkap)', produced.length);

@@ -61,6 +61,11 @@ public class InternalPublisher {
         send(type, data, "", "");
     }
 
+    /** true bila bridge gateway terkonfigurasi (URL + secret non-blank); dipakai gate 503 mode real. */
+    public boolean isConfigured() {
+        return url != null && !url.isBlank() && secret != null && !secret.isBlank();
+    }
+
     private void send(String type, Object data, Object requestCode, Object wardCode) {
         if (url == null || url.isBlank() || secret == null || secret.isBlank()) return;
 

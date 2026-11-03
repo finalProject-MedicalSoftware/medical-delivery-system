@@ -17,8 +17,8 @@ function sendError(socket, code, detail) {
 // ---------------------------------------------------------------------------
 // Protokol robot TIFA (verbatim): frame {code,data}; SI -> ACK_SOFT; duplikat
 // -> ERROR + close 4002. Uplink -> Kafka simrs.robot.events.v1 + broadcast ke
-// sesi UI yang subscribe `robot:<id>` atau `all`. Downlink UI->robot: fase B
-// (ponytail — kontrak robot-command.md envelope sudah mencakupnya).
+// sesi UI yang subscribe `robot:<id>` atau `all`. Downlink UI->robot via
+// deliverRobotCommand (kontrak robot-command.md + robot-ws-tifa.md §5).
 // ---------------------------------------------------------------------------
 
 function handleSI(socket, data) {
@@ -70,6 +70,38 @@ function broadcastToUis(frame, robotId) {
   }
 }
 
+/**
+ * Downlink: envelope ROBOT_COMMAND dari bridge HTTP -> frame TIFA ke socket robot.
+ * Robot tidak dikenal/offline -> uplink sintetis
+ * ROBOT_COMMAND_RESULT {result:"REJECTED", reason:"UNKNOWN_ROBOT"}
+ * (Kafka simrs.robot.events.v1 + broadcast UI) agar dedupe commandId tetap jalan.
+ */
+async function deliverRobotCommand(envelope) {
+  const data = envelope.data || {};
+  const robotId = data.robotId;
+  const socket = sessionManager.getRobot(robotId);
+  if (socket) {
+    send(socket, { code: 'ROBOT_COMMAND', data });
+    logger.info(`[Router] downlink ROBOT_COMMAND ${data.command || ''} -> ${robotId}`);
+    return;
+  }
+  logger.warn(`[Router] downlink ditolak, robot tidak terhubung: ${robotId}`);
+  const result = {
+    code: 'ROBOT_COMMAND_RESULT',
+    message_id: generateMessageId(),
+    data: {
+      commandId: data.commandId,
+      robotId,
+      result: 'REJECTED',
+      reason: 'UNKNOWN_ROBOT',
+      robot_id: robotId,
+      timestamp: new Date().toISOString()
+    }
+  };
+  await kafkaProducer.produce(TOPICS.SIMRS_ROBOT_EVENTS, result, robotId);
+  broadcastToUis(result, robotId);
+}
+
 async function handleTifa(socket, msg) {
   if (typeof msg.code !== 'string' || !msg.code) {
     return send(socket, { code: 'ERROR', data: { error: 'INVALID_MESSAGE', message: 'code wajib string' } });
@@ -119,4 +151,4 @@ async function handleIncoming(socket, rawData) {
   }
 }
 
-module.exports = { handleIncoming, sendError, send };
+module.exports = { handleIncoming, sendError, send, deliverRobotCommand };

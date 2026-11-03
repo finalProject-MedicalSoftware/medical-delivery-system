@@ -1,4 +1,6 @@
 // e2e manual: WS subscribe -> bridge publish -> expect 1 broadcast, lalu duplikat -> 400.
+// Tambah: downlink ROBOT_COMMAND (socket robot nyata menerima frame; UI melihat
+// envelope; topic delivery tidak ter-produce saat Kafka on) + GET /internal/robots.
 import WebSocket from 'ws';
 
 const WS = process.env.E2E_WS ?? 'ws://127.0.0.1:8083/ws/v1/deliveries';
@@ -22,6 +24,10 @@ const envelope = {
 
 const frames = [];
 const ws = new WebSocket(WS, { headers: { Authorization: `Bearer ${TOKEN}` } });
+const robots = []; // socket robot pisah: menerima frame TIFA downlink
+const wsRobot = new WebSocket(WS, { headers: { Authorization: `Bearer ${TOKEN}` } });
+
+wsRobot.on('message', (raw) => robots.push(JSON.parse(raw.toString())));
 
 ws.on('message', (raw) => {
   const msg = JSON.parse(raw.toString());
@@ -55,6 +61,31 @@ ws.on('open', async () => {
   console.assert(r1.status === 202, 'POST1 harus 202');
   console.assert(r2.status === 400, 'POST2 harus 400 DUPLICATE');
   console.assert(broadcasts.length === 1, 'tepat 1 broadcast');
+
+  // --- downlink ROBOT_COMMAND ---
+  wsRobot.send(JSON.stringify({ code: 'SI', data: { type: 'ROBOT', robot_id: 'e2e-robot-1' } }));
+  await new Promise((r) => setTimeout(r, 300));
+
+  const list = await fetch(`${HTTP}/internal/robots`, { headers: { 'x-internal-secret': SECRET } });
+  const listBody = await list.json();
+  console.log('ROBOTS', list.status, JSON.stringify(listBody));
+  console.assert(list.status === 200, 'GET /internal/robots harus 200');
+  console.assert(listBody.robots.includes('e2e-robot-1'), 'robot SI terdaftar di daftar');
+
+  const before = robots.length;
+  const cmd = {
+    v: 1, eventId: `e2e-cmd-${Date.now()}`, type: 'ROBOT_COMMAND',
+    occurredAt: new Date().toISOString(), requestCode: '', wardCode: '',
+    data: { commandId: 'e2e-cid-1', robotId: 'e2e-robot-1', command: 'CMD_SET_SPEED', issuedBy: 'e2e', params: { speed: 1 } },
+  };
+  const r3 = await post(cmd);
+  await new Promise((r) => setTimeout(r, 500));
+  const tifa = robots.slice(before).find((f) => f.code === 'ROBOT_COMMAND' && f.data?.robotId === 'e2e-robot-1');
+  console.log('POST3', r3.status, await r3.text());
+  console.assert(r3.status === 202, 'downlink publish harus 202');
+  console.assert(tifa, 'socket robot menerima frame TIFA ROBOT_COMMAND');
+
+  wsRobot.close();
   ws.close();
   process.exit(0);
 });

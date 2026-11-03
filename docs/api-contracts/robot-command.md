@@ -128,6 +128,15 @@ polanya: string, boleh kosong, supaya event hasil tidak dianggap misi.
 - medical-ws tetap dedupe per `eventId`; tanpa perubahan di sana selain
 mengizinkan tipe baru lolos validasi dan menyediakan kanal
 `robot:<robotId>`.
+- **Penerusan downlink (aktif sejak 3/11/2026)**: envelope
+`ROBOT_COMMAND` yang masuk `POST /internal/publish` diteruskan gateway
+sebagai frame TIFA `{code,data}` ke robot terdaftar (SI) dan TIDAK
+diforward ke topic `simrs.delivery.events.v1`. Robot tidak dikenal /
+offline → uplink sintetis
+`ROBOT_COMMAND_RESULT {result:"REJECTED", reason:"UNKNOWN_ROBOT"}` ke
+Kafka `simrs.robot.events.v1` + broadcast WS. Endpoint
+`GET /internal/robots` (secret sama dengan publish) melaporkan robot
+yang terhubung, dipakai backend saat `ROBOT_MODE=real`.
 - Robot/adapter dedupe per `commandId` (UUID) — perintah ulang dengan
 `commandId` sama diabaikan, bukan dieksekusi dua kali.
 - Perintah untuk robot yang sedang sibuk: `REJECTED`/`ROBOT_BUSY`
@@ -150,9 +159,13 @@ aturan 5 (token lewat header, bukan query param/URL) dan aturan 4
 (tanpa hardcode). Sisi server wajib login: `SecurityConfiguration`
 melindungi `/api/v1/**`; hanya `/auth/**`, `/actuator/health`, `/error`
 yang permitAll, sisanya denyAll. Pemilihan adapter dikendalikan env
-(`ROBOT_MODE=sim|gazebo|real`, default `sim`). `gazebo` dan `real` belum
-terbukti siap; keduanya membutuhkan gate keselamatan dan acceptance
-terpisah sebelum perintah diteruskan ke robot bergerak.
+(`ROBOT_MODE=sim|gazebo|real`, default `sim`). `real` aktif sejak
+3/11/2026 lewat `RealRobotAdapter` (validasi param sama dengan
+simulator + publish `ROBOT_COMMAND` ke gateway; hasil datang asinkron
+lewat uplink robot — kolom `result` di `t_robot_command` mengisi sendiri
+hanya untuk hasil sintetis gateway). `gazebo` belum terbukti siap dan
+membutuhkan gate keselamatan serta acceptance terpisah sebelum perintah
+diteruskan ke robot bergerak.
 
 ## 7. Registrasi robot node
 

@@ -72,6 +72,7 @@ services:
       SIMRS_WEBHOOK_TOKEN: ${SIMRS_WEBHOOK_TOKEN:-}
       INTERNAL_PUBLISH_URL: http://medical-ws:8081/internal/publish
       INTERNAL_PUBLISH_SECRET: ${INTERNAL_PUBLISH_SECRET:-}
+      GATEWAY_URL: http://medical-ws:8081
     depends_on:
       medical-postgres:
         condition: service_healthy

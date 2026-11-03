@@ -10,10 +10,11 @@ import java.util.Map;
 import java.util.UUID;
 
 /**
- * Explicit fail-closed adapter until ROS/Gazebo and physical adapters are approved and implemented.
+ * Explicit fail-closed adapter until a physical robot adapter (ROS/Gazebo) is approved and implemented.
+ * Mode `real` kini aktif via RealRobotAdapter (keputusan owner 3/11/2026).
  */
 @Service
-@ConditionalOnExpression("'${nevo.robot.mode:sim}' == 'gazebo' or '${nevo.robot.mode:sim}' == 'real'")
+@ConditionalOnExpression("'${nevo.robot.mode:sim}' == 'gazebo'")
 public class UnavailableRobotAdapter implements RobotAdapter {
     private final String mode;
 

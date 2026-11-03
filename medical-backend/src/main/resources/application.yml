@@ -20,6 +20,8 @@ nevo:
   storage-dir: ${NEVO_STORAGE_DIR:./data/uploads}
   robot:
     mode: ${ROBOT_MODE:sim}
+  gateway:
+    url: ${GATEWAY_URL:}
   ws:
     allowed-origins: ${NEVO_WS_ALLOWED_ORIGINS:}
   simrs:

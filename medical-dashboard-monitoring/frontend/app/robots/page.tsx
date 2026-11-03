@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useApp } from '../components/AppShell';
 import { useLanguage } from '../components/LanguageProvider';
 import { RefreshCw, XCircle, Anchor, ArrowUp, ArrowDown, ArrowLeft, ArrowRight } from 'lucide-react';
@@ -75,6 +75,40 @@ export default function RobotsPage() {
       setSending(false);
     }
   };
+
+  // WASD keyboard teleop — refs agar listener dipasang sekali (guard = disabled tombol: IDLE + bukan sedang kirim).
+  const sendRef = useRef(send);
+  sendRef.current = send;
+  const wasdGate = useRef({ idle: targetStatus === 'IDLE', sending });
+  wasdGate.current = { idle: targetStatus === 'IDLE', sending };
+  useEffect(() => {
+    const KEYS: Record<string, Partial<{ linear: number; angular: number }>> = {
+      w: { linear: 1, angular: 0 }, s: { linear: -1, angular: 0 },
+      a: { linear: 0, angular: 1 }, d: { linear: 0, angular: -1 },
+    };
+    const typing = (e: KeyboardEvent) => {
+      const el = e.target as HTMLElement | null;
+      return !!el && (el.tagName === 'INPUT' || el.tagName === 'SELECT' || el.tagName === 'TEXTAREA' || el.isContentEditable);
+    };
+    const drive = (params: Record<string, unknown>) => {
+      if (wasdGate.current.idle && !wasdGate.current.sending) sendRef.current('CMD_TELEOP_DRIVE', params);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.repeat || typing(e)) return;
+      const k = KEYS[e.key.toLowerCase()];
+      if (k) drive({ linear: k.linear ?? 0, angular: k.angular ?? 0 });
+    };
+    const onUp = (e: KeyboardEvent) => {
+      if (e.repeat || typing(e)) return;
+      if (KEYS[e.key.toLowerCase()]) drive({ linear: 0, angular: 0 });
+    };
+    window.addEventListener('keydown', onKey);
+    window.addEventListener('keyup', onUp);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      window.removeEventListener('keyup', onUp);
+    };
+  }, []);
 
   const statusClass = (s: string) =>
     s === 'IDLE' || s === 'CHARGING'
@@ -242,6 +276,7 @@ export default function RobotsPage() {
               </button>
             ))}
           </div>
+          <p className="text-[11px] txt-sec">{t.wasdHint}</p>
         </div>
         <p className="text-xs txt-sec">
           {telemetry.simulated ? `${t.simNotice} · ` : ''}

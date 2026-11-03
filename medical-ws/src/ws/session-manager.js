@@ -35,6 +35,11 @@ class SessionManager {
     return this.robots.get(robotId);
   }
 
+  /** Daftar robotId dengan sesi SI aktif (untuk GET /internal/robots). */
+  listRobots() {
+    return Array.from(this.robots.keys());
+  }
+
   detach(socket) {
     const s = this.sessions.get(socket);
     if (s && s.identity && this.robots.get(s.identity.id) === socket) {

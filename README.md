@@ -140,6 +140,8 @@ Login dashboard memakai akun backend (ADMIN untuk mengaktifkan relay).
 | `SIMRS_WRITE_ENABLED` | `true` hanya bila backend boleh POST status ke SIMRS |
 | `INTERNAL_PUBLISH_URL` | `http://localhost:8083/internal/publish` |
 | `INTERNAL_PUBLISH_SECRET` | **wajib sama** dengan `INTERNAL_PUBLISH_SECRET` di `medical-ws` |
+| `ROBOT_MODE` | `sim` (default; `SimulatedRobotService`) atau `real` (aktif `RealRobotAdapter` — downlink ke robot fisik via gateway) |
+| `GATEWAY_URL` | URL gateway `medical-ws`, mis. `http://localhost:8083` — dipakai `RealRobotAdapter` untuk downlink + `GET /internal/robots` (`x-internal-secret` = `INTERNAL_PUBLISH_SECRET`); kosong = `RealRobotAdapter` 503 |
 | `NEVO_WS_ALLOWED_ORIGINS` | origin dashboard yang boleh memanggil WS backend |
 
 ### medical-ws — `medical-ws/.env`
@@ -162,20 +164,23 @@ Login dashboard memakai akun backend (ADMIN untuk mengaktifkan relay).
 | `NEXT_PUBLIC_WS_RELAY_URL` | default `/api/ws/stream`; hanya diubah bila relay dipindah |
 
 `NEXT_PUBLIC_*` di-inline saat **build**: mengubahnya berarti rebuild, bukan sekadar restart.
+Semua nilai di atas juga bisa **dioverride runtime** dari halaman `/settings` (disimpan
+server-side di BFF `data/settings.json`) — env hanya jadi default awal. Detail:
+`docs/web-monitoring/FEATURE_MAP_4B.md` §4.
 
-## Arti sebenarnya halaman Settings dashboard
+## Halaman Settings dashboard (koneksi runtime)
 
-Di `/settings` ada tiga isian: **SIMRS URL**, **WebSocket URL**, dan centang **WebSocket enabled**.
+Di `/settings` (login ADMIN) ada: **Backend URL**, **WebSocket URL**, token gateway (Bearer),
+dan centang relay.
 
-- Nilainya **hanya disimpan ke `localStorage` (`nevo_connection_settings`)** dan tidak pernah dipakai untuk
-  menyambung. Tidak ada kode yang membacanya kembali. Jadi mengubah URL di sana **tidak** memindahkan koneksi.
-- **Test Connection** memanggil `integrations/simrs/status` lewat BFF (yang memakai `BACKEND_URL`), jadi
-  "berhasil" hanya berarti backend menjawab — bukan bukti URL yang diketik dipakai.
-- Yang benar-benar mengatur koneksi adalah env di atas: `BACKEND_URL` (REST), `WS_BACKEND_URL` +
-  `WS_AUTH_TOKEN` (event), `NEXT_PUBLIC_WS_RELAY_URL` (jalur browser → BFF).
-- Tombol **Save Connection** memanggil `POST /api/ws/session`, yang men-**ON**-kan relay SSE. Endpoint ini
-  butuh user login ber-role **ADMIN** (diverifikasi ke `BACKEND_URL/api/v1/auth/me`) dan **gagal
-  `WS_AUTH_TOKEN_NOT_SET` bila `WS_AUTH_TOKEN` kosong**. Relay OFF = dashboard tidak menerima event.
+- Save = `POST /api/ws/session` `setConnection` → nilai disimpan server-side di BFF
+  (`data/settings.json`), **bukan localStorage**; BFF melepas koneksi WS lama dan reconnect
+  dengan endpoint/token baru tanpa rebuild. Relay hidup kembali jika toggle aktif.
+- Token WS disimpan hanya di server BFF; browser hanya melihat 4 karakter pertama (aturan 7).
+- **Test Connection** hanya validasi sintaks URL — konektivitas nyata terlihat dari status
+  relay/aliran event setelah Save.
+- Env tetap jadi nilai default awal; kalau runtime override pernah disimpan, override itu
+  yang dipakai sampai diubah dari `/settings` lagi.
 
 ## Cek cepat setelah semua hidup
 
@@ -187,6 +192,36 @@ curl -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8083/healthz           # 
 
 Lalu buka dashboard, login ADMIN, ON-kan relay di `/settings`, ajukan pengantaran di SIMRS, ikuti status
 sampai `MOCK_ARRIVED_AT_ROOM`, dan tutup lewat scan QR `/scan/{mrn}`.
+
+## Uji robot fisik (downlink, ROBOT_MODE=real)
+
+Prasyarat satu rahasia: `INTERNAL_PUBLISH_SECRET` dan `WS_AUTH_TOKEN` sama di gateway,
+backend, dan publisher (sumber tunggal: `simrs-dummy/.env` untuk compose). Kontrak:
+`docs/api-contracts/robot-ws-tifa.md` (frame SI/ACK/downlink/result).
+
+1. **Env** — backend: `ROBOT_MODE=real`, `GATEWAY_URL=http://localhost:8083` (kontainer:
+   `http://medical-ws:8081`), `INTERNAL_PUBLISH_SECRET` ↔ gateway. Dashboard: relay ON via
+   `/settings`. Mulai semua (compose + `npm run dev` medical-ws + backend + dashboard).
+2. **Cek mode** — `GET /robots` backend: `simulated:true` di mode `sim`; setelah robot
+   tersambung di mode `real`, robot yang tersambung muncul `simulated:false`, status
+   `IDLE` bila handshaken (mati/putus → `OFFLINE`, fail-closed).
+3. **Hubungkan robot** — WS `ws://host:8083/ws/v1/deliveries` + `Authorization: Bearer
+   $WS_AUTH_TOKEN` (token salah → close 4401). Kirim frame SI:
+   `{"code":"SI","data":{"type":"ROBOT","robot_id":"nevo-01"}}` → balasan `ACK_SOFT`
+   (dup → 4002, invalid → 4003). Ulang cepat tanpa robot nyata: `WS_PORT=8099 node
+   scripts/tifa-selfcheck.js` di `medical-ws/`.
+4. **Perintah downlink** — dashboard `/robots`, pilih robot, kirim dari tombol (Set speed
+   `0..2`, Teleop linear −1..1 / angular −2..2) atau **WASD** (W/S maju/mundur, A/D putar;
+   lepas tombol = perintah berhenti {0,0}). Backend memvalidasi parameter — yang invalid
+   ditolak di backend dan **tidak pernah sampai robot**; robot menerima frame
+   `ROBOT_COMMAND` `{commandId, robotId, command, issuedBy, params}`.
+5. **Hasil** — robot membalas `ROBOT_COMMAND_RESULT {result:"OK"/"REJECTED", reason}` →
+   muncul di dashboard (telemetri/event). Catatan terbuka: hasil juga ke Kafka
+   `simrs.robot.events.v1`, tetapi backend belum mengonsuminya, jadi kolom
+   `t_robot_command.result` masih null (tercatat di kontrak §6).
+6. **Edge** — command saat robot tidak tersambung: backend meneruskan, gateway menjawab
+   sendiri `REJECTED/UNKNOWN_ROBOT` (perintah tidak boleh antre). Cancel/tombol lain
+   berlaku sama seperti mode sim; `t_robot_command` terisi dedupe `commandId`.
 
 ## Go-live yang direncanakan
 
@@ -201,7 +236,7 @@ Jika gateway `medical-ws` di-deploy di server yang sama, amankan WS lewat proxy 
 
 ### Checklist konek manual dashboard ↔ SIMRS go-live
 
-Halaman `/settings` dashboard hanya menyimpan ke localStorage (kosmetik — lihat seksi
+Halaman `/settings` dashboard kini aktif (koneksi runtime server-side — lihat seksi
 `/settings` di atas). Yang benar-benar dipakai koneksi oleh server BFF:
 
 1. Di **mesin yang menjalankan dashboard**, isi env BFF: `BACKEND_URL` (REST SIMRS/backend),

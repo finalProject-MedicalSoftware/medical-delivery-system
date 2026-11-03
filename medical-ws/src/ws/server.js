@@ -154,6 +154,13 @@ async function handlePublish(req, res) {
   const result = handleEnvelope(envelope);
   if (!result.ok) return send(400, { error: result.reason });
 
+  // Perintah robot (kontrak robot-command.md): broadcast UI sudah lewat
+  // handleEnvelope; FORWARD ke robot via TIFA, TIDAK ke topic delivery.
+  if (envelope.type === 'ROBOT_COMMAND') {
+    await router.deliverRobotCommand(envelope);
+    return send(202, { accepted: true });
+  }
+
   // Bridge -> Kafka: forward ke `simrs.delivery.events.v1` (key=requestCode) agar
   // HMI/konsumen lain menerima event jalur backend. No-op saat Kafka off/belum connect.
   await kafkaProducer.produce(TOPICS.SIMRS_DELIVERY_EVENTS, envelope, envelope.requestCode);
@@ -161,11 +168,25 @@ async function handlePublish(req, res) {
   return send(202, { accepted: true });
 }
 
+function handleListRobots(req, res) {
+  if (!secretOk(req.headers['x-internal-secret'])) {
+    res.writeHead(401, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'UNAUTHORIZED' }));
+    return;
+  }
+  res.writeHead(200, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify({ robots: sessionManager.listRobots() }));
+}
+
 function startHttp() {
   const server = http.createServer((req, res) => {
     if (req.url === '/healthz') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ status: 'ok', kafka: kafkaConsumerInst ? kafkaConsumerInst.connected : false }));
+      return;
+    }
+    if (req.url === '/internal/robots' && req.method === 'GET') {
+      handleListRobots(req, res);
       return;
     }
     if (req.url === '/internal/publish' && req.method === 'POST') {
