@@ -1,0 +1,1 @@
+nevo ALL=(root) NOPASSWD: /usr/bin/systemd-run
