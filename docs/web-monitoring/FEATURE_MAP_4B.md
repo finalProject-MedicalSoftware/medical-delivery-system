@@ -30,11 +30,12 @@ Jangan longgarkan di klien sebelum kontrak berubah.
 
 ## 2. GAP — beLUm ada di mana pun (minta desain, kontrak dulu)
 
-1. **Start mapping dari web (SLAM/explore).** Tidak ada command maupun endpoint untuk *memulai*
-   mapping — hanya event uplink `MAPPING_COMPLETE`/`ROBOT_STUCK` yang sudah dialirkan gateway.
-   Yang perlu kalau ingin fitur ini: command baru (mis. `CMD_START_MAPPING`) pada kontrak
-   `robot-command.md` §3 + eksekutor di adapter robot + tombol UI. **Jangan implementasi
-   sebelum kontrak ditambah** — ini perubahan lintas fase.
+1. **Start mapping dari web (SLAM/explore) — ✅ selesai via jalur TIFA 4/11/2026.**
+   Tidak diperlukan command backend baru; mapping memakai downlink relay verbatim
+   `MAPPING_START/STOP/SAVE/FLAG` + `MAP_SELECTED {map_id}` (whitelist
+   `DOWNLINK_CODES`, kontrak `robot-ws-tifa.md` §5a) dari `/robots` lewat
+   `POST /api/ws/command`. Backend tidak ikut jalur ini (relay UI→robot langsung);
+   kontrak `robot-command.md` tidak berubah.
 2. **Perintah ke robot fisik — sudah jalan (4B lanjutan).** Gate "real" `robot-ws-tifa.md` §6
    dibuka atas kesepakatan owner (3/11/2026); §5–§6 kontrak diperbarui. Rantai downlink kini
    lengkap: backend `RealRobotAdapter` (aktif `ROBOT_MODE=real`, default `sim`) →
@@ -57,15 +58,17 @@ di kode (AGENTS.md aturan 4). Legacy `localStorage 'nevo_connection_settings'` d
 
 | Nilai | Default env | Override runtime (`/settings`) | Dipakai oleh |
 |---|---|---|---|
-| REST backend | `BACKEND_URL` | `endpoints.backendUrl` | BFF `/api/proxy/[...path]`, `/api/ws/session` |
+| REST backend | `SIMRS_URL` (fallback lama `BACKEND_URL` masih dibaca) | `endpoints.simrsUrl` (back-compat baca key `backendUrl`, dibuang saat write-back) | BFF `/api/proxy/[...path]`, `/api/ws/session` |
 | WS gateway event | `WS_BACKEND_URL` (`ws://host:8083/ws/v1/deliveries`) | `endpoints.wsUrl` | BFF `/api/ws/stream` (SSE) |
 | Token WS | `WS_AUTH_TOKEN` | `wsToken` (server-side, tak pernah utuh ke browser) | hanya server (BFF) |
 | Origin relay browser | `NEXT_PUBLIC_WS_RELAY_URL` (default `/api/ws/stream`) | — | klien |
 
-- Halaman `/settings` kini **aktif**: Save = `POST /api/ws/session` `setConnection` (ENDpoints +
-  token) lalu selaraskan relay on/off → BFF melepas koneksi WS lama dan reconnect dengan
-  konfigurasi baru, tanpa rebuild. "Test Connection" hanya validasi sintaks URL; konektivitas
-  nyata terlihat dari status relay/aliran event setelah Save.
+- Halaman `/settings` kini **aktif**: Save = `POST /api/ws/session` `setConnection` (endpoints + token)
+  → `setIdentity` bila UI ID diisi (identitas SI-UI relay: `ui_id` wajib, robot_id/map_id opsional)
+  → selaraskan relay on/off → BFF melepas koneksi WS lama dan reconnect dengan konfigurasi baru,
+  tanpa rebuild. "Test Connection" hanya validasi sintaks URL; konektivitas
+  nyata terlihat dari status relay/aliran event setelah Save. UI ID relay wajib terisi agar
+  `/api/ws/stream` tidak mengembalikan `UI_ID_NOT_SET`.
 - `NEXT_PUBLIC_*` **di-inline saat build**: ganti nilai → rebuild, bukan restart (itulah alasan
   override runtime ada — tujuan 4B: koneksi bisa diganti dari web, gaya sstifa).
 - Gateway internal backend (`GATEWAY_URL` di medical-backend) mengarah ke medical-ws untuk
@@ -77,18 +80,27 @@ di kode (AGENTS.md aturan 4). Legacy `localStorage 'nevo_connection_settings'` d
 **Satu gateway yang sama.** Robot fisik terhubung ke `medical-ws` yang sama (bukan WS terpisah),
 kontrak `robot-ws-tifa.md`:
 
-1. Koneksi: `ws://<host>` (atau `wss://` di server) + `Path` WS sama, header
-   `Authorization: Bearer $WS_AUTH_TOKEN` (token gateway; salah → close `4401`).
+1. Koneksi: `ws://<host>` (atau `wss://` di server) + path WS sama; upgrade boleh
+   anonim — auth asli di dalam SI. Bearer header tetap divalidasi bila dibawa
+   (salah → close `4401`).
 2. Handshake SI: kirim `{"code":"SI","data":{"type":"ROBOT","robot_id":"nevo-01"}}` →
-   server `ACK_SOFT`; `robot_id` duplikat → close `4002`.
-3. Uplink frame `{code,data}`: `STATUS`, `ACK`, `POSITION`, `BATTERY`, `GOAL_COMPLETE`,
-   `MAPPING_COMPLETE`, `ROBOT_STUCK` (di-enrich `robot_id`+`timestamp`, lalu Kafka+broadcast).
-4. Downlink (empat command) ✅ jalan sejak 4B lanjutan: UI `/robots` (tombol + **WASD keyboard**,
-   keyup = `CMD_TELEOP_DRIVE` {0,0}) → backend (validasi + dedupe `commandId`) →
-   `POST /internal/publish` → gateway → frame `ROBOT_COMMAND` ke robot tersambung; robot
-   membalas `ROBOT_COMMAND_RESULT` (OK/REJECTED) → Kafka `simrs.robot.events.v1` + dashboard.
-   Robot menyala tetapi belum menyelesaikan handshake SI tidak menerima perintah (tidak ada
-   frame dikirim; telemetri pun tak muncul). Batas param tetap kontrak `robot-command.md` §3.
+   server `ACK_SOFT`; duplikat hidup → `ERROR/DUPLICATE_ROBOT_ID` (kick hanya bila
+   sesi lama DEAD).
+3. Uplink frame `{code,data}`: `STATUS`, `ACK`, `READY`, `POSITION`, `BATTERY`, `GOAL_COMPLETE`,
+   `MAPPING_STATUS`, `MAPPING_COMPLETE`, `ROBOT_STUCK` (di-enrich `robot_id`+`timestamp`, lalu
+   Kafka+broadcast ke semua sesi UI; roster gateway ikut diperbarui).
+4. Downlink dua jalur (kontrak `robot-ws-tifa.md` §5).
+   - **Teleop relay verbatim TIFA** (dashboard `/robots`): dari tombol hold + **WASD**
+     10 Hz `{code:"TELEOP",data:{linear,angular,robot_id}}` via BFF
+     `POST /api/ws/command` → sesi SI-UI relay → gateway → frame verbatim ke robot;
+     lepas tombol = `{linear:0,angular:0}`. Mapping `MAPPING_START/STOP/SAVE/FLAG`
+     + `MAP_SELECTED {map_id}` di jalur sama. Whitelist `DOWNLINK_CODES`.
+   - **Empat command lama** ✅ jalan sejak 4B lanjutan: UI → backend (validasi +
+     dedupe `commandId`) → `POST /internal/publish` (`ROBOT_COMMAND`) → gateway →
+     frame ke robot; hasil `ROBOT_COMMAND_RESULT` → Kafka + dashboard. Robot
+     menyala tetapi belum menyelesaikan handshake SI tidak menerima perintah
+     (tidak ada frame dikirim; telemetri pun tak muncul). Batas param empat
+     command tetap kontrak `robot-command.md` §3.
 
 Prasyarat deploy gateway (server yang sama dengan SIMRS): set `WS_AUTH_TOKEN` (kosong = semua
 koneksi ditolak), `INTERNAL_PUBLISH_SECRET`, `KAFKA_ENABLED`/`KAFKA_BROKERS` bila Kafka dipakai,

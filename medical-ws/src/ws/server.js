@@ -91,15 +91,11 @@ function clearAlive(socket) {
 }
 
 // ---------------------------------------------------------------------------
-// Auth di handshake (kontrak 2.3): Bearer token; gagal -> close 4401.
-// ponytail: cookie sesi browser belum didukung — fase mock mesin/token saja.
-// Tambah ekstrak cookie simrs_session di sini saat auth browser masuk kontrak.
+// Auth handshake: klien TIFA (robot/BFF UI) TERHUBUNG ANONIM — auth dipindah
+// ke dalam SI (uplink token UI divalidasi di router.handleSI; robot SI tanpa
+// token). Bearer header divalidasi di sini untuk UI legacy: salah -> close
+// 4401; benar -> sesi ditandai bearer (syarat action subscribe legacy).
 // ---------------------------------------------------------------------------
-function authorizeUpgrade(req) {
-  if (!config.WS_AUTH_TOKEN) return false; // tanpa token env -> tolak semua
-  const auth = req.headers.authorization || '';
-  return auth === `Bearer ${config.WS_AUTH_TOKEN}`;
-}
 
 function readBody(req, limit) {
   return new Promise((resolve, reject) => {
@@ -240,7 +236,8 @@ async function start() {
   wss.on('connection', (socket, req) => {
     clearAlive(socket);
 
-    if (!authorizeUpgrade(req)) {
+    const auth = req.headers.authorization || '';
+    if (auth && (!config.WS_AUTH_TOKEN || auth !== `Bearer ${config.WS_AUTH_TOKEN}`)) {
       socket.close(4401, 'UNAUTHORIZED');
       return;
     }
@@ -251,7 +248,7 @@ async function start() {
     // Koneksi baru -> klien harus resync penuh via read API (kontrak 2.4 poin 3).
     socket.send(JSON.stringify({ type: 'SNAPSHOT_REQUIRED', reason: 'CONNECT' }));
 
-    sessionManager.attach(socket);
+    sessionManager.attach(socket, { bearer: !!config.WS_AUTH_TOKEN && auth === `Bearer ${config.WS_AUTH_TOKEN}` });
     socket.on('message', (data) => router.handleIncoming(socket, data));
     socket.on('close', () => {
       sessionManager.detach(socket);

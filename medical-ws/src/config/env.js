@@ -3,7 +3,8 @@ require('dotenv').config();
 module.exports = {
   WS_PORT: parseInt(process.env.WS_PORT || '8081', 10),
   WS_PATH: process.env.WS_PATH || '/ws/v1/deliveries',
-  // Bearer token untuk klien mesin fase mock. Kosong = semua klien ditolak (close 4401).
+  // Token auth SI UI (di dalam sesi, bukan di upgrade). Kosong = semua SI UI ditolak.
+  // Robot SI tidak butuh token. Juga dipakai Bearer legacy di upgrade (server.js).
   WS_AUTH_TOKEN: process.env.WS_AUTH_TOKEN || '',
   // Secret bridge HTTP backend -> WS (POST /internal/publish). Kosong = endpoint ditolak (401).
   INTERNAL_PUBLISH_SECRET: process.env.INTERNAL_PUBLISH_SECRET || '',

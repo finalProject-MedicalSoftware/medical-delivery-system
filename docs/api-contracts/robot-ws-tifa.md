@@ -1,25 +1,35 @@
 # Kontrak WS robot TIFA — robot fisik ↔ medical-ws
 
-> Status: **Kontrak target TIFA lintas fase**. Menambah jalur protokol TIFA
-> pada `medical-ws` di samping jalur UI envelope yang sudah ada
-> (`hmi.md`, `robot-command.md`, `web-monitoring-integration.md`). Implementasi
-> gateway saat ini baru membuktikan uplink/stand-in; kesiapan downlink untuk
-> ROS/Gazebo dan robot fisik masih menjadi gate implementasi.
-> Perubahan isi kontrak = diskusi dan tercatat lebih dulu (AGENTS.md
-> aturan 6), bukan diubah diam-diam.
+> Status: **Kontrak target TIFA lintas fase — direvisi 4/11/2026** (tercatat,
+> sesi replikasi protokol WS TIFA, diskusi dengan owner). Revisi: (1) auth
+> pindah ke dalam SI (§2–3), (2) duplicate error memakai string persis
+> `DUPLICATE_ROBOT_ID`/`DUPLICATE_UI_ID`, (3) downlink dua jalur: relay
+> verbatim UI SI→robot (whitelist kode) + envelope `ROBOT_COMMAND` backend
+> (§5), (4) roster sesi `/internal/robots`. Implementasi gateway & BFF
+> dashboard untuk semuanya sudah aktif dan lulus selfcheck. Perubahan isi
+> kontrak = diskusi dan tercatat lebih dulu (AGENTS.md aturan 6), bukan
+> diubah diam-diam.
 
 ## 1. Sumber protokol
 
 Frame `{code, data}` **verbatim** dari TIFA (`tifa-ws`). Robot fisik
 (NEVO) tidak perlu tahu sistem medis — dia bicara protokol TIFA standar.
 
-## 2. Koneksi
+## 2. Koneksi dan auth
 
-- Endpoint sama dengan UI: `ws://<host>:<WS_PORT><WS_PATH>`
-- Auth handshake sama: header `Authorization: Bearer $WS_AUTH_TOKEN`;
-  gagal → close `4401`.
-- Frame pertama dari server tetap `{"type":"SNAPSHOT_REQUIRED",...}`
-  (jalur UI); robot mengabaikan frame non-`{code,data}`.
+- Endpoint sama dengan UI: `ws://<host>:<WS_PORT><WS_PATH>`.
+- Upgrade HTTP boleh anonim; auth asli dilakukan di dalam frame SI (§3),
+  berdasarkan `type` identitas:
+  - `type: ROBOT` — tanpa token, tidak boleh mendaftar UI.
+  - `type: UI` — wajib membawa `token` yang dicek terhadap env
+    `WS_AUTH_TOKEN`; jika env kosong → semua SI UI ditolak (fail-closed).
+- Header `Authorization: Bearer $WS_AUTH_TOKEN` pada upgrade tetap
+  divalidasi **bila dibawa**; gagal → close `4401` (jalur UI lama).
+  Tanpa bearer, klien harus SI supaya dapat frame apa pun.
+- Frame pertama dari server untuk jalur legacy tetap
+  `{"type":"SNAPSHOT_REQUIRED",...}`; klien TIFA mengabaikan frame
+  non-`{code,data}`. Jalur `action:"subscribe"` legacy wajib membawa
+  bearer ATAU sudah berupa sesi SI-UI, selain itu ditolak.
 
 ## 3. Handshake (SI)
 
@@ -35,9 +45,25 @@ Server → robot:
 { "code": "ACK_SOFT", "data": { "robot_id": "nevo-01", "timestamp": "..." } }
 ```
 
-- `robot_id` tidak string/ kosong → `ERROR/INVALID_SI` + close **4003**.
-- `robot_id` sudah punya sesi aktif → `ERROR/DUPLICATE` + close **4002**.
-  (Sesi lama mati/heartbeat timeout otomatis melepas `robot_id`.)
+UI → server (token wajib; identitas UI dipakai untuk downlink dan roster):
+
+```json
+{ "code": "SI", "data": { "type": "UI", "ui_id": "monitoring-dashboard", "token": "..." } }
+{ "code": "ACK_SOFT", "data": { "ui_id": "monitoring-dashboard", "timestamp": "..." } }
+```
+
+Error (socket tetap terbuka kecuali dinyatakan lain):
+
+| Kondisi | Respons |
+|---|---|
+| `robot_id` bukan string/kosong, payload SI tak valid | `ERROR/INVALID_SI` + close **4003** |
+| `robot_id` sudah punya sesi aktif yang hidup | `ERROR/DUPLICATE_ROBOT_ID` (socket baru tetap terbuka; kick hanya bila socket lama sudah DEAD) |
+| `ui_id` sudah punya sesi aktif yang hidup | `ERROR/DUPLICATE_UI_ID` (idem) |
+| token UI salah / env kosong | `ERROR/UNAUTHORIZED` |
+| frame `code` bukan string | `ERROR/INVALID_MESSAGE` |
+
+- `ROBOT` tidak boleh registernya sebagai UI dan sebaliknya (mismatch
+  `type` dianggap `INVALID_SI`).
 
 ## 4. Uplink (robot → server)
 
@@ -49,22 +75,57 @@ Setelah SI, setiap frame `{code, data}` dianggap uplink. Server:
 2. **Kafka**: produce ke `simrs.robot.events.v1`, key = `robot_id`
    (at-least-once; order per robot dijamin via key). Tidak ada silent drop
    — Kafka off (bridge HTTP mode) berarti hanya broadcast WS.
-3. **Broadcast WS**: frame yang sama dikirim ke semua sesi UI (jalur
-   `subscribe`) yang match channel `robot:<robot_id>` atau `all`.
+3. **Broadcast WS**: frame yang sama (sudah di-enrich) dikirim verbatim
+   ke semua sesi UI — baik sesi SI-UI maupun jalur `subscribe` legacy —
+   yang match channel `robot:<robot_id>` atau `all`. Gateway juga
+   menyimpan `lastCode/lastSeen/status/position/battery` per robot
+   (roster) dan mengumumkan join/leave sesi robot.
 
 Kode uplink umum (non-eksklusif; kode tak dikenal tetap dialirkan):
-`STATUS`, `ACK`, `POSITION`, `BATTERY`, `GOAL_COMPLETE`,
-`MAPPING_COMPLETE`, `ROBOT_STUCK`.
+`STATUS`, `ACK`, `READY`, `ERROR`, `POSITION`, `BATTERY`, `GOAL_COMPLETE`,
+`MAPPING_STATUS`, `MAPPING_COMPLETE`, `ROBOT_STUCK`.
 
 Frame tanpa SI dulu → `ERROR/NO_SESSION` (socket tetap terbuka).
 
-## 5. Downlink (UI → robot)
+## 5. Downlink (UI → robot) — dua jalur
 
-Target downlink adalah empat command pada `robot-command.md` melalui
-`ROBOT_COMMAND`/`ROBOT_COMMAND_RESULT`. Downlink berjalan lewat jalur yang
+### 5a. Relay verbatim sesi SI-UI (baru, aktif)
+
+UI yang sudah SI (`type: UI`) boleh mengirim `{code, data}` downlink
+langsung tanpa pembungkus envelope. Gateway relay **verbatim** — frame
+diteruskan apa adanya ke robot, tanpa konversi `commandId` dsb.
+
+Aturan gateway `medical-ws`:
+
+- Hanya sesi SI-UI boleh downlink; lainnya → `ERROR/UI_SESSION_REQUIRED`.
+- Whitelist kode (`DOWNLINK_CODES`): `TELEOP`, `MOVE`, `OP`, `MODE`,
+  `MAPPING_START`, `MAPPING_STOP`, `MAPPING_SAVE`, `MAPPING_FLAG`,
+  `MAP_SELECTED`, `MAP_DATA`, `INTERRUPT`, `INTERRUPT_CONFIRM`,
+  `INTERRUPT_CANCEL`, `PICKUP_CONFIRM` — di luar itu
+  `ERROR/CODE_NOT_ALLOWED`.
+- Target: `data.robot_id` (string, di-inject ulang oleh gateway sebelum
+  diteruskan) atau top-level `{action:"robot", id}`; absen → broadcast ke
+  semua robot. Robot target offline → `ERROR/ROBOT_OFFLINE` (berisi
+  `robot_id`) ke UI pengirim.
+- Kode uplink yang dikirim UI (mis. `READY`) dialirkan pula sebagai
+  enrichment — tidak diblokir, hanya tidak masuk whitelist downlink.
+
+Sisi dashboard monitoring: dikendalikan lewat BFF (bukan WS langsung dari
+browser) — `POST /api/ws/command {code, data}` pada
+`medical-dashboard-monitoring/frontend` memvalidasi whitelist yang sama,
+`MAP_ID_MUST_BE_INTEGER` untuk `data.map_id`, `RELAY_NOT_CONNECTED` (503)
+bila relay belum SI ke gateway, lalu meneruskan frame ke relay. Teleop
+halaman `/robots` (tombol hold + WASD) mengirim `{code:"TELEOP",
+data:{linear,angular,robot_id}}` pada 10 Hz dengan stop `{linear:0,
+angular:0}` saat tombol/key dilepas. Kontrol mapping memakai
+`MAPPING_START/STOP/SAVE/FLAG` + `MAP_SELECTED {map_id}`.
+
+### 5b. Envelope ROBOT_COMMAND dari backend (kontrak robot-command.md)
+
+Downlink berjalan lewat jalur yang
 sama dengan uplink: backend mem-publish envelope `ROBOT_COMMAND` ke
 `POST /internal/publish`; gateway meneruskan frame TIFA
-`{code:"ROBOT_COMMAND", data:{commandId, robotId, command, issuedBy, params}}`
+`{code:<command>, data:{...params, robot_id, command_id}}`
 ke socket robot terdaftar (`SI`), **tanpa** meneruskan envelope ini ke
 topic `simrs.delivery.events.v1` (perintah bukan event delivery). Robot
 yang tidak dikenal / offline menghasilkan uplink sintetis
@@ -72,11 +133,12 @@ yang tidak dikenal / offline menghasilkan uplink sintetis
 (ke Kafka `simrs.robot.events.v1` + broadcast WS) sehingga dedupe
 `commandId` per §5 `robot-command.md` tetap bekerja di kedua arah.
 
-Status implementasi 3/11/2026: jalur ini **aktif** dan diuji
-(`medical-ws/e2e.mjs` + `scripts/tifa-selfcheck.js`). Endpoint
-`GET /internal/robots` (header `X-Internal-Secret`, sama seperti
+Status implementasi 4/11/2026: jalur 5a dan 5b **aktif** dan diuji
+(`medical-ws/e2e.mjs` + `scripts/tifa-selfcheck.js`, 20 asersi).
+Endpoint `GET /internal/robots` (header `X-Internal-Secret`, sama seperti
 `/internal/publish`) melaporkan daftar robot yang terhubung SI.
-Keputusan gate "real" pada §6 dibuka terpisah dengan keputusan tertulis.
+Keputusan gate "real" pada §6 dibuka terpisah dengan keputusan tertulis
+(setuju 3/11/2026).
 
 ## 6. Fase dan batas klaim
 

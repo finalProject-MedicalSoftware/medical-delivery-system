@@ -6,7 +6,7 @@ import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
 import { wsAuthToken } from '../../../lib/ws-config.server';
 import { getSession } from '../../../lib/ws-session';
-import { addSubscriber, removeSubscriber, ensureRelay, type Channel } from '../../../lib/ws-relay';
+import { addSubscriber, removeSubscriber, ensureRelay, rosterSnapshot, type Channel } from '../../../lib/ws-relay';
 
 // ---- channel parsing (mirror medical-ws/src/core/channels.js) ----
 function parseChannel(raw: string): Channel | null {
@@ -20,6 +20,9 @@ function parseChannel(raw: string): Channel | null {
 export async function GET(req: NextRequest) {
   if (!wsAuthToken()) {
     return NextResponse.json({ error: 'WS_AUTH_TOKEN_NOT_SET' }, { status: 500 });
+  }
+  if (!getSession().identity?.uiId) {
+    return NextResponse.json({ error: 'UI_ID_NOT_SET' }, { status: 409 });
   }
   if (getSession().conn.on !== true) {
     return NextResponse.json({ error: 'SESSION_OFF' }, { status: 409 });
@@ -43,6 +46,9 @@ export async function GET(req: NextRequest) {
       const send = (s: string) => controller.enqueue(new TextEncoder().encode(`data: ${s}\n\n`));
       addSubscriber(sseId, channels, send);
       send(JSON.stringify({ type: 'SSE_INIT', sseId, channels: channels.map((c) => c.kind === 'all' ? 'all' : `${c.kind}:${c.code}`) }));
+      // Burst awal: roster cache (READY/POSITION/BATTERY terakhir) agar UI
+      // tidak menunggu uplink robot berikutnya.
+      send(JSON.stringify({ type: 'SSE_ROSTER', robots: rosterSnapshot() }));
       pingTimer = setInterval(() => send(': ping'), 15000);
       req.signal.addEventListener('abort', () => {
         clearInterval(pingTimer);

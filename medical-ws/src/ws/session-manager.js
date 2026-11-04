@@ -1,13 +1,19 @@
 /**
  * Session Manager: satu record per socket.
  * channels: Set<string> berisi channel KEY valid (`all`, `ward:A`, `delivery:DELIV-...`).
- * identity: null | {type:'ROBOT', id} — sesi robot TIFA (terdaftar via SI).
+ * identity: null | {type:'ROBOT'|'UI', id} — sesi TIFA (terdaftar via SI).
+ * Registry robots/uis: id -> socket AKTIF (readyState OPEN); deteksi duplikat SI.
  */
+
+function isOpen(socket) {
+  return socket && socket.readyState === socket.OPEN;
+}
 
 class SessionManager {
   constructor() {
     this.sessions = new Map(); // socket -> { authedAt, channels:Set, isAlive, identity }
-    this.robots = new Map(); // robotId -> socket (deteksi duplikat SI)
+    this.robots = new Map(); // robotId -> socket
+    this.uis = new Map(); // uiId -> socket
   }
 
   attach(socket, meta = {}) {
@@ -15,24 +21,46 @@ class SessionManager {
       authedAt: meta.authedAt || Date.now(),
       channels: new Set(),
       isAlive: true,
-      identity: null
+      identity: null,
+      bearer: !!meta.bearer // UI legacy dengan Bearer valid (syarat subscribe legacy)
     });
   }
 
-  /** Daftarkan identitas robot TIFA. Gagal (DUPLICATE) jika robot_id masih punya sesi aktif. */
+  /**
+   * Daftarkan identitas robot TIFA. Socket lama DEAD (readyState != OPEN)
+   * dikick agar SI baru langsung sukses; lama masih ALIVE -> DUPLICATE_ROBOT_ID
+   * (tanpa close paksa — robot retry sendiri).
+   */
   attachRobot(socket, robotId) {
     const s = this.sessions.get(socket);
     if (!s) return { success: false, error: 'NO_SESSION' };
-    if (this.robots.has(robotId)) {
-      return { success: false, error: 'DUPLICATE', existingSession: this.robots.get(robotId) !== socket };
+    const old = this.robots.get(robotId);
+    if (old && old !== socket) {
+      if (isOpen(old)) return { success: false, error: 'DUPLICATE_ROBOT_ID' };
+      this.detach(old); // ghost session
     }
     s.identity = { type: 'ROBOT', id: robotId };
     this.robots.set(robotId, socket);
     return { success: true };
   }
 
+  /** Identitas UI TIFA (BFF/dashboard); aturan duplikat sama dengan robot. */
+  attachUI(socket, uiId) {
+    const s = this.sessions.get(socket);
+    if (!s) return { success: false, error: 'NO_SESSION' };
+    const old = this.uis.get(uiId);
+    if (old && old !== socket) {
+      if (isOpen(old)) return { success: false, error: 'DUPLICATE_UI_ID' };
+      this.detach(old);
+    }
+    s.identity = { type: 'UI', id: uiId };
+    this.uis.set(uiId, socket);
+    return { success: true };
+  }
+
   getRobot(robotId) {
-    return this.robots.get(robotId);
+    const sock = this.robots.get(robotId);
+    return isOpen(sock) ? sock : undefined;
   }
 
   /** Daftar robotId dengan sesi SI aktif (untuk GET /internal/robots). */
@@ -42,8 +70,9 @@ class SessionManager {
 
   detach(socket) {
     const s = this.sessions.get(socket);
-    if (s && s.identity && this.robots.get(s.identity.id) === socket) {
-      this.robots.delete(s.identity.id);
+    if (s && s.identity) {
+      const map = s.identity.type === 'UI' ? this.uis : this.robots;
+      if (map.get(s.identity.id) === socket) map.delete(s.identity.id);
     }
     this.sessions.delete(socket);
   }

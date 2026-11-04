@@ -1,10 +1,10 @@
 import {NextRequest,NextResponse} from 'next/server';
-import { backendUrl } from '../../../lib/ws-config.server';
+import { simrsUrl } from '../../../lib/ws-config.server';
 export const dynamic = 'force-dynamic';
 async function forward(req:NextRequest,ctx:{params:Promise<{path:string[]}>}){
  const {path}=await ctx.params;
  const parts=path.map(encodeURIComponent).join('/');
- const url=`${backendUrl()}/api/v1/${parts}${req.nextUrl.search}`;
+ const url=`${simrsUrl()}/api/v1/${parts}${req.nextUrl.search}`;
  const headers=new Headers();
  const cookie=req.headers.get('cookie');
  if(cookie) headers.set('cookie', cookie);
