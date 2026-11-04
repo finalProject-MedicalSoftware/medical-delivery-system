@@ -41,9 +41,6 @@ target/
 .codegraph
 
 #Folder  yang tidak perlu di-track
-sstifa/
-TIFA/
-robot/
 **/samples/ros-mock-map/
 .ustht/
 opencode.json

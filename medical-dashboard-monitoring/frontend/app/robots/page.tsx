@@ -47,6 +47,8 @@ export default function RobotsPage() {
   const [targetId, setTargetId] = useState('');
   const [mapId, setMapId] = useState('');
   const [sending, setSending] = useState(false);
+  // Registry (backend) — robot terdaftar ikut masuk pilihan meski belum online.
+  const [registry, setRegistry] = useState<{ robotId: string; name: string }[]>([]);
 
   // SSE roster — gateway dipegang relay BFF; halaman hanya konsumen event.
   useEffect(() => {
@@ -62,6 +64,14 @@ export default function RobotsPage() {
       else if (item?.error) setStreamError(item.error);
     };
     return () => es.close();
+  }, []);
+
+  // Ambil robot terdaftar sekali saat mount — dropdown target = roster live ∪ registry.
+  useEffect(() => {
+    fetch('/api/proxy/robots/registry', { credentials: 'include', cache: 'no-store' })
+      .then((r) => (r.ok ? r.json() : []))
+      .then((data) => setRegistry(Array.isArray(data) ? data : []))
+      .catch(() => {}); // registry gagal → fallback roster live saja (ponytail: tanpa retry UI)
   }, []);
 
   const target = roster.find((r) => r.robot_id === targetId) || null;
@@ -209,6 +219,11 @@ export default function RobotsPage() {
               {roster.map((r) => (
                 <option key={r.robot_id} value={r.robot_id}>{r.robot_id}</option>
               ))}
+              {registry
+                .filter((x) => !roster.some((r) => r.robot_id === x.robotId))
+                .map((x) => (
+                  <option key={x.robotId} value={x.robotId}>{x.robotId} — {dict.common.offline}</option>
+                ))}
             </select>
           </div>
           <div className="flex items-center gap-2">

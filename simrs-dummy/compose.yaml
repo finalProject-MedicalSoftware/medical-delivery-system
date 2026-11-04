@@ -83,6 +83,24 @@ services:
     ports:
       - "127.0.0.1:${MEDICAL_BACKEND_PORT:-8082}:8080"
 
+  # Dashboard web monitoring (Next.js + BFF proxy) — UI: launch point for the friend adjusting the UI.
+  dashboard:
+    profiles: ["apps"]
+    build: ../medical-dashboard-monitoring/frontend
+    restart: unless-stopped
+    environment:
+      # Only origin (no /api/v1, no trailing slash) — the dashboard adds /api/v1/... itself.
+      SIMRS_URL: ${DASHBOARD_BACKEND_URL:-http://medical-backend:8080}
+      WS_BACKEND_URL: ${DASHBOARD_WS_BACKEND_URL:-ws://medical-ws:8081/ws/v1/deliveries}
+      WS_AUTH_TOKEN: ${WS_AUTH_TOKEN:-}
+    depends_on:
+      medical-backend:
+        condition: service_started
+    volumes:
+      - dashboard_data:/app/data
+    ports:
+      - "127.0.0.1:${DASHBOARD_PORT:-3100}:3000"
+
   simrs-relay:
     profiles: ["apps"]
     build: ./medical-simrs-web
@@ -145,3 +163,4 @@ volumes:
   simrs_postgres_data:
   medical_postgres_data:
   medical_uploads:
+  dashboard_data:

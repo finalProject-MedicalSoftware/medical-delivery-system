@@ -13,12 +13,12 @@ const ENV_WS_BACKEND_URL = process.env.WS_BACKEND_URL || 'ws://127.0.0.1:8083/ws
 
 /** URL SIMRS backend REST yang dipakai proxy BFF + auth/me. */
 export function simrsUrl(): string {
-  return getSession().endpoints?.simrsUrl?.trim() || ENV_SIMRS_URL;
+  return normalizeBaseUrl(getSession().endpoints?.simrsUrl?.trim() || ENV_SIMRS_URL);
 }
 
 /** URL WS gateway (target relay BFF → medical-ws). */
 export function wsBackendUrl(): string {
-  return getSession().endpoints?.wsUrl?.trim() || ENV_WS_BACKEND_URL;
+  return (getSession().endpoints?.wsUrl?.trim() || ENV_WS_BACKEND_URL).replace(/\/+$/, '');
 }
 
 /** Bearer token ke gateway: override sesi → env. Dipakai sebagai token SI-UI. */
@@ -28,4 +28,12 @@ export function wsAuthToken(): string {
 
 export function wsBackendPath(): string {
   try { return new URL(wsBackendUrl()).pathname; } catch { return '/ws/v1/deliveries'; }
+}
+
+/**
+ * Base URL = origin backend (dipakai sebagai `${base}/api/v1/...`), bukan base path API.
+ * Perbaiki masukan yang salah form: trailing slash atau tertukar jadi `.../api/v1`.
+ */
+export function normalizeBaseUrl(s: string): string {
+  return s.trim().replace(/\/+$/, '').replace(/\/api\/v1$/, '');
 }

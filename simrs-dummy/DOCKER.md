@@ -10,14 +10,15 @@ docker compose up -d
 # Run SIMRS web + medical backend and their databases
 docker compose --profile apps up -d --build
 
-# Add the optional WS gateway (Kafka remains disabled)
+# Add the WS gateway + Kafka (Redpanda): full pipeline SIMRS → backend → Kafka → WS
+# (monitoring dashboard included, http://localhost:3100)
 docker compose --profile apps --profile ws up -d --build
 
 docker compose ps
-docker compose logs -f medical-backend simrs-web
+docker compose logs -f medical-backend simrs-web dashboard
 docker compose stop
 ```
 
-Defaults bind host ports to loopback: SIMRS PostgreSQL `5433`, medical PostgreSQL `5434` (moved from `15432` to avoid the monitoring database already using that port), SIMRS web `3000`, backend `8082` (container port `8080`), and WS `8083`. The backend's host port is deliberately `8082` to avoid colliding with an existing service on `8080`. Change host ports in `.env` if already occupied. `docker compose stop` does not remove persistent volumes. Do not run `down -v` unless you intend to delete both databases permanently.
+Defaults bind host ports to loopback: SIMRS PostgreSQL `5433`, medical PostgreSQL `5434` (moved from `15432` to avoid the monitoring database already using that port), SIMRS web `3000`, backend `8082` (container port `8080`), WS `8083`, and dashboard `3100` (container port `3000`). The backend's host port is deliberately `8082` to avoid colliding with an existing service on `8080`. Change host ports in `.env` (`DASHBOARD_PORT`, `DASHBOARD_BACKEND_URL`, `DASHBOARD_WS_BACKEND_URL`) if already occupied. `docker compose stop` does not remove persistent volumes. Do not run `down -v` unless you intend to delete both databases permanently.
 
 Replace all example passwords/secrets in `.env` with unique local values. SIMRS integration and writes remain disabled by default. Enable them only when the integration token and contract configuration are ready. This is a local academic prototype with synthetic data, not a clinical/production system.

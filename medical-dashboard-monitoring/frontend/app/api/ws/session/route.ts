@@ -1,7 +1,7 @@
 /** GET/POST /api/ws/session — authenticated relay-session control (TIFA-style, runtime-configurable). */
 import { NextRequest, NextResponse } from 'next/server';
 import { getSession, updateSession } from '../../../lib/ws-session';
-import { simrsUrl, wsAuthToken, wsBackendPath, wsBackendUrl } from '../../../lib/ws-config.server';
+import { normalizeBaseUrl, simrsUrl, wsAuthToken, wsBackendPath, wsBackendUrl } from '../../../lib/ws-config.server';
 import { relayUiId, resetRelay, ensureRelay } from '../../../lib/ws-relay';
 
 type Profile = { username: string; role: string };
@@ -84,8 +84,9 @@ export async function POST(req: NextRequest) {
 
   if (action === 'setConnection') {
     const ep = body?.endpoints || {};
-    const simrs = typeof ep.simrsUrl === 'string' ? ep.simrsUrl.trim() : '';
-    const wsUrl = typeof ep.wsUrl === 'string' ? ep.wsUrl.trim() : '';
+    // Normalisasi: trailing slash / sufiks `/api/v1` yang tertukar membuat URL dobel seperti `.../api/v1/api/v1/auth/csrf`.
+    const simrs = typeof ep.simrsUrl === 'string' ? normalizeBaseUrl(ep.simrsUrl) : '';
+    const wsUrl = typeof ep.wsUrl === 'string' ? ep.wsUrl.trim().replace(/\/+$/, '') : '';
     if (!simrs || !validHttp(simrs)) return NextResponse.json({ error: 'BAD_SIMRS_URL' }, { status: 400 });
     if (!wsUrl || !validWs(wsUrl)) return NextResponse.json({ error: 'BAD_WS_URL' }, { status: 400 });
     const wsToken = typeof body?.wsToken === 'string' ? body.wsToken.trim() : '';
@@ -96,7 +97,7 @@ export async function POST(req: NextRequest) {
       if (probe.status === 404) {
         return NextResponse.json({
           error: 'NOT_THE_BACKEND',
-          detail: `${simrs}/api/v1/auth/csrf not found — host is not the medical backend (login needs /api/v1/auth/* there)`,
+          detail: `${simrs}/api/v1/auth/csrf returned 404 — this host does not serve the medical backend auth API (/api/v1/auth/*). It is likely the SIMRS web frontend. Use the Spring backend URL instead, e.g. http://127.0.0.1:8082`,
         }, { status: 400 });
       }
     } catch {
