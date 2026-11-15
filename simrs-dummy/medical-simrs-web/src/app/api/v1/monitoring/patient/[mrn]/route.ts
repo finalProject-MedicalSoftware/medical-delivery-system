@@ -46,6 +46,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ mrn: string
 
   return Response.json({
     patient: {
+      id: patient.id,
       mrn: patient.mrn,
       fullName: patient.fullName,
       gender: patient.gender, // "L" / "P"
@@ -59,6 +60,8 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ mrn: string
       wardCode: patient.bed?.room.ward.code ?? null,
       wardName: patient.bed?.room.ward.name ?? null,
       bedNumber: patient.bed?.bedNumber ?? null,
+      bedId: patient.bedId,
+      placementUpdatedAt: patient.updatedAt.toISOString(),
       active,
       dischargedAt: patient.dischargedAt?.toISOString() ?? null,
     },

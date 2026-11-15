@@ -5,6 +5,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
+import org.springframework.http.HttpStatus;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -59,6 +61,36 @@ public class InternalPublisher {
     /** Tipe downlink perintah robot: requestCode/wardCode boleh kosong (kontrak robot-command.md). */
     public void publishCommand(String type, Object data) {
         send(type, data, "", "");
+    }
+
+    /** Real robot commands need the gateway response before the API can return 202. */
+    public void publishCommandChecked(Object data) {
+        if (!isConfigured()) throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "Gateway belum dikonfigurasi");
+        Map<String, Object> envelope = new LinkedHashMap<>();
+        envelope.put("v", 1);
+        envelope.put("eventId", UUID.randomUUID().toString());
+        envelope.put("type", "ROBOT_COMMAND");
+        envelope.put("occurredAt", Instant.now().toString());
+        envelope.put("requestCode", "");
+        envelope.put("wardCode", "");
+        envelope.put("data", data);
+        try {
+            HttpRequest request = HttpRequest.newBuilder(URI.create(url))
+                    .timeout(Duration.ofSeconds(3))
+                    .header("Content-Type", "application/json")
+                    .header("X-Internal-Secret", secret)
+                    .POST(HttpRequest.BodyPublishers.ofString(json.writeValueAsString(envelope)))
+                    .build();
+            HttpResponse<String> response = http.send(request, HttpResponse.BodyHandlers.ofString());
+            if (response.statusCode() == 202) return;
+            if (response.statusCode() == 409) throw new ResponseStatusException(HttpStatus.CONFLICT, "Gateway menolak command");
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "Gateway tidak menerima command");
+        } catch (ResponseStatusException e) {
+            throw e;
+        } catch (Exception e) {
+            log.warn("internal-publish command gagal: {}", e.getClass().getSimpleName());
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "Gateway tidak tersedia");
+        }
     }
 
     /** true bila bridge gateway terkonfigurasi (URL + secret non-blank); dipakai gate 503 mode real. */

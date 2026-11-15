@@ -54,6 +54,7 @@ public class SecurityConfiguration {
                         .ignoringRequestMatchers("/webhooks/simrs/**", "/actuator/health"))
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/actuator/health", "/error").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/internal/robots/*/eligibility").permitAll()
                         .requestMatchers("/api/v1/auth/**").permitAll()
                         .requestMatchers("/webhooks/simrs/**").permitAll()
                         .requestMatchers(HttpMethod.POST, "/api/v1/maps/*/activate").hasRole("ADMIN")
@@ -61,6 +62,8 @@ public class SecurityConfiguration {
                         // Registrasi robot node = ADMIN saja (kontrak robot-command.md §7);
                         // exact path — POST /robots/{id}/commands tetap pada catch-all.
                         .requestMatchers(HttpMethod.POST, "/api/v1/robots").hasRole("ADMIN")
+                        .requestMatchers(HttpMethod.PUT, "/api/v1/robots/*").hasRole("ADMIN")
+                        .requestMatchers(HttpMethod.POST, "/api/v1/robots/*/disable", "/api/v1/robots/*/archive").hasRole("ADMIN")
                         .requestMatchers("/api/v1/users/**").hasRole("ADMIN")
                         // Admin SIMRS: config + mission reassign
                         .requestMatchers("/api/v1/simrs/admin/**").hasRole("ADMIN")

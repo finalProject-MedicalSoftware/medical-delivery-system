@@ -120,4 +120,51 @@ public class SimrsClientServiceTest {
         assertEquals("MISCONFIGURED", status.get("mode"));
         assertEquals("INVALID_CONFIGURATION", status.get("code"));
     }
+
+    @Test
+    @DisplayName("Destination policy rejects unsupported schemes, credentials and untrusted hosts")
+    void testDestinationPolicyRejectsUnsafeUrls() {
+        SimrsProperties props = new SimrsProperties();
+        props.setBaseUrl("https://simrs.example.test");
+        props.setAllowedHosts("simrs.example.test,localhost");
+        props.setAllowPrivateNetworks(true);
+        props.captureBootstrapBaseUrl();
+        SimrsDestinationPolicy policy = new SimrsDestinationPolicy(props);
+
+        assertThrows(IllegalArgumentException.class, () -> policy.validate("file:///etc/passwd"));
+        assertThrows(IllegalArgumentException.class, () -> policy.validate("https://user:secret@simrs.example.test"));
+        assertThrows(IllegalArgumentException.class, () -> policy.validate("https://untrusted.example.test"));
+        assertThrows(IllegalArgumentException.class, () -> policy.validate("https://simrs.example.test?token=secret"));
+        assertEquals("http://localhost:8080", policy.validate("http://localhost:8080/").toString());
+    }
+
+    @Test
+    @DisplayName("Private destinations require an explicit server-side opt-in")
+    void testPrivateNetworkBlockedByDefault() {
+        SimrsProperties props = new SimrsProperties();
+        props.setBaseUrl("http://localhost:8080");
+        props.setAllowedHosts("localhost");
+        props.setAllowPrivateNetworks(false);
+        props.captureBootstrapBaseUrl();
+        SimrsDestinationPolicy policy = new SimrsDestinationPolicy(props);
+        assertThrows(IllegalArgumentException.class, () -> policy.validate("http://localhost:8080"));
+    }
+
+    @Test
+    @DisplayName("Connection test requires a valid read-only SIMRS mapping contract")
+    void testConnectionRejectsHtmlAndRedirects() throws Exception {
+        HttpServer server = HttpServer.create(new InetSocketAddress("localhost", 0), 0);
+        server.createContext("/api/v1/monitoring/mapping", exchange -> {
+            exchange.getResponseHeaders().set("Location", "http://localhost:" + server.getAddress().getPort() + "/login");
+            exchange.sendResponseHeaders(302, -1);
+            exchange.close();
+        });
+        server.start();
+        try {
+            SimrsClientService service = new SimrsClientService("http://localhost:" + server.getAddress().getPort(), "token", true, false, 30);
+            IllegalStateException error = assertThrows(IllegalStateException.class,
+                    () -> service.testConnection("http://localhost:" + server.getAddress().getPort()));
+            assertTrue(error.getMessage().contains("HTTP 302"));
+        } finally { server.stop(0); }
+    }
 }

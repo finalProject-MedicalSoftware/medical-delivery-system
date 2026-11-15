@@ -40,6 +40,7 @@ export async function GET(req: NextRequest) {
         fullName: true,
         gender: true,
         roomCode: true,
+        bedId: true,
         diagnosis: true,
         isInfectious: true,
         updatedAt: true,
@@ -73,7 +74,7 @@ export async function GET(req: NextRequest) {
         ward: { select: { code: true, name: true } },
         beds: {
           orderBy: { bedNumber: "asc" },
-          select: { bedNumber: true, isOccupied: true },
+          select: { id: true, bedNumber: true, isOccupied: true },
         },
       },
     }),

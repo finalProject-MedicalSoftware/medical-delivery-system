@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
+import { PageHeading } from '../components/NevoUI';
 import { useApp } from '../components/AppShell';
 import { useLanguage } from '../components/LanguageProvider';
 import {
@@ -142,22 +143,7 @@ export default function UsersPage() {
 
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="glass-panel p-6 flex flex-wrap items-center justify-between gap-4">
-        <div>
-          <h2 className="text-xl font-bold txt-main flex items-center gap-2">
-            <Users className="text-accent" size={24} />
-            {t.title}
-          </h2>
-          <p className="text-xs txt-sec mt-1">{t.subtitle}</p>
-        </div>
-        <button
-          onClick={() => setShowAdd((v) => !v)}
-          className="btn-primary flex items-center gap-1.5 text-xs"
-        >
-          <UserPlus size={14} /> {t.addUser}
-        </button>
-      </div>
+      <PageHeading title={t.title} description={t.subtitle} actions={<button onClick={() => setShowAdd(v => !v)} className="btn-primary flex items-center gap-2"><UserPlus size={18} />{t.addUser}</button>} />
 
       {error && (
         <div className="glass-panel p-4 border-error/40 bg-error/5 flex items-start gap-2">

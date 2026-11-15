@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
+import { PageHeading, RobotArtwork } from '../components/NevoUI';
 import { useApp } from '../components/AppShell';
 import { useLanguage } from '../components/LanguageProvider';
 import MapViewer, { MapMetadata, WaypointItem } from '../maps/MapViewer';
@@ -9,7 +10,7 @@ import {
 } from 'lucide-react';
 
 export default function TrackingPage() {
-  const { telemetry, request, wsConnected, missionEvents } = useApp();
+  const { telemetry, request, wsConnected, missionEvents, selectedRobotConnected, selectedRobotHasTelemetry } = useApp();
   const { dict } = useLanguage();
   const t = dict.tracking;
 
@@ -52,38 +53,11 @@ export default function TrackingPage() {
 
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="glass-panel p-6 flex flex-wrap items-center justify-between gap-4">
-        <div>
-          <h2 className="text-xl font-bold txt-main flex items-center gap-2">
-            <Activity className="text-accent" size={24} />
-            {t.title}
-          </h2>
-          <p className="text-xs txt-sec mt-1">{t.subtitle}</p>
-        </div>
-        <div className="flex items-center gap-2">
-          {telemetry.simulated && (
-            <span className="status-pill status-warning">{dict.common.simulated}</span>
-          )}
-          {isStale ? (
-            <span className="status-pill status-danger flex items-center gap-1.5">
-              <AlertTriangle size={13} /> {t.stale}
-            </span>
-          ) : wsConnected ? (
-            <span className="status-pill status-success flex items-center gap-1.5">
-              <Wifi size={13} className="animate-pulse" /> {t.wsStatus} · {dict.common.live}
-            </span>
-          ) : (
-            <span className="status-pill status-warning flex items-center gap-1.5">
-              <AlertTriangle size={13} /> {dict.common.connecting}
-            </span>
-          )}
-        </div>
-      </div>
+      <PageHeading title={t.title} description={t.subtitle} actions={<div className="flex gap-2">{telemetry.simulated && <span className="status-pill status-warning">{dict.common.simulated}</span>}{isStale && <span role="status" className="status-pill status-danger">{t.stale}</span>}{!wsConnected && <span role="status" className="status-pill status-warning">{dict.common.disconnected}</span>}</div>} />
 
       {/* Canvas & HUD */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        <div className="lg:col-span-8 space-y-4">
+      <div className="tracking-layout grid grid-cols-1 lg:grid-cols-12 gap-6">
+        <div className="tracking-map lg:col-span-8 space-y-4">
           {activeMap ? (
             <MapViewer
               meta={activeMap}
@@ -91,10 +65,10 @@ export default function TrackingPage() {
               selectedWaypointId={null}
               onSelectWaypoint={() => {}}
               onPickCoordinate={() => {}}
-              robotPose={telemetry.pose}
+              robotPose={selectedRobotHasTelemetry ? telemetry.pose : null}
             />
           ) : (
-            <div className="glass-panel p-12 text-center">
+            <div className="map-empty">
               <Navigation className="txt-sec mx-auto mb-3" size={32} />
               <p className="font-semibold txt-main">{t.noMap}</p>
               <p className="text-xs txt-sec mt-1">{dict.maps.noActiveMap}</p>
@@ -102,18 +76,11 @@ export default function TrackingPage() {
           )}
         </div>
 
-        <div className="lg:col-span-4 space-y-5">
+        <div className="lg:col-span-4 min-w-0">
           {/* Pose card */}
-          <div className="glass-panel p-5 space-y-3">
-            <div className="flex items-center justify-between gap-2 pb-3 border-b border-base">
-              <h3 className="font-bold text-sm txt-main flex items-center gap-2">
-                <Radio size={16} className="text-accent" />
-                {t.pose}
-              </h3>
-              <span className={`status-pill ${telemetry.status === 'NAVIGATING' ? 'status-info' : telemetry.status === 'ERROR' || telemetry.status === 'OFFLINE' ? 'status-danger' : 'status-success'}`}>
-                {telemetry.status}
-              </span>
-            </div>
+          <section className="glass-panel tracking-panel p-5 space-y-3">
+            <div className="tracking-identity"><RobotArtwork variant="head" /><div><strong>{telemetry.robotId || 'NEVO'}</strong><span className="status-pill status-info">{selectedRobotConnected ? telemetry.mode : dict.common.noData}</span></div></div>
+            {selectedRobotHasTelemetry ? <>
             <div className="grid grid-cols-2 gap-3 text-xs">
               <div className="bg-elevated p-3 rounded-xl border border-base">
                 <span className="text-[10px] txt-sec block mb-0.5">X</span>
@@ -161,16 +128,14 @@ export default function TrackingPage() {
                 </div>
               </div>
             </div>
-          </div>
-
+            </> : <p className="p-6 txt-sec text-sm text-center">{dict.common.noData}</p>}
           {/* Event console */}
-          <div className="glass-panel p-5 space-y-3 flex flex-col h-[280px]">
+          <div className="tracking-events pt-5 space-y-3 flex flex-col min-h-[220px]">
             <div className="flex items-center justify-between pb-2 border-b border-base">
               <h3 className="font-bold text-xs txt-main flex items-center gap-2">
                 <Terminal size={14} className="text-accent" />
                 {t.eventLog}
               </h3>
-              <span className="text-[10px] font-mono txt-sec">{t.connectedTo} /api/ws/stream</span>
             </div>
             <div className="flex-1 overflow-y-auto font-mono text-[11px] space-y-1.5 pr-1">
               {eventLogs.length === 0 ? (
@@ -184,6 +149,7 @@ export default function TrackingPage() {
               )}
             </div>
           </div>
+          </section>
         </div>
       </div>
     </div>

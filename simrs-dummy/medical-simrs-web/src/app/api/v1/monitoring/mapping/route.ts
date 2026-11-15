@@ -90,7 +90,7 @@ export async function GET(req: NextRequest) {
       const roomsYaml = w.rooms
         .map((r) => {
           const bedsYaml = r.beds
-            .map((b) => `          - { number: ${yq(b.bedNumber)}, occupied: ${b.isOccupied} }`)
+            .map((b) => `          - { id: ${yq(b.id)}, number: ${yq(b.bedNumber)}, occupied: ${b.isOccupied} }`)
             .join("\n");
           return (
             `      - roomCode: ${yq(r.roomCode)}\n` +

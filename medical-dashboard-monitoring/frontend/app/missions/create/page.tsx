@@ -1,754 +1,218 @@
 'use client';
 
-import React, { useState, useEffect, useMemo, Suspense } from 'react';
+import React, { Suspense, useCallback, useEffect, useMemo, useState } from 'react';
+import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
+import { BedDouble, CheckCircle2, Loader2, MapPin, Package, Search, Send, Trash2, UserRound, XCircle } from 'lucide-react';
+import { PageHeading } from '../../components/NevoUI';
 import { useApp } from '../../components/AppShell';
 import { useLanguage } from '../../components/LanguageProvider';
 import MapViewer, { MapMetadata, WaypointItem } from '../../maps/MapViewer';
-import {
-  Navigation, MapPin, CheckCircle2, Play, XCircle, Search, Package, ShieldAlert, X,
-} from 'lucide-react';
 
-const COMPARTMENTS = Array.from({ length: 6 }, (_, n) => n);
+type PatientSummary = {
+  id: string; mrn: string; fullName: string; roomCode: string | null; roomName: string | null;
+  bedId: string | null; bedNumber: string | null; active: boolean; isInfectious: boolean; placementUpdatedAt: string;
+};
+type Delivery = { requestCode: string; status: string; statusLabel?: string };
+type PatientDetail = PatientSummary & { activeDeliveries: Delivery[] };
+type ManifestItem = PatientDetail & { waypoint: WaypointItem; compartmentNo: number; requestCode: string | null };
 
-/**
- * Peta dummy + waypoint dummy saat backend tidak punya peta ROS aktif.
- * MapViewer menangani id DUMMY- khusus (tanpa preview, badge "Peta Dummy").
- */
-// Proxy dashboard mengembalikan array langsung; API SIMRS asli membungkus
-// dengan {generatedAt, count, deliveries}. Terima keduanya.
-// ponytail: rapikan saat shape proxy dikunci di kontrak.
-const asDeliveryList = (res: unknown): any[] =>
-  Array.isArray(res) ? res : (res as any)?.deliveries ?? [];
-
-// Sudah tiba / serah-terima / batal tidak perlu dijadwalkan lagi — hilangkan
-// dari Resep aktif agar yang tampil hanya yang butuh pengantaran.
-const QUEUE_DONE_STATUSES = new Set([
-  'MOCK_ARRIVED_AT_ROOM',
-  'MOCK_HANDOVER_CONFIRMED',
-  'CANCELLED',
-]);
-
-interface QueueItem {
-  requestCode: string;
-  patientMrn: string | null;
-  patientName: string;
-  roomCode: string | null;
-  roomName: string | null;
-  status: string;
-  statusLabel: string;
-}
-
-const queueStatusTone = (s: string) =>
-  s === 'MOCK_ARRIVED_AT_ROOM'
-    ? 'bg-success/10 text-success border-success/30'
-    : s === 'MOCK_IN_TRANSIT'
-      ? 'bg-accent/10 text-accent border-accent/30'
-      : 'bg-warning/10 text-warning border-warning/30';
-
-function CreateContent() {
-  const searchParams = useSearchParams();
-  const initialRoom = searchParams.get('room') || '';
-  const initialReq = searchParams.get('req') || '';
-
-  const { telemetry, request, wsConnected } = useApp();
-  const { dict } = useLanguage();
-  const t = dict.create;
-  const controlUnavailable = !wsConnected || telemetry.status === 'ERROR';
-
-  const [activeMap, setActiveMap] = useState<MapMetadata | null>(null);
-  const [rosWaypoints, setRosWaypoints] = useState<WaypointItem[]>([]);
-  const [deliveries, setDeliveries] = useState<any[]>([]);
-
-  const [selectedRoomCode, setSelectedRoomCode] = useState<string>(initialRoom);
+function NavigationContent() {
+  const params = useSearchParams();
+  const { request, telemetry, selectedRobotConnected, selectedRobotHasTelemetry } = useApp();
+  const { language, dict } = useLanguage();
+  const id = language === 'id';
+  const [map, setMap] = useState<MapMetadata | null>(null);
+  const [waypoints, setWaypoints] = useState<WaypointItem[]>([]);
+  const [query, setQuery] = useState('');
+  const [patients, setPatients] = useState<PatientSummary[]>([]);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [searching, setSearching] = useState(false);
+  const [selected, setSelected] = useState<PatientDetail | null>(null);
   const [selectedWaypoint, setSelectedWaypoint] = useState<WaypointItem | null>(null);
-  const [requestCode, setRequestCode] = useState<string>(initialReq);
-  const [compartmentNo, setCompartmentNo] = useState<number | null>(null);
-  const [patientSearch, setPatientSearch] = useState<string>('');
-  // Pilihan massal: requestCode -> kompartemen (null = belum dipilih).
-  const [manifest, setManifest] = useState<Record<string, number | null>>({});
-
-  const [confirmModalOpen, setConfirmModalOpen] = useState(false);
+  const [requestCode, setRequestCode] = useState('');
+  const [compartment, setCompartment] = useState<number | null>(null);
+  const [manifest, setManifest] = useState<ManifestItem[]>([]);
   const [submitting, setSubmitting] = useState(false);
-  const [message, setMessage] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
-
-  const notify = (type: 'success' | 'error' | 'info', text: string) => {
-    setMessage({ type, text });
-    setTimeout(() => setMessage((prev) => (prev?.text === text ? null : prev)), 6000);
-  };
+  const [message, setMessage] = useState<{ tone: 'success' | 'error' | 'info'; text: string } | null>(null);
 
   useEffect(() => {
-    request('mappings')
-      .then(async (mappings: any[]) => {
-        const ros = mappings.find((m) => m.kind === 'ROS' && m.active) || mappings.find((m) => m.kind === 'ROS');
-        if (ros) {
-          const meta = await request(`maps/${ros.id}/metadata`);
-          setActiveMap(meta);
-          const wps = await request(`maps/${ros.id}/waypoints`);
-          setRosWaypoints(wps);
-        }
-      })
-      .catch((err) => notify('error', err instanceof Error ? err.message : String(err)));
+    request('mappings').then(async (rows: any[]) => {
+      const active = rows.find((row) => row.kind === 'ROS' && row.active);
+      if (!active) return;
+      const [metadata, points] = await Promise.all([
+        request(`maps/${active.id}/metadata`), request(`maps/${active.id}/waypoints`),
+      ]);
+      setMap(metadata); setWaypoints(points);
+    }).catch((error) => setMessage({ tone: 'error', text: error instanceof Error ? error.message : String(error) }));
   }, [request]);
 
-  // Antrian pengantaran dari SIMRS (pasien + ruangan untuk peta dummy).
-  useEffect(() => {
-    const refreshQueue = () =>
-      request('integrations/simrs/deliveries')
-        .then((res) => setDeliveries(asDeliveryList(res)))
-        .catch((err) => console.warn('[create] fetch antrian gagal:', err));
-    refreshQueue();
-    const timer = window.setInterval(refreshQueue, 30000);
-    return () => window.clearInterval(timer);
-  }, [request]);
-
-  const map: MapMetadata | null = activeMap;
-
-  const patientQueue: QueueItem[] = useMemo(
-    () =>
-      deliveries.map((d) => ({
-        requestCode: String(d.requestCode ?? ''),
-        patientMrn: d.patientMrn ?? d.patient?.mrn ?? null,
-        patientName: d.patientName ?? d.patient?.fullName ?? '—',
-        roomCode: d.roomCode ?? d.patient?.roomCode ?? null,
-        roomName: d.roomName ?? d.patient?.roomName ?? null,
-        status: String(d.status ?? ''),
-        statusLabel: d.statusLabel ?? d.status ?? '',
-      }))
-      .filter((q) => q.requestCode)
-      .filter((q) => !QUEUE_DONE_STATUSES.has(q.status)),
-    [deliveries]
-  );
-
-  const displayedWaypoints: WaypointItem[] = activeMap ? rosWaypoints : [];
-
-  const filteredQueue = useMemo(() => {
-    const q = patientSearch.trim().toLowerCase();
-    if (!q) return patientQueue;
-    return patientQueue.filter(
-      (p) =>
-        p.patientName.toLowerCase().includes(q) ||
-        (p.patientMrn ?? '').toLowerCase().includes(q) ||
-        p.requestCode.toLowerCase().includes(q)
-    );
-  }, [patientQueue, patientSearch]);
-
-  const waypointDistance = useMemo(() => {
-    if (!selectedWaypoint) return null;
-    const dx = selectedWaypoint.x - telemetry.pose.x;
-    const dy = selectedWaypoint.y - telemetry.pose.y;
-    return Math.sqrt(dx * dx + dy * dy);
-  }, [selectedWaypoint, telemetry.pose]);
-
-  // Auto-map: ruangan terpilih -> waypoint ROS maupun dummy (null bila tak cocok).
-  useEffect(() => {
-    if (!selectedRoomCode) return;
-    setSelectedWaypoint(displayedWaypoints.find((w) => w.room_code === selectedRoomCode) ?? null);
-  }, [selectedRoomCode, displayedWaypoints]);
-
-  const handleSelectPatient = (q: QueueItem) => {
-    setSelectedRoomCode(q.roomCode ?? '');
-    setRequestCode(q.requestCode);
-    setCompartmentNo(null);
-  };
-
-  // --- Manifest multi-misi ---
-  const rowWaypointFor = (q: QueueItem): WaypointItem | null =>
-    displayedWaypoints.find((w) => !!w.room_code && w.room_code === q.roomCode) ?? null;
-
-  const selectedQueue = useMemo(
-    () => patientQueue.filter((q) => q.requestCode in manifest),
-    [patientQueue, manifest]
-  );
-  const manifestActive = selectedQueue.length > 0;
-
-  const freeCompartment = (taken: Record<string, number | null>): number | null => {
-    const used = new Set(Object.values(taken));
-    for (const n of COMPARTMENTS) if (!used.has(n)) return n;
-    return null;
-  };
-
-  const toggleManifest = (q: QueueItem) =>
-    setManifest((prev) => {
-      const next = { ...prev };
-      if (q.requestCode in next) delete next[q.requestCode];
-      else {
-        const free = freeCompartment(prev);
-        if (free === null) {
-          notify('error', t.maxTrays.replace('{n}', String(Object.keys(prev).length)));
-          return prev;
-        }
-        next[q.requestCode] = free;
-      }
-      return next;
-    });
-
-  const setRowCompartment = (code: string, n: number | null) =>
-    setManifest((prev) => ({ ...prev, [code]: n }));
-
-  const selectAllVisible = () =>
-    setManifest((prev) => {
-      const next = { ...prev };
-      let full = false;
-      for (const q of filteredQueue) {
-        if (q.requestCode in next) continue;
-        const free = freeCompartment(next);
-        if (free === null) { full = true; break; }
-        next[q.requestCode] = free;
-      }
-      if (full) notify('error', t.maxTrays.replace('{n}', String(Object.keys(next).length)));
-      return next;
-    });
-
-  const clearSelection = () => setManifest({});
-
-  // Validasi manifest sebelum kirim (kompartemen dulu, lalu duplikat, lalu waypoint).
-  const manifestError = useMemo(() => {
-    if (!selectedQueue.length) return null;
-    const comps = selectedQueue.map((q) => manifest[q.requestCode]);
-    if (comps.some((c) => c === null || c === undefined)) return t.needTray;
-    const dup = comps.find((c, i) => comps.indexOf(c) !== i);
-    if (dup !== undefined && dup !== null) return t.dupCompartment.replace('{n}', String(dup));
-    const unmapped = Array.from(
-      new Set(selectedQueue.filter((q) => !rowWaypointFor(q)).map((q) => q.roomCode ?? '—'))
-    );
-    if (unmapped.length) return t.unmappedRooms.replace('{rooms}', unmapped.join(', '));
-    return null;
-  }, [selectedQueue, manifest, displayedWaypoints, t]);
-
-  const handlePickCoordinate = (x: number, y: number) => {
-    void navigator.clipboard?.writeText(`x=${x.toFixed(3)}, y=${y.toFixed(3)}`).catch(() => {});
-  };
-
-  const handleDispatch = async () => {
-    if (!activeMap || !selectedWaypoint) {
-      notify('error', activeMap ? t.selectTargetFirst : t.mapUnavailable);
-      return;
-    }
-    if (controlUnavailable) {
-      notify('error', t.needConnection);
-      return;
-    }
-    if (compartmentNo === null) {
-      notify('error', t.needTray);
-      return;
-    }
-    setSubmitting(true);
+  const loadPatients = useCallback(async (cursor = '', append = false) => {
+    setSearching(true);
     try {
-      const res = await request('missions', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+      const response = await request(`integrations/simrs/patients?query=${encodeURIComponent(query.trim())}&limit=30${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`);
+      const rows = Array.isArray(response?.patients) ? response.patients : [];
+      setPatients((current) => append ? [...current, ...rows] : rows);
+      setNextCursor(response?.nextCursor ?? null);
+    } catch (error) {
+      setPatients([]); setNextCursor(null);
+      setMessage({ tone: 'error', text: error instanceof Error ? error.message : 'Data pasien SIMRS tidak tersedia.' });
+    } finally { setSearching(false); }
+  }, [query, request]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => void loadPatients(), 300);
+    return () => window.clearTimeout(timer);
+  }, [loadPatients]);
+
+  const selectPatient = async (patient: PatientSummary) => {
+    setMessage(null); setCompartment(null); setRequestCode(''); setSelectedWaypoint(null);
+    try {
+      const response = await request(`integrations/simrs/patient/${encodeURIComponent(patient.mrn)}`);
+      const detail: PatientDetail = { ...response.patient, activeDeliveries: response.activeDeliveries ?? [] };
+      setSelected(detail);
+      setRequestCode(detail.activeDeliveries[0]?.requestCode ?? '');
+      setSelectedWaypoint(waypoints.find((wp) => wp.enabled && wp.room_code === detail.roomCode && wp.bed_id === detail.bedId) ?? null);
+    } catch (error) {
+      setSelected(null);
+      setMessage({ tone: 'error', text: error instanceof Error ? error.message : String(error) });
+    }
+  };
+
+  useEffect(() => {
+    const mrn = params.get('mrn');
+    if (mrn && patients.length) {
+      const patient = patients.find((row) => row.mrn === mrn);
+      if (patient) void selectPatient(patient);
+    }
+  // Deep-link is applied once after the first directory response.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [patients.length]);
+
+  useEffect(() => {
+    if (!selected) return;
+    setSelectedWaypoint(waypoints.find((wp) => wp.enabled && wp.room_code === selected.roomCode && wp.bed_id === selected.bedId) ?? null);
+  }, [selected, waypoints]);
+
+  const compartmentCount = telemetry.compartmentCount ?? 0;
+  const usedCompartments = new Set(manifest.map((item) => item.compartmentNo));
+  const selectedAlreadyAdded = selected ? manifest.some((item) => item.mrn === selected.mrn) : false;
+  const placementValid = Boolean(selected?.isInfectious && selected.active && selected.roomCode && selected.bedId && selected.placementUpdatedAt);
+  const manifestValid = manifest.every((item) => item.isInfectious === true);
+
+  const addToManifest = () => {
+    if (!selected?.isInfectious) return setMessage({ tone: 'error', text: id ? 'Pasien tidak memiliki flag penyakit menular aktif.' : 'The patient does not have an active infectious-disease flag.' });
+    if (!selected || !placementValid) return setMessage({ tone: 'error', text: id ? 'Pasien tidak memiliki placement rawat inap aktif.' : 'Patient has no active inpatient placement.' });
+    if (!selectedWaypoint) return setMessage({ tone: 'error', text: id ? 'Waypoint kasur pasien belum dikonfigurasi.' : 'The patient bed waypoint has not been configured.' });
+    if (compartment === null) return setMessage({ tone: 'error', text: id ? 'Pilih kompartemen.' : 'Select a compartment.' });
+    if (selectedAlreadyAdded) return setMessage({ tone: 'error', text: id ? 'Pasien sudah ada di manifest.' : 'Patient is already in the manifest.' });
+    if (usedCompartments.has(compartment)) return setMessage({ tone: 'error', text: id ? 'Kompartemen sudah digunakan pasien lain.' : 'Compartment is already assigned.' });
+    setManifest((current) => [...current, { ...selected, waypoint: selectedWaypoint, compartmentNo: compartment, requestCode: requestCode || null }]);
+    setMessage({ tone: 'success', text: id ? 'Pasien ditambahkan ke manifest.' : 'Patient added to the manifest.' });
+    setSelected(null); setSelectedWaypoint(null); setCompartment(null); setRequestCode('');
+  };
+
+  const updateCompartment = (mrn: string, value: number) => {
+    if (manifest.some((item) => item.mrn !== mrn && item.compartmentNo === value)) {
+      setMessage({ tone: 'error', text: id ? 'Kompartemen sudah digunakan pasien lain.' : 'Compartment is already assigned.' });
+      return;
+    }
+    setManifest((current) => current.map((item) => item.mrn === mrn ? { ...item, compartmentNo: value } : item));
+  };
+
+  const dispatch = async () => {
+    if (!manifest.length) return;
+    if (telemetry.status !== 'IDLE') return setMessage({ tone: 'error', text: id ? 'Robot belum siap menerima manifest baru.' : 'Robot is not ready for a new manifest.' });
+    setSubmitting(true); setMessage(null);
+    try {
+      const infectionChecks = await Promise.all(manifest.map(async (item) => {
+        try {
+          const latest = await request(`integrations/simrs/patient/${encodeURIComponent(item.mrn)}`);
+          return { mrn: item.mrn, valid: latest?.patient?.isInfectious === true };
+        } catch {
+          return { mrn: item.mrn, valid: false };
+        }
+      }));
+      const invalidMrns = new Set(infectionChecks.filter((check) => !check.valid).map((check) => check.mrn));
+      if (invalidMrns.size) {
+        setManifest((current) => current.map((item) => invalidMrns.has(item.mrn) ? { ...item, isInfectious: false } : item));
+        throw new Error(id
+          ? 'Status penyakit menular satu atau lebih pasien tidak aktif atau tidak dapat diverifikasi. Tinjau manifest.'
+          : 'The infectious-disease status of one or more patients is inactive or cannot be verified. Review the manifest.');
+      }
+      const response = await request('missions/manifest', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          waypointId: selectedWaypoint.id,
-          roomCode: selectedWaypoint.room_code || selectedRoomCode || null,
-          requestCode: requestCode.trim() || null,
-          compartmentNo,
+          robotId: telemetry.robotId,
+          items: manifest.map((item) => ({
+            patientMrn: item.mrn, roomCode: item.roomCode, bedId: item.bedId,
+            placementUpdatedAt: item.placementUpdatedAt, waypointId: item.waypoint.id,
+            compartmentNo: item.compartmentNo, requestCode: item.requestCode,
+          })),
         }),
       });
-      notify('success', `${t.success} — ${res.missionId.slice(0, 8)}…`);
-      setConfirmModalOpen(false);
-    } catch (err) {
-      notify('error', err instanceof Error ? err.message : String(err));
-    } finally {
-      setSubmitting(false);
-    }
+      setManifest([]);
+      setMessage({ tone: 'success', text: `${id ? 'Manifest diterima' : 'Manifest accepted'} · ${String(response.manifestId).slice(0, 8)}…` });
+    } catch (error) {
+      setMessage({ tone: 'error', text: error instanceof Error ? error.message : String(error) });
+    } finally { setSubmitting(false); }
   };
 
-  const handleDispatchBatch = async () => {
-    if (controlUnavailable) {
-      notify('error', t.needConnection);
-      return;
-    }
-    if (manifestError) {
-      notify('error', manifestError);
-      return;
-    }
-    const items = selectedQueue;
-    if (!items.length) return;
-    setSubmitting(true);
-    let done = 0;
-    let queued = 0;
-    try {
-      for (const q of items) {
-        const wp = rowWaypointFor(q);
-        if (!wp) throw new Error(t.unmappedRooms.replace('{rooms}', q.roomCode ?? '—'));
-        const res = await request('missions', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            waypointId: wp.id,
-            roomCode: wp.room_code || q.roomCode || null,
-            requestCode: q.requestCode,
-            compartmentNo: manifest[q.requestCode],
-          }),
-        });
-        if (res?.status === 'QUEUED') queued += 1;
-        done += 1;
-        setMessage({
-          type: 'info',
-          text: t.batchSubmitting.replace('{done}', String(done)).replace('{total}', String(items.length)),
-        });
-      }
-      setConfirmModalOpen(false);
-      clearSelection();
-      notify(
-        'success',
-        t.batchSuccess.replace('{ok}', String(done)) +
-          (queued ? ` ${t.batchQueued.replace('{n}', String(queued))}` : '')
-      )
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      setConfirmModalOpen(false);
-      if (done === 0) notify('error', msg);
-      else
-        notify(
-          'error',
-          t.batchPartial.replace('{ok}', String(done)).replace('{total}', String(items.length)).replace('{err}', msg)
-        );
-    } finally {
-      setSubmitting(false);
-    }
+  const cancelActive = async () => {
+    if (!telemetry.activeMissionId || !window.confirm(dict.missions.cancelConfirm)) return;
+    try { await request(`missions/${telemetry.activeMissionId}/cancel`, { method: 'POST' }); }
+    catch (error) { setMessage({ tone: 'error', text: error instanceof Error ? error.message : String(error) }); }
   };
 
-  const handleConfirmDispatch = async () => {
-    if (manifestActive) await handleDispatchBatch();
-    else await handleDispatch();
-  };
+  return <div className="space-y-6">
+    <PageHeading title={id ? 'Kendali Navigasi' : 'Navigation Control'} description={id ? 'Susun manifest pengantaran berdasarkan placement pasien SIMRS dan waypoint kasur.' : 'Build a delivery manifest from SIMRS patient placement and bed waypoints.'} />
+    {message && <div role={message.tone === 'error' ? 'alert' : 'status'} className={`rounded-xl border px-4 py-3 text-sm ${message.tone === 'error' ? 'border-error/30 bg-error/5 text-error' : message.tone === 'success' ? 'border-success/30 bg-success/5 text-success' : 'border-accent/30 bg-accent/5 text-accent'}`}>{message.text}</div>}
 
-  const handleCancel = async () => {
-    if (!telemetry.activeMissionId) return;
-    if (!window.confirm(dict.missions.cancelConfirm)) return;
-    try {
-      await request(`missions/${telemetry.activeMissionId}/cancel`, { method: 'POST' });
-      notify(
-        'info',
-        dict.missions.cancelSuccess
-      );
-    } catch (err) {
-      notify('error', err instanceof Error ? err.message : String(err));
-    }
-  };
-
-  return (
-    <div className="p-6 max-w-7xl mx-auto space-y-4">
-      {/* Header */}
-      <div>
-        <h1 className="text-xl font-bold txt-main">{t.title}</h1>
-        <p className="text-xs txt-sec mt-0.5">{t.subtitle}</p>
-      </div>
-
-      {/* Toast message */}
-      {message && (
-        <div
-          className={`flex items-center gap-2 text-sm px-4 py-3 rounded-xl border backdrop-blur-md ${
-            message.type === 'success'
-              ? 'bg-success/10 text-success border-success/30'
-              : message.type === 'error'
-                ? 'bg-error/10 text-error border-error/30'
-                : 'bg-warning/10 text-warning border-warning/30'
-          }`}
-        >
-          <span className="flex-1">{message.text}</span>
-          <button onClick={() => setMessage(null)} className="opacity-60 hover:opacity-100" aria-label="close">
-            <X size={14} />
-          </button>
-        </div>
-      )}
-
-      <div className="flex flex-col xl:flex-row gap-4 items-start">
-        {/* Main: map + waypoint list */}
-        <div className="flex-1 w-full space-y-4 min-w-0">
-          {map ? (
-            <div className="glass-panel overflow-hidden relative h-[560px]">
-              <MapViewer
-                meta={map}
-                waypoints={displayedWaypoints}
-                selectedWaypointId={selectedWaypoint?.id ?? null}
-                onSelectWaypoint={(wp) => setSelectedWaypoint(wp)}
-                onPickCoordinate={handlePickCoordinate}
-                robotPose={telemetry.pose}
-              />
-            </div>
-          ) : (
-            <div className="glass-panel p-10 flex items-center justify-center text-xs txt-sec italic">
-              {t.mapUnavailable}
-            </div>
-          )}
-
-          {displayedWaypoints.length > 0 && (
-            <div className="glass-panel p-4 space-y-2">
-              <p className="text-[11px] txt-sec">{t.waypointsTip}</p>
-              <div className="flex flex-wrap gap-2">
-                {displayedWaypoints.map((wp) => (
-                  <button
-                    key={wp.id}
-                    type="button"
-                    onClick={() => setSelectedWaypoint(wp)}
-                    className={`text-[11px] px-2.5 py-1.5 rounded-lg border font-mono transition ${
-                      selectedWaypoint?.id === wp.id
-                        ? 'bg-accent/15 text-accent border-accent/40'
-                        : 'bg-elevated txt-sec border-base hover:border-accent/40'
-                    }`}
-                  >
-                    {wp.name}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
+    <div className="grid grid-cols-1 xl:grid-cols-[minmax(320px,0.85fr)_minmax(0,1.4fr)] gap-6 items-start">
+      <section className="glass-panel p-5 space-y-5" aria-labelledby="patient-form-title">
+        <div><h2 id="patient-form-title" className="font-semibold txt-main">{id ? 'Pilih Pasien SIMRS' : 'Select SIMRS Patient'}</h2><p className="text-xs txt-sec mt-1">{id ? 'Cari menggunakan nama atau nomor rekam medis.' : 'Search by patient name or medical record number.'}</p></div>
+        <label className="relative block"><span className="sr-only">{id ? 'Cari pasien' : 'Search patients'}</span><Search size={17} aria-hidden="true" className="pointer-events-none absolute left-3 top-1/2 z-10 -translate-y-1/2 txt-sec" /><input className="input-field input-field-with-icon" value={query} onChange={(event) => setQuery(event.target.value)} placeholder={id ? 'Nama pasien atau MRN' : 'Patient name or MRN'} /></label>
+        <div className="max-h-56 overflow-y-auto space-y-2" aria-busy={searching}>
+          {searching && !patients.length ? <div className="flex items-center gap-2 text-sm txt-sec"><Loader2 size={16} className="animate-spin" />{id ? 'Memuat pasien…' : 'Loading patients…'}</div> : patients.map((patient) => <button key={patient.id} type="button" onClick={() => void selectPatient(patient)} className={`w-full text-left rounded-xl border p-3 transition ${selected?.mrn === patient.mrn ? 'border-accent bg-accent/5' : 'border-base bg-card hover:border-accent/40'}`}>
+            <span className="flex items-center gap-2 font-medium txt-main"><UserRound size={15} />{patient.fullName}</span><span className="mt-1 block text-xs txt-sec">{patient.mrn} · {patient.active ? `${patient.roomName ?? patient.roomCode} · Bed ${patient.bedNumber ?? '—'}` : (id ? 'Tidak memiliki placement aktif' : 'No active placement')}</span>
+          </button>)}
+          {nextCursor && <button type="button" className="btn-secondary w-full" onClick={() => void loadPatients(nextCursor, true)} disabled={searching}>{id ? 'Muat lebih banyak' : 'Load more'}</button>}
         </div>
 
-        {/* Sidebar: patient queue + tray + actions */}
-        <aside className="w-full xl:w-96 shrink-0 space-y-4">
-          {/* Patient queue */}
-          <div className="glass-panel p-5 space-y-3">
-            <div className="flex items-center justify-between pb-3 border-b border-base">
-              <h3 className="font-bold text-xs txt-main flex items-center gap-2">
-                <MapPin size={16} className="text-warning" />
-                {t.patientList}
-              </h3>
-              <span className="text-[11px] txt-sec">
-                {filteredQueue.length} {t.roomCount}
-              </span>
-            </div>
-
-            <div className="relative">
-              <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 txt-sec" />
-              <input
-                className="input-field w-full pl-9 text-xs"
-                value={patientSearch}
-                onChange={(e) => setPatientSearch(e.target.value)}
-                placeholder={t.searchPatient}
-              />
-            </div>
-
-            {patientQueue.length > 0 && (
-              <div className="flex items-center gap-2 text-[11px]">
-                <button type="button" onClick={selectAllVisible} className="btn-ghost px-2 py-1">
-                  {t.selectAll}
-                </button>
-                <button
-                  type="button"
-                  onClick={clearSelection}
-                  disabled={!manifestActive}
-                  className="btn-ghost px-2 py-1 disabled:opacity-40 disabled:cursor-not-allowed"
-                >
-                  {t.clearSelection}
-                </button>
-                <span className={`ml-auto ${manifestActive ? 'text-accent' : 'txt-sec'}`}>
-                  {t.selectedCount.replace('{n}', String(selectedQueue.length))}
-                </span>
-              </div>
-            )}
-
-            <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
-              {filteredQueue.length === 0 ? (
-                <div className="p-6 text-center txt-sec text-xs italic bg-elevated rounded-xl border border-base">
-                  {t.selectPatient}
-                </div>
-              ) : (
-                filteredQueue.map((q) => {
-                  const active = q.requestCode === requestCode;
-                  const checked = q.requestCode in manifest;
-                  const wp = rowWaypointFor(q);
-                  return (
-                    <div
-                      key={q.requestCode}
-                      className={`p-3 rounded-xl border text-xs transition ${
-                        checked
-                          ? 'bg-accent/10 border-accent/40'
-                          : active
-                            ? 'bg-accent/5 border-accent/30'
-                            : 'bg-elevated border-base hover:border-accent/30'
-                      }`}
-                    >
-                      <div className="flex items-start gap-2">
-                        <input
-                          type="checkbox"
-                          className="mt-0.5 shrink-0"
-                          checked={checked}
-                          onChange={() => toggleManifest(q)}
-                          aria-label={q.patientName}
-                        />
-                        <button
-                          type="button"
-                          onClick={() => handleSelectPatient(q)}
-                          className="flex-1 text-left min-w-0"
-                        >
-                          <div className="flex items-center justify-between gap-2">
-                            <span className="font-semibold txt-main truncate">{q.patientName}</span>
-                            <span
-                              className={`text-[10px] px-2 py-0.5 rounded-full border whitespace-nowrap ${queueStatusTone(q.status)}`}
-                            >
-                              {q.statusLabel}
-                            </span>
-                          </div>
-                          <div className="txt-sec mt-1 flex flex-wrap gap-x-3 gap-y-0.5">
-                            <span>MRN: {q.patientMrn ?? '—'}</span>
-                            <span>{q.roomName ?? q.roomCode ?? '—'}</span>
-                            <span className="font-mono">{q.requestCode}</span>
-                          </div>
-                        </button>
-                      </div>
-                      {checked && (
-                        <div className="flex items-center gap-2 mt-2 pl-6">
-                          <span className="text-[10px] txt-sec">{t.compartmentPerRow}</span>
-                          <select
-                            value={manifest[q.requestCode] ?? ''}
-                            onChange={(e) =>
-                              setRowCompartment(q.requestCode, e.target.value === '' ? null : Number(e.target.value))
-                            }
-                            className="input-field py-1 px-2 text-[11px] font-mono"
-                          >
-                            <option value="">—</option>
-                            {COMPARTMENTS.map((n) => (
-                              <option key={n} value={n}>
-                                {n}
-                              </option>
-                            ))}
-                          </select>
-                          {!wp && (
-                            <span className="text-[10px] text-error">
-                              {t.unmappedRooms.replace('{rooms}', q.roomCode ?? '—')}
-                            </span>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })
-              )}
-            </div>
+        {selected && <div className="space-y-4 border-t border-base pt-4">
+          <div className="grid grid-cols-2 gap-3 text-sm">
+            <Info label={id ? 'Ruangan otomatis' : 'Automatic room'} value={selected.roomName ?? selected.roomCode ?? '—'} ok={Boolean(selected.roomCode)} />
+            <Info label={id ? 'Kasur otomatis' : 'Automatic bed'} value={selected.bedNumber ? `Bed ${selected.bedNumber}` : '—'} ok={Boolean(selected.bedId)} />
+            <Info label={id ? 'Waypoint kasur' : 'Bed waypoint'} value={selectedWaypoint?.name ?? (id ? 'Belum dikonfigurasi' : 'Not configured')} ok={Boolean(selectedWaypoint)} />
+            <Info label={id ? 'Sumber misi' : 'Mission source'} value={requestCode ? 'Request SIMRS' : (id ? 'Manual SIMRS' : 'Manual SIMRS')} ok />
           </div>
+          {!selectedWaypoint && <p className="rounded-lg bg-warning/10 p-3 text-xs text-warning">{id ? 'Waypoint kasur pasien belum dikonfigurasi.' : 'The patient bed waypoint has not been configured.'} <Link href="/maps" className="underline font-semibold">{id ? 'Buka Peta & Waypoint' : 'Open Maps & Waypoints'}</Link></p>}
+          <div><label className="text-xs font-medium txt-sec" htmlFor="delivery-request">{id ? 'Request pengiriman' : 'Delivery request'}</label><select id="delivery-request" className="input-field mt-1" value={requestCode} onChange={(event) => setRequestCode(event.target.value)}><option value="">{id ? 'Tanpa request — misi manual' : 'No request — manual mission'}</option>{selected.activeDeliveries.map((delivery) => <option key={delivery.requestCode} value={delivery.requestCode}>{delivery.requestCode} · {delivery.statusLabel ?? delivery.status}</option>)}</select></div>
+          <div><label className="text-xs font-medium txt-sec" htmlFor="compartment">{id ? 'Kompartemen' : 'Compartment'}</label><select id="compartment" className="input-field mt-1" value={compartment ?? ''} onChange={(event) => setCompartment(event.target.value === '' ? null : Number(event.target.value))}><option value="">{id ? 'Pilih kompartemen' : 'Select compartment'}</option>{Array.from({ length: compartmentCount }, (_, index) => <option key={index} value={index} disabled={usedCompartments.has(index)}>#{index + 1}{usedCompartments.has(index) ? ` · ${id ? 'digunakan' : 'in use'}` : ''}</option>)}</select></div>
+          <button type="button" className="btn-primary w-full inline-flex items-center justify-center gap-2" onClick={addToManifest} disabled={!placementValid || !selectedWaypoint || compartment === null || selectedAlreadyAdded}><Package size={17} />{id ? 'Tambah ke Manifest' : 'Add to Manifest'}</button>
+        </div>}
+      </section>
 
-          {/* Tray picker — hanya untuk mode manual; manifest atur kompartemen per baris */}
-          {!manifestActive && (
-            <div className="glass-panel p-5 space-y-3">
-              <div className="flex items-center gap-2 pb-3 border-b border-base">
-                <Package size={16} className="text-accent" />
-                <h3 className="font-bold text-xs txt-main">{t.selectTray}</h3>
-              </div>
-              <p className="text-[11px] txt-sec">{t.trayHint}</p>
-              <div className="grid grid-cols-6 gap-2">
-                {COMPARTMENTS.map((n) => (
-                  <button
-                    key={n}
-                    type="button"
-                    onClick={() => setCompartmentNo(n)}
-                    className={`py-2 rounded-lg text-xs font-mono font-bold border transition ${
-                      compartmentNo === n
-                        ? 'bg-accent/15 text-accent border-accent/40'
-                        : 'bg-elevated txt-sec border-base hover:border-accent/40'
-                    }`}
-                  >
-                    {n}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Request code + target + actions */}
-          <div className="glass-panel p-5 space-y-3">
-            {!manifestActive && (
-              <>
-                <div className="space-y-1.5">
-                  <label className="block text-[11px] txt-sec">{t.selectRoom}</label>
-                  <input
-                    className="input-field w-full font-mono text-xs"
-                    value={requestCode}
-                    onChange={(e) => setRequestCode(e.target.value)}
-                    placeholder={t.placeholderReq}
-                  />
-                  <p className="text-[10px] txt-sec opacity-70">{t.requestCodeHint}</p>
-                </div>
-              </>
-            )}
-
-            {manifestActive && (
-              <div className="p-3 rounded-xl bg-elevated border border-base text-xs space-y-1">
-                <div className="flex items-center gap-2 font-semibold txt-main">
-                  <CheckCircle2 size={14} className="text-success" />
-                  {t.manifestTitle}
-                </div>
-                <div className="txt-sec">{t.selectedCount.replace('{n}', String(selectedQueue.length))}</div>
-                <ul className="txt-sec space-y-0.5">
-                  {selectedQueue.map((q) => (
-                    <li key={q.requestCode} className="flex items-center justify-between gap-2">
-                      <span className="truncate">{q.patientName}</span>
-                      <span className="font-mono shrink-0">{manifest[q.requestCode] ?? '—'}</span>
-                    </li>
-                  ))}
-                </ul>
-                <p className="text-[10px] txt-sec opacity-70">{t.manifestHint}</p>
-              </div>
-            )}
-
-            {controlUnavailable && (
-              <div className="text-[11px] px-3 py-2 rounded-lg bg-error/10 text-error border border-error/30">
-                {t.needConnection}
-              </div>
-            )}
-
-            {manifestError && (
-              <div className="text-[11px] px-3 py-2 rounded-lg bg-error/10 text-error border border-error/30">
-                {manifestError}
-              </div>
-            )}
-
-            {manifestActive && telemetry.status !== 'IDLE' && (
-              <div className="text-[11px] px-3 py-2 rounded-lg bg-warning/10 text-warning border border-warning/30">
-                {t.queueHint}
-              </div>
-            )}
-
-            {!manifestActive && (selectedWaypoint ? (
-              <div className="p-3 rounded-xl bg-elevated border border-base text-xs space-y-1.5">
-                <div className="flex items-center gap-2 font-semibold txt-main">
-                  <CheckCircle2 size={14} className="text-success" />
-                  {t.target}
-                </div>
-                <div className="txt-sec">
-                  {t.selectWaypoint}: <span className="font-mono txt-main">{selectedWaypoint.name}</span>
-                  {selectedWaypoint.room_code ? ` (${selectedWaypoint.room_code})` : ''}
-                </div>
-                {selectedRoomCode && (
-                  <div className="txt-sec">
-                    {t.selectRoom}: <span className="font-mono txt-main">{requestCode || selectedRoomCode}</span>
-                  </div>
-                )}
-                {compartmentNo !== null && (
-                  <div className="txt-sec">
-                    {t.selectTray}: <span className="font-mono txt-main">{compartmentNo}</span>
-                  </div>
-                )}
-                {waypointDistance !== null && (
-                  <div className="txt-sec">
-                    {t.distance}:{' '}
-                    <span className="font-mono txt-main">{waypointDistance.toFixed(2)} m</span>
-                  </div>
-                )}
-              </div>
-            ) : (
-              <div className="p-4 text-center txt-sec text-xs italic bg-elevated rounded-xl border border-base">
-                {t.selectTargetFirst}
-              </div>
-            ))}
-
-            <button
-              type="button"
-              disabled={submitting || (manifestActive && !!manifestError)}
-              onClick={() => setConfirmModalOpen(true)}
-              className="btn-primary w-full py-3.5 text-sm font-bold flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              <Navigation size={16} />{' '}
-              {manifestActive ? t.batchSubmit.replace('{n}', String(selectedQueue.length)) : t.submit}
-            </button>
-
-            <button
-              type="button"
-              onClick={handleCancel}
-              disabled={!telemetry.activeMissionId}
-              className="btn-danger w-full py-3 text-xs font-semibold flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
-            >
-              <XCircle size={14} /> {t.cancelActive}
-            </button>
-          </div>
-        </aside>
-      </div>
-
-      {/* Confirm modal */}
-      {confirmModalOpen && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="glass-panel p-6 w-full max-w-md space-y-4">
-            <div className="flex items-center justify-between">
-              <h3 className="font-bold txt-main text-sm flex items-center gap-2">
-                <Navigation size={16} className="text-accent" /> {t.submit}
-              </h3>
-              <button
-                onClick={() => setConfirmModalOpen(false)}
-                className="txt-sec hover:txt-main transition"
-                aria-label="close"
-              >
-                <X size={16} />
-              </button>
-            </div>
-
-            <div className="text-xs space-y-1.5 txt-sec bg-elevated rounded-xl border border-base p-3">
-              {manifestActive ? (
-                <>
-                  <div className="font-semibold txt-main">{t.manifestTitle}</div>
-                  {selectedQueue.map((q) => {
-                    const wp = rowWaypointFor(q);
-                    return (
-                      <div key={q.requestCode} className="flex items-center justify-between gap-2">
-                        <span className="truncate">
-                          {q.patientName} · <span className="font-mono">{q.roomCode ?? '—'}</span>
-                        </span>
-                        <span className="font-mono shrink-0">
-                          {t.compartmentPerRow} {manifest[q.requestCode] ?? '—'}
-                          {!wp && <span className="text-error"> !</span>}
-                        </span>
-                      </div>
-                    );
-                  })}
-                  {manifestError && <div className="text-error pt-1">{manifestError}</div>}
-                </>
-              ) : (
-                selectedWaypoint && (
-                  <>
-                    <div>
-                      {t.selectWaypoint}: <span className="font-mono txt-main">{selectedWaypoint.name}</span>
-                    </div>
-                    {requestCode.trim() && (
-                      <div>
-                        {t.selectRoom}: <span className="font-mono txt-main">{requestCode.trim()}</span>
-                      </div>
-                    )}
-                    {compartmentNo !== null && (
-                      <div>
-                        {t.selectTray}: <span className="font-mono txt-main">{compartmentNo}</span>
-                      </div>
-                    )}
-                  </>
-                )
-              )}
-            </div>
-
-            <div className="p-3 rounded-xl bg-warning/10 border border-warning/30 text-warning text-xs flex items-start gap-2">
-              <ShieldAlert size={14} className="shrink-0 mt-0.5" />
-              <span>{t.simWarning}</span>
-            </div>
-
-            <div className="flex justify-end gap-2">
-              <button type="button" onClick={() => setConfirmModalOpen(false)} className="btn-ghost px-4 py-2 text-xs">
-                {dict.create.cancelActive}
-              </button>
-              <button
-                type="button"
-                onClick={handleConfirmDispatch}
-                disabled={submitting}
-                className="btn-primary px-4 py-2 text-xs font-bold flex items-center gap-2 disabled:opacity-50"
-              >
-                <Play size={14} />{' '}
-                {submitting
-                  ? t.submitting
-                  : manifestActive
-                    ? t.batchSubmit.replace('{n}', String(selectedQueue.length))
-                    : t.submit}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <section className="glass-panel overflow-hidden min-h-[420px]" aria-label={id ? 'Peta ROS aktif' : 'Active ROS map'}>
+        {map ? <MapViewer meta={map} waypoints={waypoints} selectedWaypointId={selectedWaypoint?.id ?? null} onSelectWaypoint={() => {}} onPickCoordinate={() => {}} robotPose={selectedRobotHasTelemetry ? telemetry.pose : null} /> : <div className="min-h-[420px] grid place-items-center p-8 text-center txt-sec"><div><MapPin size={30} className="mx-auto mb-3" /><p>{id ? 'Peta ROS aktif belum tersedia.' : 'No active ROS map is available.'}</p></div></div>}
+      </section>
     </div>
-  );
+
+    <section className="glass-panel p-5 sm:p-6 space-y-4" aria-labelledby="manifest-title">
+      <div className="flex flex-wrap items-center justify-between gap-3"><div><h2 id="manifest-title" className="font-semibold txt-main">{id ? 'Manifest Pasien' : 'Patient Manifest'}</h2><p className="text-xs txt-sec mt-1">{manifest.length} {id ? 'tujuan kasur individual' : 'individual bed destinations'}</p></div><span className={`status-pill ${selectedRobotConnected && telemetry.status === 'IDLE' ? 'status-success' : 'status-warning'}`}>{telemetry.name} · {telemetry.status}</span></div>
+      {!manifest.length ? <div className="rounded-xl border border-dashed border-base p-8 text-center txt-sec"><BedDouble size={28} className="mx-auto mb-2" /><p>{id ? 'Belum ada pasien dalam manifest.' : 'No patients in the manifest yet.'}</p></div> : <div className="space-y-2">{manifest.map((item, index) => <article key={item.mrn} className={`grid grid-cols-1 md:grid-cols-[auto_minmax(0,1fr)_minmax(150px,0.3fr)_auto] gap-3 items-center rounded-xl border bg-card p-3 ${item.isInfectious ? 'border-base' : 'border-error/50 bg-error/5'}`}>
+        <span className="grid h-8 w-8 place-items-center rounded-lg bg-accent/10 text-sm font-bold text-accent">{index + 1}</span><div className="min-w-0"><p className="font-medium txt-main truncate">{item.fullName} <span className="font-normal txt-sec">· {item.mrn}</span></p><p className="text-xs txt-sec">{item.roomName ?? item.roomCode} · Bed {item.bedNumber} · {item.waypoint.name}</p><p className="text-[11px] mt-1 text-accent">{item.requestCode ? `SIMRS ${item.requestCode}` : (id ? 'Misi manual tanpa write-back' : 'Manual mission without write-back')}</p></div><select aria-label={`${id ? 'Kompartemen' : 'Compartment'} ${item.fullName}`} className="input-field" value={item.compartmentNo} onChange={(event) => updateCompartment(item.mrn, Number(event.target.value))}>{Array.from({ length: compartmentCount }, (_, value) => <option key={value} value={value} disabled={manifest.some((other) => other.mrn !== item.mrn && other.compartmentNo === value)}>#{value + 1}</option>)}</select><button type="button" className="p-2 text-error" aria-label={`${id ? 'Hapus' : 'Remove'} ${item.fullName}`} onClick={() => setManifest((current) => current.filter((row) => row.mrn !== item.mrn))}><Trash2 size={18} /></button>
+        {!item.isInfectious && <p className="md:col-start-2 md:col-span-2 text-xs font-medium text-error">{id ? 'Tidak valid: flag penyakit menular tidak aktif atau tidak dapat diverifikasi.' : 'Invalid: infectious-disease flag is inactive or cannot be verified.'}</p>}
+      </article>)}</div>}
+      <div className="flex flex-col sm:flex-row justify-between gap-3 border-t border-base pt-4"><p className="text-xs txt-sec max-w-xl">{id ? 'Backend akan memeriksa ulang flag penyakit menular, placement pasien, dan waypoint peta aktif sebelum dispatch. Setiap pasien dibuat sebagai misi individual dalam satu manifest.' : 'The backend revalidates the infectious-disease flag, patient placement, and active-map waypoint before dispatch. Each patient becomes an individual mission within one manifest.'}</p><div className="flex gap-2">{telemetry.activeMissionId && <button type="button" className="btn-secondary inline-flex items-center gap-2" onClick={cancelActive}><XCircle size={17} />{id ? 'Batalkan Misi Aktif' : 'Cancel Active Mission'}</button>}<button type="button" className="btn-primary inline-flex items-center justify-center gap-2" onClick={() => void dispatch()} disabled={!manifest.length || !manifestValid || submitting || !selectedRobotConnected || telemetry.status !== 'IDLE'}>{submitting ? <Loader2 size={17} className="animate-spin" /> : <Send size={17} />}{id ? 'Kirim Manifest' : 'Dispatch Manifest'}</button></div></div>
+    </section>
+  </div>;
 }
 
-export default function MissionCreatePage() {
-  return (
-    <Suspense>
-      <CreateContent />
-    </Suspense>
-  );
+function Info({ label, value, ok }: { label: string; value: string; ok: boolean }) {
+  return <div className="rounded-xl bg-elevated p-3"><p className="text-[11px] txt-sec">{label}</p><p className="mt-1 flex items-center gap-1.5 text-xs font-semibold txt-main">{ok ? <CheckCircle2 size={13} className="text-success" /> : <XCircle size={13} className="text-error" />}{value}</p></div>;
+}
+
+export default function CreateMissionPage() {
+  return <Suspense fallback={<div className="skeleton h-[520px] mt-8" />}><NavigationContent /></Suspense>;
 }

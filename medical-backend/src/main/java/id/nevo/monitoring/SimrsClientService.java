@@ -10,11 +10,13 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import jakarta.annotation.PostConstruct;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
+import org.springframework.context.annotation.DependsOn;
 
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.io.InputStream;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.*;
@@ -24,6 +26,7 @@ import java.security.MessageDigest;
 
 /** Single server-to-server adapter for the FINAL HTTP SIMRS contract. */
 @Service
+@DependsOn("simrsAdminService")
 public class SimrsClientService {
     private static final Logger log = LoggerFactory.getLogger(SimrsClientService.class);
     private static final String TOKEN_HEADER = "x-monitoring-token";
@@ -31,6 +34,7 @@ public class SimrsClientService {
     private static final String SNAPSHOT = "/api/v1/monitoring/snapshot";
     private static final String ACTIVE = "/api/v1/monitoring/active-deliveries";
     private static final String PATIENT = "/api/v1/monitoring/patient/";
+    private static final String PATIENTS = "/api/v1/monitoring/patients";
     private static final String DELIVERY_STATUS = "/api/v1/monitoring/delivery-status";
     private static final Set<String> MONITORING_STATUSES = Set.of(
             "DELIVERY_REQUESTED", "PENDING_INTEGRATION", "MOCK_IN_TRANSIT", "MOCK_ARRIVED_AT_ROOM", "CANCELLED");
@@ -38,6 +42,7 @@ public class SimrsClientService {
     private final SimrsProperties properties;
     private final JdbcTemplate db;
     private final HttpClient httpClient;
+    private final SimrsDestinationPolicy destinationPolicy;
     private final ObjectMapper json = new ObjectMapper();
     private final ObjectMapper yaml = new ObjectMapper(new YAMLFactory());
     private volatile Instant lastSyncTime;
@@ -47,14 +52,17 @@ public class SimrsClientService {
     private volatile List<Map<String, Object>> cachedActiveDeliveries = List.of();
 
     @Autowired
-    public SimrsClientService(SimrsProperties properties, JdbcTemplate db) {
+    public SimrsClientService(SimrsProperties properties, JdbcTemplate db, SimrsDestinationPolicy destinationPolicy) {
         this.properties = properties;
         this.db = db;
+        this.destinationPolicy = destinationPolicy;
+        properties.captureBootstrapBaseUrl();
         this.httpClient = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofMillis(Math.max(1, properties.getConnectTimeoutMs())))
                 // HTTP/1.1 eksplisit: server SIMRS (Node/Next.js dev) menutup koneksi
                 // bila HttpClient mencoba upgrade h2c ("header parser received no bytes").
                 .version(HttpClient.Version.HTTP_1_1)
+                .followRedirects(HttpClient.Redirect.NEVER)
                 .build();
     }
 
@@ -66,8 +74,12 @@ public class SimrsClientService {
         this.properties.setEnabled(enabled);
         this.properties.setWriteEnabled(writeEnabled);
         this.properties.setPollIntervalSeconds(pollInterval);
+        this.properties.setAllowedHosts("localhost,mock.invalid");
+        this.properties.setAllowPrivateNetworks(true);
+        this.properties.captureBootstrapBaseUrl();
         this.db = null;
-        this.httpClient = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).version(HttpClient.Version.HTTP_1_1).build();
+        this.destinationPolicy = new SimrsDestinationPolicy(this.properties);
+        this.httpClient = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).version(HttpClient.Version.HTTP_1_1).followRedirects(HttpClient.Redirect.NEVER).build();
     }
 
     @PostConstruct
@@ -171,6 +183,31 @@ public class SimrsClientService {
     }
 
     private String classify(int status) { return status == 401 || status == 403 ? "AUTH_ERROR" : "DISCONNECTED"; }
+
+    /** Read-only contract check for a candidate URL. Does not mutate active configuration. */
+    public Map<String, Object> testConnection(String candidateBaseUrl) {
+        URI candidate = destinationPolicy.validate(candidateBaseUrl);
+        try {
+            SimrsResponse response = sendTo(candidate, "GET", MAPPING, null, "application/yaml");
+            if (response.statusCode() == 401 || response.statusCode() == 403) throw new IllegalStateException("Token SIMRS ditolak");
+            if (response.statusCode() >= 300) throw new IllegalStateException("SIMRS mengembalikan HTTP " + response.statusCode());
+            JsonNode root = yaml.readTree(response.body());
+            validateLiveMapping(root);
+            return Map.of("status", "CONNECTED", "checkedAt", Instant.now().toString());
+        } catch (IllegalArgumentException ex) {
+            throw new IllegalStateException("Respons SIMRS tidak sesuai kontrak");
+        } catch (IllegalStateException ex) {
+            throw ex;
+        } catch (Exception ex) {
+            throw new IllegalStateException("SIMRS tidak dapat dihubungi");
+        }
+    }
+
+    public synchronized void configurationChanged() {
+        lastSyncStatus = "NOT_SYNCED";
+        lastSyncTime = null;
+        pollAll();
+    }
 
     private void validateSnapshot(JsonNode root) {
         if (!root.isObject() || !root.path("patients").isArray() || !root.path("deliveries").isArray() || !root.path("rooms").isArray()) {
@@ -277,17 +314,29 @@ public class SimrsClientService {
     public List<Map<String, Object>> getLiveRooms() {
         if (db == null) return List.of();
         String source = db.query("SELECT status FROM m_simrs_integration_state WHERE id=true", rs -> rs.next() && "CONNECTED".equals(rs.getString("status"))) ? "SIMRS Live" : "Cached / Stale";
-        List<Map<String, Object>> rooms = db.query("SELECT r.room_code,r.room_name,r.ward_code,r.ward_name,r.floor,r.beds,r.last_seen_at,w.id AS waypoint_id FROM m_simrs_room_directory r LEFT JOIN m_waypoint w ON w.room_code=r.room_code AND w.map_id IN (SELECT id FROM m_mapping_import WHERE kind='ROS' AND active=true) WHERE r.available=true ORDER BY r.ward_code,r.room_code", (rs, n) -> {
-            Map<String, Object> row = new LinkedHashMap<>(); row.put("roomCode", rs.getString("room_code")); row.put("name", rs.getString("room_name")); row.put("wardCode", rs.getString("ward_code")); row.put("wardName", rs.getString("ward_name")); row.put("floor", rs.getInt("floor")); row.put("beds", rs.getString("beds")); row.put("lastSeenAt", rs.getTimestamp("last_seen_at")); row.put("waypointId", rs.getObject("waypoint_id")); row.put("availableInSimrs", true); row.put("source", source); return row;
+        List<Map<String, Object>> rooms = db.query("SELECT r.room_code,r.room_name,r.ward_code,r.ward_name,r.floor,r.beds,r.last_seen_at," +
+                "(SELECT count(*) FROM m_waypoint w JOIN m_mapping_import m ON m.id=w.map_id AND m.kind='ROS' AND m.active=true WHERE w.room_code=r.room_code AND w.enabled=true) AS waypoint_count " +
+                "FROM m_simrs_room_directory r WHERE r.available=true ORDER BY r.ward_code,r.room_code", (rs, n) -> {
+            Map<String, Object> row = new LinkedHashMap<>(); row.put("roomCode", rs.getString("room_code")); row.put("name", rs.getString("room_name")); row.put("wardCode", rs.getString("ward_code")); row.put("wardName", rs.getString("ward_name")); row.put("floor", rs.getInt("floor")); row.put("beds", parseJsonArray(rs.getString("beds"))); row.put("lastSeenAt", rs.getTimestamp("last_seen_at")); row.put("waypointCount", rs.getInt("waypoint_count")); row.put("availableInSimrs", true); row.put("source", source); return row;
         });
         for (Map<String, Object> row : rooms) {
-            Object waypointId = row.get("waypointId");
-            row.put("waypointStatus", waypointId == null ? "Belum dipetakan" : "Terpetakan");
+            int waypointCount = ((Number) row.get("waypointCount")).intValue();
+            row.put("waypointStatus", waypointCount == 0 ? "Belum dipetakan" : "Terpetakan");
         }
         rooms.addAll(db.query("SELECT DISTINCT w.room_code,w.name FROM m_waypoint w JOIN m_mapping_import m ON m.id=w.map_id AND m.kind='ROS' AND m.active=true WHERE NOT EXISTS (SELECT 1 FROM m_simrs_room_directory r WHERE r.room_code=w.room_code AND r.available=true)", (rs, n) -> {
             Map<String, Object> row = new LinkedHashMap<>(); row.put("roomCode", rs.getString("room_code")); row.put("name", rs.getString("name")); row.put("wardCode", null); row.put("wardName", null); row.put("floor", null); row.put("availableInSimrs", false); row.put("source", "Local waypoint"); row.put("waypointStatus", "Perlu rekonsiliasi"); row.put("navigable", false); return row;
         }));
         return rooms;
+    }
+
+    private List<?> parseJsonArray(String raw) {
+        try {
+            JsonNode node = json.readTree(raw);
+            return node != null && node.isArray() ? json.convertValue(node, List.class) : List.of();
+        } catch (Exception ex) {
+            log.warn("Beds SIMRS tidak dapat dibaca dari cache: {}", safeMessage(ex));
+            return List.of();
+        }
     }
 
     /** write live = tulis diaktifkan DAN SIMRS terkonfigurasi (URL + token valid). Dipakai robot sebelum push. */
@@ -336,6 +385,21 @@ public class SimrsClientService {
         return getJson(SNAPSHOT + query);
     }
     public JsonNode getPatient(String mrn) { return getJson(PATIENT + URLEncoder.encode(mrn, StandardCharsets.UTF_8)); }
+    public JsonNode getPatients(String query, String cursor, int limit) {
+        StringBuilder path = new StringBuilder(PATIENTS).append("?infectiousOnly=true&limit=").append(Math.max(1, Math.min(limit, 100)));
+        if (query != null && !query.isBlank()) path.append("&query=").append(URLEncoder.encode(query.trim(), StandardCharsets.UTF_8));
+        if (cursor != null && !cursor.isBlank()) path.append("&cursor=").append(URLEncoder.encode(cursor.trim(), StandardCharsets.UTF_8));
+        JsonNode response = getJson(path.toString());
+        JsonNode patients = response.path("patients");
+        if (!patients.isArray()) throw new IllegalStateException("Daftar pasien SIMRS tidak sesuai kontrak");
+        for (JsonNode patient : patients) {
+            JsonNode flag = patient.get("isInfectious");
+            if (flag == null || !flag.isBoolean() || !flag.asBoolean()) {
+                throw new IllegalStateException("Filter penyakit menular SIMRS tidak dapat diverifikasi");
+            }
+        }
+        return response;
+    }
 
     public List<Map<String, Object>> getActiveDeliveries() {
         if (db == null) return cachedActiveDeliveries;
@@ -372,7 +436,7 @@ public class SimrsClientService {
                 if (note != null && !note.isBlank()) body.put("note", note);
                 if (compartmentNo != null) body.put("compartmentNo", compartmentNo);
                 if (idempotencyKey != null) body.put("idempotencyKey", idempotencyKey);
-                HttpResponse<String> response = send("POST", DELIVERY_STATUS, json.writeValueAsString(body), "application/json");
+                SimrsResponse response = send("POST", DELIVERY_STATUS, json.writeValueAsString(body), "application/json");
                 int code = response.statusCode();
                 Map<String, Object> result = new LinkedHashMap<>();
                 result.put("httpStatus", code);
@@ -419,22 +483,34 @@ public class SimrsClientService {
         catch (Exception ex) { throw new IllegalStateException("SIMRS read API tidak tersedia", ex); }
     }
     private String getText(String path, String accept) throws Exception {
-        HttpResponse<String> response = request("GET", path, null, accept);
+        SimrsResponse response = request("GET", path, null, accept);
         if (response.statusCode() >= 300) throw new HttpStatusException(response.statusCode());
         return response.body();
     }
-    private HttpResponse<String> request(String method, String path, String body, String accept) throws Exception {
-        HttpResponse<String> response = send(method, path, body, accept);
+    private SimrsResponse request(String method, String path, String body, String accept) throws Exception {
+        SimrsResponse response = send(method, path, body, accept);
         if (response.statusCode() >= 300) throw new HttpStatusException(response.statusCode());
         return response;
     }
 
     /** Varian tanpa lempar untuk POST delivery-status: pemanggil inspeksi kode status sendiri (kebutuhan retry kontrak §1.1). */
-    private HttpResponse<String> send(String method, String path, String body, String accept) throws Exception {
-        HttpRequest.Builder builder = HttpRequest.newBuilder().uri(URI.create(properties.normalizedBaseUrl() + path)).timeout(Duration.ofMillis(Math.max(1, properties.getReadTimeoutMs())))
+    private SimrsResponse send(String method, String path, String body, String accept) throws Exception {
+        URI base = destinationPolicy.validate(properties.normalizedBaseUrl());
+        return sendTo(base, method, path, body, accept);
+    }
+
+    private SimrsResponse sendTo(URI base, String method, String path, String body, String accept) throws Exception {
+        HttpRequest.Builder builder = HttpRequest.newBuilder().uri(URI.create(base.toString().replaceAll("/+$", "") + path)).timeout(Duration.ofMillis(Math.max(1, properties.getReadTimeoutMs())))
                 .header(TOKEN_HEADER, properties.getMonitoringToken()).header("Accept", accept);
         if ("POST".equals(method)) builder.header("Content-Type", "application/json").POST(HttpRequest.BodyPublishers.ofString(body)); else builder.GET();
-        return httpClient.send(builder.build(), HttpResponse.BodyHandlers.ofString());
+        HttpResponse<InputStream> response = httpClient.send(builder.build(), HttpResponse.BodyHandlers.ofInputStream());
+        int max = Math.max(1024, properties.getMaxResponseBytes());
+        byte[] bytes;
+        try (InputStream input = response.body()) {
+            bytes = input.readNBytes(max + 1);
+        }
+        if (bytes.length > max) throw new IllegalStateException("Respons SIMRS melebihi batas ukuran");
+        return new SimrsResponse(response.statusCode(), new String(bytes, StandardCharsets.UTF_8));
     }
     private static boolean blank(String value) { return value == null || value.isBlank(); }
     private static String safeHost(String raw) { try { return raw == null || raw.isBlank() ? null : URI.create(raw).getHost(); } catch (Exception e) { return null; } }
@@ -444,5 +520,7 @@ public class SimrsClientService {
         private final int statusCode;
         private HttpStatusException(int statusCode) { this.statusCode = statusCode; }
     }
+
+    private record SimrsResponse(int statusCode, String body) { }
 
 }

@@ -25,6 +25,7 @@ export interface WaypointItem {
   id: string;
   map_id: string;
   room_code: string | null;
+  bed_id: string | null;
   name: string;
   x: number;
   y: number;
@@ -206,7 +207,7 @@ export default function MapViewer({
     ctx.clearRect(0, 0, rect.width, rect.height);
 
     // Background pattern
-    ctx.fillStyle = '#0f172a'; // Deep slate dark mode for contrast
+    ctx.fillStyle = '#F3F3F5'; // Neutral surface around the actual occupancy map
     ctx.fillRect(0, 0, rect.width, rect.height);
 
     const mapW = meta.width ?? 0;
@@ -227,7 +228,7 @@ export default function MapViewer({
       // 1. Metric Grid overlay (1 meter spacing)
       if (showGrid) {
         const pxPerMeter = 1.0 / res;
-        ctx.strokeStyle = 'rgba(56, 189, 248, 0.15)'; // cyan subtle
+        ctx.strokeStyle = 'rgba(88, 88, 91, 0.12)'; // subtle neutral grid
         ctx.lineWidth = 1 / scale;
 
         ctx.beginPath();
@@ -243,7 +244,7 @@ export default function MapViewer({
 
         // 5-meter major grid lines
         const pxPer5M = 5.0 / res;
-        ctx.strokeStyle = 'rgba(56, 189, 248, 0.35)';
+        ctx.strokeStyle = 'rgba(88, 88, 91, 0.25)';
         ctx.lineWidth = 1.5 / scale;
         ctx.beginPath();
         for (let x = 0; x <= mapW; x += pxPer5M) {
@@ -318,17 +319,17 @@ export default function MapViewer({
 
       // Selected pulsating ring
       if (isSelected) {
-        ctx.strokeStyle = '#38bdf8';
+        ctx.strokeStyle = '#EC1C24';
         ctx.lineWidth = 3;
         ctx.beginPath();
         ctx.arc(0, 0, 16, 0, 2 * Math.PI);
         ctx.stroke();
-        ctx.fillStyle = 'rgba(56, 189, 248, 0.2)';
+        ctx.fillStyle = 'rgba(179, 68, 68, 0.15)';
         ctx.fill();
       }
 
       // Base pin dot
-      const pinColor = !wp.enabled ? '#64748b' : isSelected ? '#0284c7' : '#2563eb';
+      const pinColor = !wp.enabled ? '#64748b' : isSelected ? '#B34444' : '#B34444';
       ctx.fillStyle = pinColor;
       ctx.strokeStyle = '#ffffff';
       ctx.lineWidth = 2;
@@ -344,7 +345,7 @@ export default function MapViewer({
       const endX = Math.cos(canvasYaw) * arrowLen;
       const endY = Math.sin(canvasYaw) * arrowLen;
 
-      ctx.strokeStyle = isSelected ? '#38bdf8' : '#ffffff';
+      ctx.strokeStyle = isSelected ? '#EC1C24' : '#ffffff';
       ctx.lineWidth = 2.5;
       ctx.beginPath();
       ctx.moveTo(0, 0);
@@ -373,9 +374,9 @@ export default function MapViewer({
         const textWidth = ctx.measureText(labelText).width;
 
         // Label background pill
-        ctx.fillStyle = isSelected ? 'rgba(2, 132, 199, 0.95)' : 'rgba(15, 23, 42, 0.85)';
+        ctx.fillStyle = isSelected ? 'rgba(179, 68, 68, 0.95)' : 'rgba(15, 23, 42, 0.85)';
         ctx.fillRect(-textWidth / 2 - 6, -26, textWidth + 12, 18);
-        ctx.strokeStyle = isSelected ? '#38bdf8' : 'rgba(255,255,255,0.2)';
+        ctx.strokeStyle = isSelected ? '#EC1C24' : 'rgba(255,255,255,0.2)';
         ctx.lineWidth = 1;
         ctx.strokeRect(-textWidth / 2 - 6, -26, textWidth + 12, 18);
 
@@ -395,19 +396,19 @@ export default function MapViewer({
       ctx.translate(screenX, screenY);
 
       // Radar pulse
-      ctx.strokeStyle = 'rgba(56, 189, 248, 0.45)';
+      ctx.strokeStyle = 'rgba(179, 68, 68, 0.4)';
       ctx.lineWidth = 3;
       ctx.beginPath();
       ctx.arc(0, 0, 20, 0, 2 * Math.PI);
       ctx.stroke();
 
-      ctx.fillStyle = 'rgba(14, 165, 233, 0.2)';
+      ctx.fillStyle = 'rgba(236, 28, 36, 0.15)';
       ctx.beginPath();
       ctx.arc(0, 0, 15, 0, 2 * Math.PI);
       ctx.fill();
 
       // Chassis
-      ctx.fillStyle = '#0284c7';
+      ctx.fillStyle = '#B34444';
       ctx.strokeStyle = '#ffffff';
       ctx.lineWidth = 2.5;
       ctx.beginPath();
@@ -418,7 +419,7 @@ export default function MapViewer({
       // Heading beam
       const robotYaw = -robotPose.yaw;
       const beamLen = 24;
-      ctx.strokeStyle = '#38bdf8';
+      ctx.strokeStyle = '#EC1C24';
       ctx.lineWidth = 3;
       ctx.beginPath();
       ctx.moveTo(0, 0);
@@ -429,10 +430,10 @@ export default function MapViewer({
       ctx.font = 'bold 10px sans-serif';
       ctx.fillStyle = 'rgba(15, 23, 42, 0.9)';
       ctx.fillRect(-24, -32, 48, 16);
-      ctx.strokeStyle = '#38bdf8';
+      ctx.strokeStyle = '#EC1C24';
       ctx.lineWidth = 1;
       ctx.strokeRect(-24, -32, 48, 16);
-      ctx.fillStyle = '#38bdf8';
+      ctx.fillStyle = '#EC1C24';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.fillText('NEVO-01', 0, -24);
@@ -550,7 +551,7 @@ export default function MapViewer({
   return (
     <div
       ref={containerRef}
-      className="relative w-full h-[580px] bg-card rounded-2xl overflow-hidden shadow-xl border border-base flex flex-col select-none"
+      className="map-viewer relative w-full bg-card rounded-2xl overflow-hidden shadow-xl border border-base flex flex-col select-none"
     >
       {/* Top Controls Toolbar */}
       <div className="absolute top-3 left-3 z-10 flex flex-wrap items-center gap-1.5 bg-elevated/90 backdrop-blur-md p-1.5 rounded-xl border border-base shadow-lg txt-main">
@@ -615,7 +616,7 @@ export default function MapViewer({
       </div>
 
       {/* Top Right Badges */}
-      <div className="absolute top-3 right-3 z-10 flex items-center gap-2">
+      <div className="absolute bottom-20 right-3 left-3 z-10 flex flex-wrap justify-end items-center gap-2 pointer-events-none">
         <span className={`text-xs px-2.5 py-1 rounded-full font-medium flex items-center gap-1 backdrop-blur-md border ${telemetry.simulated ? 'bg-warning/10 text-warning border-warning/30' : 'bg-success/15 text-success border-success/30'}`}>
           <Compass size={13} /> {telemetry.simulated ? dict.common.simulated : dict.common.live}
         </span>

@@ -5,6 +5,7 @@ const sessionManager = require('./session-manager');
 const kafkaProducer = require('../kafka/producer');
 const { TOPICS } = require('../kafka/config');
 const { generateMessageId } = require('../utils/uuid');
+const registry = require('./registry-client');
 
 function send(socket, payload) {
   if (socket.readyState !== socket.OPEN) return false;
@@ -27,7 +28,7 @@ function sendError(socket, code, detail) {
 //   ke Kafka + semua sesi UI; downlink UI->robot direlay verbatim dua arah.
 // ---------------------------------------------------------------------------
 
-function handleSI(socket, data) {
+async function handleSI(socket, data) {
   if (!data || typeof data !== 'object') {
     send(socket, { code: 'ERROR', data: { error: 'INVALID_SI', message: 'SI wajib {type:"ROBOT"|"UI", ...}' } });
     return;
@@ -37,6 +38,12 @@ function handleSI(socket, data) {
       send(socket, { code: 'ERROR', data: { error: 'INVALID_SI', message: 'SI ROBOT wajib robot_id:string' } });
       return;
     }
+    const registered = await registry.lookup(data.robot_id);
+    if (!registered.ok) {
+      send(socket, { code: 'ERROR', data: { error: registered.reason } });
+      return;
+    }
+    if (!sessionManager.get(socket) || socket.readyState !== socket.OPEN) return;
     const result = sessionManager.attachRobot(socket, data.robot_id);
     if (!result.success) {
       logger.warn(`[Router] SI ROBOT ditolak (duplikat): ${data.robot_id}`);
@@ -46,8 +53,8 @@ function handleSI(socket, data) {
       });
       return;
     }
-    logger.info(`[Router] robot terdaftar (SI): ${data.robot_id}`);
-    send(socket, { code: 'ACK_SOFT', data: { robot_id: data.robot_id, timestamp: new Date().toISOString() } });
+    logger.info(`[Router] robot cocok dengan registry, identitas fisik belum terautentikasi: ${data.robot_id}`);
+    send(socket, { code: 'ACK_SOFT', data: { robot_id: data.robot_id, authenticated: false, timestamp: new Date().toISOString() } });
     return;
   }
   if (data.type === 'UI') {
@@ -87,7 +94,8 @@ async function handleUplink(socket, msg) {
   const enriched = {
     code: msg.code,
     message_id: msg.message_id || generateMessageId(),
-    data: { ...msg.data, robot_id: robotId, timestamp: new Date().toISOString() }
+    data: { ...msg.data, robot_id: robotId, timestamp: new Date().toISOString(),
+      device_authenticated: false }
   };
   await kafkaProducer.produce(TOPICS.SIMRS_ROBOT_EVENTS, enriched, robotId);
   broadcastToUis(enriched, robotId);
@@ -103,6 +111,25 @@ function broadcastToUis(frame, robotId) {
       if (s.channels.has('all') || s.channels.has(`robot:${robotId}`)) send(sock, frame);
     }
   }
+}
+
+/**
+ * Umumkan robot OFFLINE saat socket SI ROBOT terputus. Ini mengisi kontrak
+ * join/leave roster agar BFF tidak mempertahankan status READY yang stale.
+ * Event ini hanya menyatakan koneksi gateway putus; bukan bukti robot berhenti.
+ */
+function handleDisconnect(socket) {
+  const session = sessionManager.get(socket);
+  if (!session || !session.identity || session.identity.type !== 'ROBOT') return;
+  const robotId = session.identity.id;
+  const frame = {
+    code: 'READY',
+    message_id: generateMessageId(),
+    data: { robot_id: robotId, status: 'OFFLINE', mode: 'OFFLINE', timestamp: new Date().toISOString() }
+  };
+  broadcastToUis(frame, robotId);
+  kafkaProducer.produce(TOPICS.SIMRS_ROBOT_EVENTS, frame, robotId)
+    .catch((err) => logger.error('[Router] publish robot OFFLINE gagal:', err.message));
 }
 
 // ---------------------------------------------------------------------------
@@ -122,9 +149,14 @@ const DOWNLINK_CODES = new Set([
 
 function resolveTarget(msg) {
   const d = msg.data;
-  if (d && typeof d === 'object' && typeof d.robot_id === 'string' && d.robot_id) return d.robot_id;
-  if (msg.action === 'robot' && typeof msg.id === 'string' && msg.id) return msg.id;
+  if (d && typeof d === 'object' && typeof d.robot_id === 'string' && d.robot_id.trim()) return d.robot_id.trim();
+  if (msg.action === 'robot' && typeof msg.id === 'string' && msg.id.trim()) return msg.id.trim();
   return null;
+}
+
+function isTargetedStop(code, data) {
+  return code === 'TELEOP' && data && typeof data === 'object' &&
+    data.linear === 0 && data.angular === 0;
 }
 
 async function handleUIDownlink(socket, msg) {
@@ -136,20 +168,16 @@ async function handleUIDownlink(socket, msg) {
     return send(socket, { code: 'ERROR', data: { error: 'CODE_NOT_ALLOWED', message: `Kode downlink tidak diizinkan: ${msg.code}` } });
   }
   const target = resolveTarget(msg);
-  if (target) {
-    const sock = sessionManager.getRobot(target);
-    if (!sock) {
-      return send(socket, { code: 'ERROR', data: { error: 'ROBOT_OFFLINE', robot_id: target, timestamp: new Date().toISOString() } });
-    }
-    send(sock, { code: msg.code, data: { ...(msg.data || {}), robot_id: target } });
-    logger.info(`[Router] downlink ${msg.code} -> ${target}`);
-    return;
+  if (!target) return send(socket, { code: 'ERROR', data: { error: 'ROBOT_ID_REQUIRED' } });
+  if (!isTargetedStop(msg.code, msg.data)) {
+    return send(socket, { code: 'ERROR', data: { error: 'DEVICE_AUTH_UNAVAILABLE' } });
   }
-  let sent = 0;
-  for (const sock of sessionManager.robots.values()) {
-    if (send(sock, msg)) sent += 1;
-  }
-  logger.info(`[Router] downlink ${msg.code} broadcast ke ${sent} robot`);
+  const eligible = await registry.lookup(target);
+  if (!eligible.ok) return send(socket, { code: 'ERROR', data: { error: eligible.reason } });
+  const sock = sessionManager.getRobot(target);
+  if (!sock) return send(socket, { code: 'ERROR', data: { error: 'ROBOT_OFFLINE', robot_id: target } });
+  const delivered = send(sock, { code: msg.code, data: { ...msg.data, robot_id: target } });
+  send(socket, { code: 'STOP_DELIVERY', data: { robot_id: target, outcome: delivered ? 'SENT_UNCONFIRMED' : 'UNKNOWN' } });
 }
 
 /**
@@ -161,15 +189,25 @@ async function handleUIDownlink(socket, msg) {
 async function deliverRobotCommand(envelope) {
   const data = envelope.data || {};
   const robotId = data.robotId || data.robot_id;
+  if (typeof robotId !== 'string' || !robotId.trim()) return { accepted: false, reason: 'ROBOT_ID_REQUIRED' };
+  if (!new Set(['CMD_CANCEL_MISSION','CMD_RETURN_TO_DOCK','CMD_TELEOP_DRIVE','CMD_SET_SPEED']).has(data.command)) {
+    return { accepted: false, reason: 'CODE_NOT_ALLOWED' };
+  }
+  // Administrative eligibility is checked even though hardware possession cannot yet be proved.
+  const eligible = await registry.lookup(robotId);
+  if (!eligible.ok) return { accepted: false, reason: eligible.reason };
+  if (data.command !== 'CMD_TELEOP_DRIVE' ||
+      !data.params || data.params.linear !== 0 || data.params.angular !== 0) {
+    return { accepted: false, reason: 'DEVICE_AUTH_UNAVAILABLE' };
+  }
   const socket = sessionManager.getRobot(robotId);
   if (socket) {
     const frame = {
       code: data.command,
       data: { ...(data.params || {}), robot_id: robotId, command_id: data.commandId }
     };
-    send(socket, frame);
-    logger.info(`[Router] downlink envelope ${data.command} -> ${robotId}`);
-    return;
+    const sent = send(socket, frame);
+    return { accepted: sent, reason: sent ? 'SENT_UNCONFIRMED' : 'ROBOT_OFFLINE' };
   }
   logger.warn(`[Router] downlink ditolak, robot tidak terhubung: ${robotId}`);
   const result = {
@@ -186,6 +224,7 @@ async function deliverRobotCommand(envelope) {
   };
   await kafkaProducer.produce(TOPICS.SIMRS_ROBOT_EVENTS, result, robotId);
   broadcastToUis(result, robotId);
+  return { accepted: false, reason: 'ROBOT_OFFLINE' };
 }
 
 async function handleTifa(socket, msg) {
@@ -248,4 +287,4 @@ async function handleIncoming(socket, rawData) {
   }
 }
 
-module.exports = { handleIncoming, sendError, send, deliverRobotCommand };
+module.exports = { handleIncoming, handleDisconnect, sendError, send, deliverRobotCommand };

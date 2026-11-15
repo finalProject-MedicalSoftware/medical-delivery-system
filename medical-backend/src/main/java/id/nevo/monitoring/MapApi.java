@@ -278,15 +278,15 @@ public class MapApi {
 
     @GetMapping("/maps/{mapId}/waypoints")
     public List<Map<String, Object>> waypoints(@PathVariable UUID mapId) {
-        return db.queryForList("SELECT id,map_id,room_code,name,x,y,yaw,enabled,created_by,updated_at FROM m_waypoint WHERE map_id=? ORDER BY name", mapId);
+        return db.queryForList("SELECT id,map_id,room_code,bed_id,name,x,y,yaw,enabled,created_by,updated_at FROM m_waypoint WHERE map_id=? ORDER BY name", mapId);
     }
 
     @PostMapping("/maps/{mapId}/waypoints")
     public Map<String, Object> addWaypoint(@PathVariable UUID mapId, @RequestBody WaypointReq w, Authentication user) throws IOException {
         validateWaypoint(mapId, null, w);
         UUID id = UUID.randomUUID();
-        db.update("INSERT INTO m_waypoint(id,map_id,room_code,name,x,y,yaw,enabled,created_by,updated_at) VALUES (?,?,?,?,?,?,?,true,?,now())",
-                id, mapId, (w.roomCode() == null || w.roomCode().isBlank()) ? null : w.roomCode(), w.name(), w.x(), w.y(), w.yaw(), user.getName());
+        db.update("INSERT INTO m_waypoint(id,map_id,room_code,bed_id,name,x,y,yaw,enabled,created_by,updated_at) VALUES (?,?,?,?,?,?,?,?,true,?,now())",
+                id, mapId, blankToNull(w.roomCode()), blankToNull(w.bedId()), w.name(), w.x(), w.y(), w.yaw(), user.getName());
         db.update("INSERT INTO h_mapping_audit(actor,operation,mapping_id) VALUES (?,?,?)", user.getName(), "WAYPOINT_CREATE", mapId);
         return Map.of("id", id, "mapId", mapId);
     }
@@ -297,8 +297,8 @@ public class MapApi {
         if (count == null || count == 0) throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Waypoint not found");
         validateWaypoint(mapId, waypointId, w);
 
-        db.update("UPDATE m_waypoint SET room_code=?, name=?, x=?, y=?, yaw=?, updated_at=now() WHERE id=? AND map_id=?",
-                (w.roomCode() == null || w.roomCode().isBlank()) ? null : w.roomCode(), w.name(), w.x(), w.y(), w.yaw(), waypointId, mapId);
+        db.update("UPDATE m_waypoint SET room_code=?, bed_id=?, name=?, x=?, y=?, yaw=?, updated_at=now() WHERE id=? AND map_id=?",
+                blankToNull(w.roomCode()), blankToNull(w.bedId()), w.name(), w.x(), w.y(), w.yaw(), waypointId, mapId);
         db.update("INSERT INTO h_mapping_audit(actor,operation,mapping_id) VALUES (?,?,?)", user.getName(), "WAYPOINT_UPDATE", mapId);
         return Map.of("id", waypointId, "mapId", mapId, "updated", true);
     }
@@ -347,15 +347,24 @@ public class MapApi {
             }
         }
 
+        if (w.bedId() != null && !w.bedId().isBlank() && (w.roomCode() == null || w.roomCode().isBlank())) {
+            throw bad("roomCode wajib diisi untuk waypoint kasur");
+        }
+        if (w.bedId() != null && !w.bedId().isBlank()) {
+            Integer bedCount = db.queryForObject(
+                    "SELECT count(*) FROM m_simrs_room_directory r, jsonb_array_elements(r.beds) b WHERE r.room_code=? AND r.available=true AND b->>'id'=?",
+                    Integer.class, w.roomCode(), w.bedId());
+            if (bedCount == null || bedCount == 0) throw bad("Bed tidak tersedia pada ruangan SIMRS aktif");
+        }
         if (w.roomCode() != null && !w.roomCode().isBlank()) {
             String sql = currentWaypointId == null
-                    ? "SELECT count(*) FROM m_waypoint WHERE map_id=? AND room_code=?"
-                    : "SELECT count(*) FROM m_waypoint WHERE map_id=? AND room_code=? AND id!=?";
+                    ? "SELECT count(*) FROM m_waypoint WHERE map_id=? AND room_code=? AND bed_id IS NOT DISTINCT FROM ?"
+                    : "SELECT count(*) FROM m_waypoint WHERE map_id=? AND room_code=? AND bed_id IS NOT DISTINCT FROM ? AND id!=?";
             Integer count = currentWaypointId == null
-                    ? db.queryForObject(sql, Integer.class, mapId, w.roomCode())
-                    : db.queryForObject(sql, Integer.class, mapId, w.roomCode(), currentWaypointId);
+                    ? db.queryForObject(sql, Integer.class, mapId, w.roomCode(), blankToNull(w.bedId()))
+                    : db.queryForObject(sql, Integer.class, mapId, w.roomCode(), blankToNull(w.bedId()), currentWaypointId);
             if (count != null && count > 0) {
-                throw bad("Room code '" + w.roomCode() + "' is already assigned to another waypoint on this map");
+                throw bad("Room/bed tersebut sudah terhubung ke waypoint lain pada peta ini");
             }
         }
     }
@@ -365,5 +374,7 @@ public class MapApi {
         return simrsService.getLiveRooms();
     }
 
-    public record WaypointReq(String roomCode, String name, double x, double y, double yaw) {}
+    private static String blankToNull(String value) { return value == null || value.isBlank() ? null : value.trim(); }
+
+    public record WaypointReq(String roomCode, String bedId, String name, double x, double y, double yaw) {}
 }

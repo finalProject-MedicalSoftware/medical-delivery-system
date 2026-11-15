@@ -34,12 +34,13 @@ class SessionManager {
   attachRobot(socket, robotId) {
     const s = this.sessions.get(socket);
     if (!s) return { success: false, error: 'NO_SESSION' };
+    if (s.identity) return { success: false, error: 'SESSION_ALREADY_IDENTIFIED' };
     const old = this.robots.get(robotId);
     if (old && old !== socket) {
       if (isOpen(old)) return { success: false, error: 'DUPLICATE_ROBOT_ID' };
       this.detach(old); // ghost session
     }
-    s.identity = { type: 'ROBOT', id: robotId };
+    s.identity = { type: 'ROBOT', id: robotId, authenticated: false };
     this.robots.set(robotId, socket);
     return { success: true };
   }
@@ -48,6 +49,7 @@ class SessionManager {
   attachUI(socket, uiId) {
     const s = this.sessions.get(socket);
     if (!s) return { success: false, error: 'NO_SESSION' };
+    if (s.identity) return { success: false, error: 'SESSION_ALREADY_IDENTIFIED' };
     const old = this.uis.get(uiId);
     if (old && old !== socket) {
       if (isOpen(old)) return { success: false, error: 'DUPLICATE_UI_ID' };
@@ -65,7 +67,7 @@ class SessionManager {
 
   /** Daftar robotId dengan sesi SI aktif (untuk GET /internal/robots). */
   listRobots() {
-    return Array.from(this.robots.keys());
+    return Array.from(this.robots.keys()).filter((id) => isOpen(this.robots.get(id)));
   }
 
   detach(socket) {

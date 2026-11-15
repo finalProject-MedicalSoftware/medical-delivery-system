@@ -8,6 +8,7 @@ module.exports = {
   WS_AUTH_TOKEN: process.env.WS_AUTH_TOKEN || '',
   // Secret bridge HTTP backend -> WS (POST /internal/publish). Kosong = endpoint ditolak (401).
   INTERNAL_PUBLISH_SECRET: process.env.INTERNAL_PUBLISH_SECRET || '',
+  REGISTRY_BACKEND_URL: process.env.REGISTRY_BACKEND_URL || '',
   INTERNAL_PUBLISH_MAX_BYTES: parseInt(process.env.INTERNAL_PUBLISH_MAX_BYTES || '65536', 10),
   // Fase bridge HTTP: tanpa broker Kafka. Set true setelah broker hidup.
   KAFKA_ENABLED: process.env.KAFKA_ENABLED === 'true',

@@ -1,0 +1,19 @@
+# Overlay for UI redesign; use together with compose.yaml.
+services:
+  dashboard:
+    build:
+      context: ../medical-dashboard-monitoring/frontend
+      dockerfile: Dockerfile.dev
+    environment:
+      NODE_ENV: development
+      NEXT_TELEMETRY_DISABLED: "1"
+      # Docker Desktop/Windows bind mounts need polling for reliable hot reload.
+      WATCHPACK_POLLING: "true"
+    volumes:
+      - ../medical-dashboard-monitoring/frontend:/app
+      - dashboard_node_modules:/app/node_modules
+      - dashboard_next_dev:/app/.next
+
+volumes:
+  dashboard_node_modules:
+  dashboard_next_dev:

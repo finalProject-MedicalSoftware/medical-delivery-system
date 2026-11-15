@@ -17,6 +17,7 @@ import {
   ExternalLink,
   X,
 } from 'lucide-react';
+import { PageHeading, RobotArtwork } from '../components/NevoUI';
 import MapViewer, { MapMetadata, WaypointItem } from './MapViewer';
 import { useApp } from '../components/AppShell';
 import { useLanguage } from '../components/LanguageProvider';
@@ -40,6 +41,7 @@ type RoomItem = {
   source?: string;
   availableInSimrs?: boolean;
   waypointStatus?: string;
+  beds?: { id?: string; number?: string; bedNumber?: string; occupied?: boolean }[];
 };
 
 const YAW_PRESETS: [string, 'presetFront' | 'presetLeft' | 'presetBack' | 'presetRight'][] = [
@@ -76,6 +78,7 @@ export default function MapsPage() {
   // Waypoint form state
   const [editingWpId, setEditingWpId] = useState<string | null>(null);
   const [wpRoomCode, setWpRoomCode] = useState('');
+  const [wpBedId, setWpBedId] = useState('');
   const [wpName, setWpName] = useState('');
   const [wpX, setWpX] = useState('');
   const [wpY, setWpY] = useState('');
@@ -236,6 +239,7 @@ export default function MapsPage() {
     try {
       const payload = {
         roomCode: wpRoomCode.trim() || null,
+        bedId: wpBedId.trim() || null,
         name: wpName.trim(),
         x: xVal,
         y: yVal,
@@ -261,6 +265,7 @@ export default function MapsPage() {
       // Reset form
       setEditingWpId(null);
       setWpRoomCode('');
+      setWpBedId('');
       setWpName('');
       setWpX('');
       setWpY('');
@@ -307,6 +312,7 @@ export default function MapsPage() {
   const startEditWaypoint = (wp: WaypointItem) => {
     setEditingWpId(wp.id);
     setWpRoomCode(wp.room_code || '');
+    setWpBedId(wp.bed_id || '');
     setWpName(wp.name);
     setWpX(wp.x.toString());
     setWpY(wp.y.toString());
@@ -318,6 +324,7 @@ export default function MapsPage() {
   const startMappingRoom = (room: RoomItem) => {
     setEditingWpId(null);
     setWpRoomCode(room.roomCode);
+    setWpBedId('');
     setWpName(room.name);
     notify('info', t.mappingRoomMode.replace('{name}', room.name));
   };
@@ -332,30 +339,14 @@ export default function MapsPage() {
   ];
 
   return (
-    <div className="space-y-6">
-      {/* Page header */}
-      <div className="glass-panel p-6 flex flex-wrap items-center justify-between gap-4">
-        <div>
-          <h2 className="text-xl font-bold txt-main flex items-center gap-2">
-            <MapIcon className="text-accent" size={24} />
-            {t.title}
-          </h2>
-          <p className="text-sm txt-sec mt-1">{t.subtitle}</p>
-        </div>
-        <button
-          onClick={loadInitialData}
-          title={t.title}
-          className="btn-ghost text-xs flex items-center gap-1.5"
-        >
-          <RefreshCw size={15} />
-        </button>
-      </div>
-
+    <div className="maps-page space-y-5">
+      <PageHeading title={t.title} description={t.subtitle} actions={<div className="maps-heading-actions"><button onClick={loadInitialData} title={dict.common.refresh} className="btn-secondary flex gap-2 items-center"><RefreshCw size={16} />{dict.common.refresh}</button><RobotArtwork variant="head" className="maps-header-art" /></div>} />
       {/* Tabs */}
-      <div className="flex gap-1 border-b border-base">
+      <div className="nevo-tabs" role="tablist" aria-label={t.title}>
         {TABS.map(({ id, label, icon: Icon }) => (
           <button
             key={id}
+            role="tab" aria-selected={tab === id}
             onClick={() => setTab(id)}
             className={`flex items-center gap-2 px-4 py-2.5 text-xs font-semibold rounded-t-xl transition-all border-b-2 ${
               tab === id
@@ -393,13 +384,20 @@ export default function MapsPage() {
       {tab === 'VIEWER' && (
         <div className="space-y-6">
           {/* Map Selector & Activation Bar */}
-          <div className="glass-panel p-4 flex flex-wrap items-center justify-between gap-4">
-            <div className="flex items-center gap-3">
-              <label className="text-xs txt-sec font-medium">{t.selectRosMap}:</label>
+          <div className="glass-panel maps-overview p-4">
+            <div className="maps-metadata">
+              <div><span>{language === 'id' ? 'File Peta' : 'Map file'}</span><strong>{selectedMapMeta?.fileName || '—'}</strong></div>
+              <div><span>{language === 'id' ? 'Ukuran' : 'Size'}</span><strong>{selectedMapMeta?.width && selectedMapMeta?.height ? `${selectedMapMeta.width} × ${selectedMapMeta.height} px` : '—'}</strong></div>
+              <div><span>{language === 'id' ? 'Resolusi' : 'Resolution'}</span><strong>{selectedMapMeta?.resolution ? `${selectedMapMeta.resolution} m/px` : '—'}</strong></div>
+              <div><span>{language === 'id' ? 'Diunggah' : 'Uploaded'}</span><strong>{selectedMapMeta?.createdAt ? new Date(selectedMapMeta.createdAt).toLocaleString(locale) : '—'}</strong></div>
+            </div>
+            <div className="maps-selector">
+              <label className="text-xs txt-sec font-medium" htmlFor="maps-selected-ros">{t.selectRosMap}:</label>
               <select
+                id="maps-selected-ros"
                 value={selectedMapId}
                 onChange={(e) => setSelectedMapId(e.target.value)}
-                className="bg-input border border-base text-sm txt-main rounded-xl px-3 py-2 focus:outline-none focus:border-accent font-mono"
+                className="bg-input border border-base text-sm txt-main rounded-xl px-3 py-2 focus:outline-none focus:border-accent font-mono min-w-0 w-full"
               >
                 {rosMaps.length === 0 ? (
                   <option value="">{t.emptyRosMap}</option>
@@ -414,7 +412,7 @@ export default function MapsPage() {
             </div>
 
             {selectedMapMeta && (
-              <div className="flex items-center gap-3">
+              <div className="maps-actions flex flex-wrap items-center gap-3">
                 {selectedMapMeta.active ? (
                   <span className="status-pill status-success flex items-center gap-1.5">
                     <CheckCircle2 size={15} /> {t.activeOnWeb}
@@ -455,6 +453,7 @@ export default function MapsPage() {
                     if (wp) {
                       setEditingWpId(wp.id);
                       setWpRoomCode(wp.room_code || '');
+                       setWpBedId(wp.bed_id || '');
                       setWpName(wp.name);
                       setWpX(wp.x.toString());
                       setWpY(wp.y.toString());
@@ -483,6 +482,7 @@ export default function MapsPage() {
                         onClick={() => {
                           setEditingWpId(null);
                           setWpRoomCode('');
+                           setWpBedId('');
                           setWpName('');
                           setWpX('');
                           setWpY('');
@@ -498,13 +498,15 @@ export default function MapsPage() {
                   <form onSubmit={handleSaveWaypoint} className="space-y-3">
                     <div className="grid grid-cols-2 gap-3">
                       <div>
-                        <label className="text-[11px] txt-sec font-medium block mb-1">
+                        <label htmlFor="waypoint-room-code" className="text-[11px] txt-sec font-medium block mb-1">
                           {t.roomCode}
                         </label>
                         <select
+                          id="waypoint-room-code"
                           value={wpRoomCode}
                           onChange={(e) => {
                             setWpRoomCode(e.target.value);
+                             setWpBedId('');
                             const matchedRoom = rooms.find((r) => r.roomCode === e.target.value);
                             if (matchedRoom && !wpName) {
                               setWpName(matchedRoom.name);
@@ -522,10 +524,34 @@ export default function MapsPage() {
                       </div>
 
                       <div>
-                        <label className="text-[11px] txt-sec font-medium block mb-1">
+                        <label htmlFor="waypoint-bed-id" className="text-[11px] txt-sec font-medium block mb-1">
+                          {language === 'id' ? 'Kasur SIMRS' : 'SIMRS Bed'}
+                        </label>
+                        <select
+                          id="waypoint-bed-id"
+                          value={wpBedId}
+                          onChange={(e) => {
+                            setWpBedId(e.target.value);
+                            const room = rooms.find((r) => r.roomCode === wpRoomCode);
+                            const bed = room?.beds?.find((b) => b.id === e.target.value);
+                            if (bed && (!wpName || wpName === room?.name)) setWpName(`${room?.name} · Bed ${bed.number ?? bed.bedNumber ?? ''}`);
+                          }}
+                          disabled={!wpRoomCode}
+                          className="w-full bg-input border border-base text-xs txt-main rounded-xl p-2.5 focus:outline-none focus:border-accent"
+                        >
+                          <option value="">{language === 'id' ? 'Waypoint umum ruangan' : 'Room-level waypoint'}</option>
+                          {(rooms.find((r) => r.roomCode === wpRoomCode)?.beds ?? []).filter((b) => b.id).map((bed) => (
+                            <option key={bed.id} value={bed.id}>Bed {bed.number ?? bed.bedNumber ?? bed.id}</option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div>
+                        <label htmlFor="waypoint-name" className="text-[11px] txt-sec font-medium block mb-1">
                           {t.waypointName} <span className="text-error">*</span>
                         </label>
                         <input
+                          id="waypoint-name"
                           type="text"
                           required
                           value={wpName}
@@ -537,10 +563,11 @@ export default function MapsPage() {
 
                     <div className="grid grid-cols-3 gap-3">
                       <div>
-                        <label className="text-[11px] txt-sec font-medium block mb-1">
+                        <label htmlFor="waypoint-x" className="text-[11px] txt-sec font-medium block mb-1">
                           {t.axisX} <span className="text-error">*</span>
                         </label>
                         <input
+                          id="waypoint-x"
                           type="number"
                           step="0.001"
                           required
@@ -551,10 +578,11 @@ export default function MapsPage() {
                         />
                       </div>
                       <div>
-                        <label className="text-[11px] txt-sec font-medium block mb-1">
+                        <label htmlFor="waypoint-y" className="text-[11px] txt-sec font-medium block mb-1">
                           {t.axisY} <span className="text-error">*</span>
                         </label>
                         <input
+                          id="waypoint-y"
                           type="number"
                           step="0.001"
                           required
@@ -565,10 +593,11 @@ export default function MapsPage() {
                         />
                       </div>
                       <div>
-                        <label className="text-[11px] txt-sec font-medium block mb-1">
+                        <label htmlFor="waypoint-yaw" className="text-[11px] txt-sec font-medium block mb-1">
                           {t.yaw} <span className="text-error">*</span>
                         </label>
                         <input
+                          id="waypoint-yaw"
                           type="number"
                           step="0.01"
                           required
@@ -645,6 +674,11 @@ export default function MapsPage() {
                                 {wp.room_code && (
                                   <span className="text-[10px] bg-elevated txt-sec px-1.5 py-0.5 rounded">
                                     {wp.room_code}
+                                  </span>
+                                )}
+                                {wp.bed_id && (
+                                  <span className="text-[10px] bg-accent/10 text-accent px-1.5 py-0.5 rounded">
+                                    Bed {rooms.flatMap((room) => room.beds ?? []).find((bed) => bed.id === wp.bed_id)?.number ?? wp.bed_id}
                                   </span>
                                 )}
                               </div>

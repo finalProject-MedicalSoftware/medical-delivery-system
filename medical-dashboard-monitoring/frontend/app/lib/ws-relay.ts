@@ -32,7 +32,7 @@ function matches(item: any, channels: Channel[]): boolean {
 }
 
 // ---- roster cache (dari uplink robot: READY/POSITION/BATTERY/ERROR) ----
-export interface RosterEntry { robot_id: string; lastCode: string; lastSeen: number; status: string; position: any; battery: number | null; }
+export interface RosterEntry { robot_id: string; lastCode: string; lastSeen: number; status: string; mode?: string; position: any; battery: number | null; }
 
 // ---- state relay di globalThis ----
 // Next (dev & prod) mem-bundle tiap route terpisah → module instance ws-relay
@@ -47,6 +47,11 @@ interface RelayState {
 }
 const g = globalThis as unknown as { __nevoWsRelay?: RelayState };
 const state: RelayState = g.__nevoWsRelay ??= { ws: null, reconnectTimer: null, registered: false, roster: new Map(), subs: new Map() };
+
+function publishRelayState(connected: boolean): void {
+  const message = JSON.stringify({ type: 'SSE_RELAY', connected, robots: connected ? rosterSnapshot() : [] });
+  for (const sub of state.subs.values()) sub.send(message);
+}
 
 // Suffix unik per proses untuk ui_id default (`dashboard-*`): dua instans
 // dashboard (dev :3000 & :3100, atau replica) yang login akun sama tidak lagi
@@ -63,13 +68,15 @@ export function relayUiId(): string | null {
 function trackRoster(frame: any): void {
   const id = frame?.data?.robot_id;
   if (typeof id !== 'string' || !id) return;
-  const e = state.roster.get(id) ?? { robot_id: id, lastCode: frame.code, lastSeen: 0, status: 'UNKNOWN', position: null, battery: null };
+  const e: RosterEntry = state.roster.get(id) ?? { robot_id: id, lastCode: frame.code, lastSeen: 0, status: 'UNKNOWN', position: null, battery: null };
   e.lastCode = frame.code;
   e.lastSeen = Date.now();
   const d = frame.data || {};
   if (frame.code === 'POSITION') e.position = d;
   if (frame.code === 'BATTERY') e.battery = d.battery_percent ?? d.battery ?? null;
-  if (frame.code === 'READY') e.status = d.status || 'READY';
+  if (frame.code === 'READY') e.status = d.status === 'OFFLINE' ? 'OFFLINE' :
+    d.device_authenticated === true ? (d.status || 'UNKNOWN') : 'UNKNOWN';
+  if ((frame.code === 'READY' || frame.code === 'MODE') && typeof d.mode === 'string') e.mode = d.mode;
   if (frame.code === 'ERROR') e.status = d.status || 'ERROR';
   state.roster.set(id, e);
 }
@@ -101,12 +108,14 @@ function connect(): void {
     if (state.ws !== socket) return;
     if (item?.code === 'ACK_SOFT' && item.data?.ui_id === uiId) {
       state.registered = true;
+      publishRelayState(true);
       console.log('[BFF/relay] SI UI terdaftar:', uiId);
       return;
     }
     if (item?.code === 'ERROR' && item.data?.error === 'DUPLICATE_UI_ID') {
       console.warn('[BFF/relay] SI ditolak (DUPLICATE_UI_ID) — retry 3s');
       state.registered = false;
+      publishRelayState(false);
       socket.close(); // gateway tidak close; close handler yang memicu reconnect 3s
       return;
     }
@@ -122,6 +131,7 @@ function connect(): void {
     if (state.ws !== socket) return; // close dari koneksi lama — abaikan.
     console.warn(`[BFF/relay] closed (${code}), reconnect 3s`);
     state.registered = false;
+    publishRelayState(false);
     state.ws = null;
     state.reconnectTimer = setTimeout(() => { state.reconnectTimer = null; connect(); }, 3000);
   });
@@ -137,6 +147,7 @@ export function resetRelay(): void {
   if (state.reconnectTimer) { clearTimeout(state.reconnectTimer); state.reconnectTimer = null; }
   if (state.ws) { state.ws.close(); state.ws = null; }
   state.registered = false;
+  publishRelayState(false);
 }
 
 /** Daftarkan subscriber SSE; hapus otomatis melepas WS saat kosong. */

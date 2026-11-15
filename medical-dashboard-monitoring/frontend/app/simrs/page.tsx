@@ -1,218 +1,167 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
-import Link from 'next/link';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { CheckCircle2, Loader2, RefreshCw, Save, ShieldAlert } from 'lucide-react';
+import { PageHeading } from '../components/NevoUI';
 import { useApp } from '../components/AppShell';
 import { useLanguage } from '../components/LanguageProvider';
-import { simrsMode, SIMRS_TONE_DOT } from '../lib/simrs-mode';
-import {
-  Database, CheckCircle2, RefreshCw, ShieldAlert, Building,
-  ArrowRight, ShieldCheck,
-} from 'lucide-react';
+
+type SimrsStatus = {
+  code?: string;
+  message?: string;
+  lastSyncTime?: string;
+};
+
+type SimrsConfig = {
+  baseUrl?: string;
+  configured?: boolean;
+};
+
+function validateUrl(value: string): string | null {
+  try {
+    const url = new URL(value);
+    if (!['http:', 'https:'].includes(url.protocol)) return 'URL harus menggunakan HTTP atau HTTPS.';
+    if (url.username || url.password) return 'URL tidak boleh memuat username atau password.';
+    if (url.search || url.hash) return 'Gunakan Base URL tanpa query atau fragment.';
+    return null;
+  } catch {
+    return 'Masukkan Base URL yang valid.';
+  }
+}
 
 export default function SimrsPage() {
-  const { request } = useApp();
-  const { dict } = useLanguage();
-  const t = dict.simrs;
+  const { request, user } = useApp();
+  const { language } = useLanguage();
+  const id = language === 'id';
+  const admin = user?.role?.toUpperCase() === 'ADMIN';
+  const [status, setStatus] = useState<SimrsStatus | null>(null);
+  const [baseUrl, setBaseUrl] = useState('');
+  const [savedUrl, setSavedUrl] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [action, setAction] = useState<'save' | 'test' | null>(null);
+  const [feedback, setFeedback] = useState<{ tone: 'success' | 'error'; text: string } | null>(null);
 
-  const [simrsStatus, setSimrsStatus] = useState<any>(null);
-  const [deliveries, setDeliveries] = useState<any[]>([]);
-  const [rooms, setRooms] = useState<any[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [message, setMessage] = useState<string | null>(null);
-
-  const loadData = (manualSync = false) => {
+  const load = useCallback(async () => {
     setLoading(true);
-    setMessage(null);
-    (manualSync ? request('integrations/simrs/sync', { method: 'POST' }) : request('integrations/simrs/status'))
-      .then(async (status) => {
-        const [dels, rmList] = await Promise.all([
-          request('integrations/simrs/deliveries'),
-          request('rooms'),
-        ]);
-        return [status, dels, rmList];
-      })
-      .then(([status, dels, rmList]) => {
-        setSimrsStatus(status);
-        setDeliveries(dels);
-        setRooms(rmList);
-      })
-      .catch((err) => setMessage(`${t.message}: ${err.message}`))
-      .finally(() => setLoading(false));
+    try {
+      const [nextStatus, config] = await Promise.all([
+        request('integrations/simrs/status'),
+        request('integrations/simrs/config'),
+      ]) as [SimrsStatus, SimrsConfig];
+      const nextUrl = config.baseUrl || '';
+      setStatus(nextStatus);
+      setBaseUrl(nextUrl);
+      setSavedUrl(nextUrl);
+    } catch (error) {
+      setStatus(null);
+      setFeedback({ tone: 'error', text: error instanceof Error ? error.message : 'Konfigurasi SIMRS tidak dapat dimuat.' });
+    } finally {
+      setLoading(false);
+    }
+  }, [request]);
+
+  useEffect(() => { void load(); }, [load]);
+
+  const validation = useMemo(() => baseUrl.trim() ? validateUrl(baseUrl.trim()) : 'Base URL wajib diisi.', [baseUrl]);
+  const connected = !loading && status?.code === 'CONNECTED';
+  const checking = loading || action !== null;
+  const statusLabel = checking
+    ? (id ? 'Memeriksa Koneksi' : 'Checking Connection')
+    : connected
+      ? (id ? 'Terhubung' : 'Connected')
+      : (id ? 'Tidak Terhubung' : 'Disconnected');
+
+  const testConnection = async () => {
+    setFeedback(null);
+    if (validation) { setFeedback({ tone: 'error', text: validation }); return; }
+    setAction('test');
+    try {
+      await request('simrs/admin/config/test', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ baseUrl: baseUrl.trim() }),
+      });
+      setFeedback({ tone: 'success', text: id ? 'Koneksi berhasil diuji. URL aktif belum diubah.' : 'Connection test passed. The active URL was not changed.' });
+    } catch (error) {
+      setFeedback({ tone: 'error', text: error instanceof Error ? error.message : 'Uji koneksi gagal.' });
+    } finally { setAction(null); }
   };
 
-  useEffect(() => {
-    loadData(false);
-    const timer = window.setInterval(() => loadData(false), 30000);
-    return () => window.clearInterval(timer);
-  }, []);
-
-  const tone = simrsMode(simrsStatus?.mode).tone;
-  const modeLabel = t.modes[(simrsStatus?.mode || 'default') as keyof typeof t.modes] ?? t.modes.default;
-  const liveRooms = rooms.filter((r) => r.availableInSimrs !== false).length;
+  const saveUrl = async () => {
+    setFeedback(null);
+    if (validation) { setFeedback({ tone: 'error', text: validation }); return; }
+    setAction('save');
+    try {
+      const config = await request('simrs/admin/config', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ baseUrl: baseUrl.trim() }),
+      }) as SimrsConfig;
+      const nextUrl = config.baseUrl || baseUrl.trim();
+      setBaseUrl(nextUrl);
+      setSavedUrl(nextUrl);
+      setStatus(await request('integrations/simrs/status'));
+      setFeedback({ tone: 'success', text: id ? 'Base URL tersimpan dan sudah digunakan oleh backend.' : 'Base URL saved and now active on the backend.' });
+    } catch (error) {
+      setFeedback({ tone: 'error', text: error instanceof Error ? error.message : 'Base URL tidak dapat disimpan.' });
+    } finally { setAction(null); }
+  };
 
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="glass-panel p-6 flex flex-wrap items-center justify-between gap-4">
-        <div>
-          <h2 className="text-xl font-bold txt-main flex items-center gap-2 flex-wrap">
-            <Database className="text-accent" size={24} />
-            {t.title}
-            <span className="status-pill status-info font-mono">[{simrsStatus?.mode || t.modes.default}]</span>
-          </h2>
-          <p className="text-xs txt-sec mt-1">{t.subtitle}</p>
-        </div>
+      <PageHeading
+        title={id ? 'Integrasi SIMRS' : 'SIMRS Integration'}
+        description={id ? 'Kelola koneksi API Sistem Informasi Manajemen Rumah Sakit.' : 'Manage the Hospital Information System API connection.'}
+      />
 
-        <button
-          onClick={() => loadData(true)}
-          disabled={loading}
-          className="btn-primary flex items-center gap-2"
-        >
-          <RefreshCw size={15} className={loading ? 'animate-spin' : ''} />
-          {loading ? t.syncing : t.syncNow}
-        </button>
-      </div>
-
-      {message && (
-        <div className="card-hover border border-error/40 bg-error/5 p-3.5 text-error text-xs rounded-xl flex items-start gap-2">
-          <ShieldAlert size={16} className="text-error shrink-0 mt-0.5" />
-          {message}
-        </div>
-      )}
-
-      {/* Status cards */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        {/* Connection Mode */}
-        <div className="glass-panel p-5 space-y-2">
-          <span className="text-xs txt-sec font-medium">{t.status}</span>
-          <div className="flex items-center gap-2">
-            <span className={`w-2.5 h-2.5 rounded-full ${SIMRS_TONE_DOT[tone]}`} />
-            <strong className="text-base txt-main">{modeLabel}</strong>
-          </div>
-          <p className="text-[11px] txt-sec font-mono truncate">{t.host}: {simrsStatus?.host || t.hostMissing}</p>
-          <p className="text-[11px] txt-sec">{t.source}: {simrsStatus?.source || t.notSynced} · {t.lastSync}: {simrsStatus?.lastSyncTime || '-'}</p>
-        </div>
-
-        {/* Security / Write Policy */}
-        <div className="glass-panel p-5 space-y-2">
-          <span className="text-xs txt-sec font-medium">{t.writePolicy}</span>
-          <div className="flex items-center gap-2">
-            <ShieldCheck size={18} className="text-success" />
-            <strong className="text-base text-success">{t.writeProtected}</strong>
-          </div>
-          <p className="text-[11px] txt-sec">
-            {simrsStatus?.writeEnabled ? t.writeEnabled : t.writeDisabled}
-          </p>
-        </div>
-
-        {/* Token status */}
-        <div className="glass-panel p-5 space-y-2">
-          <span className="text-xs txt-sec font-medium">{t.token}</span>
-          <div className="flex items-center gap-2">
-            <strong className="text-base txt-main font-mono">
-              {simrsStatus?.tokenConfigured ? t.tokenConfigured : t.tokenMissing}
-            </strong>
-          </div>
-          <p className="text-[11px] txt-sec">
-            {simrsStatus?.tokenConfigured ? t.tokenNoteOn : t.tokenNoteOff}
-          </p>
-        </div>
-      </div>
-
-      {/* Active Deliveries Table */}
-      <div className="glass-panel p-6 space-y-4">
-        <div className="flex items-center justify-between pb-3 border-b border-base">
-          <div>
-            <h3 className="font-bold text-sm txt-main flex items-center gap-2">
-              <CheckCircle2 size={16} className="text-accent" />
-              {t.deliveries}
-            </h3>
-            <p className="text-xs txt-sec mt-0.5">{t.subtitle}</p>
-          </div>
-          <span className="text-xs font-mono status-pill status-info">
-            {deliveries.length} {t.queueCount}
+      <section className="glass-panel p-5 sm:p-6 max-w-3xl" aria-labelledby="simrs-status-title">
+        <div className="flex items-start gap-3">
+          <span className={`mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${checking ? 'bg-warning/10 text-warning' : connected ? 'bg-success/10 text-success' : 'bg-error/10 text-error'}`}>
+            {checking ? <Loader2 className="animate-spin" size={20} /> : connected ? <CheckCircle2 size={20} /> : <ShieldAlert size={20} />}
           </span>
-        </div>
-
-        {deliveries.length === 0 ? (
-          <p className="text-sm txt-sec italic py-6 text-center">{t.deliveryEmpty}</p>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs">
-              <thead>
-                <tr className="border-b border-base bg-elevated/50 txt-sec">
-                  <th className="py-3 px-4">{t.reqCode}</th>
-                  <th className="py-3 px-4">{t.targetRoom}</th>
-                  <th className="py-3 px-4">{t.patient} ({t.mrn})</th>
-                  <th className="py-3 px-4">{t.medicine}</th>
-                  <th className="py-3 px-4">{t.medicalAlert}</th>
-                  <th className="py-3 px-4">{t.simrsStatus}</th>
-                  <th className="py-3 px-4 text-right">{dict.common.actions}</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-border-base/60">
-                {deliveries.map((del) => (
-                  <tr key={del.requestCode} className="hover:bg-elevated/40 transition-colors">
-                    <td className="py-3 px-4 font-mono font-bold txt-accent">{del.requestCode}</td>
-                    <td className="py-3 px-4">
-                      <span className="font-semibold txt-main">{del.roomName || del.roomCode}</span>
-                      <span className="text-[10px] txt-sec block">{t.floor} {del.floor} · {del.wardCode}</span>
-                    </td>
-                    <td className="py-3 px-4">
-                      <span className="txt-main">{del.patientName}</span>
-                      <span className="text-[10px] txt-sec block font-mono">{del.mrn}</span>
-                    </td>
-                    <td className="py-3 px-4 txt-main">{del.medicine}</td>
-                    <td className="py-3 px-4">
-                      {del.isInfectious ? (
-                        <span className="status-pill status-danger flex items-center gap-1 w-fit text-[10px]">
-                          <ShieldAlert size={12} /> {t.infectiousBadge}
-                        </span>
-                      ) : (
-                        <span className="text-[11px] txt-sec">{t.normal}</span>
-                      )}
-                    </td>
-                    <td className="py-3 px-4">
-                      <span className="status-pill status-info font-mono text-[10px]">{del.status}</span>
-                    </td>
-                    <td className="py-3 px-4 text-right">
-                      <Link
-                        href={`/missions/create?room=${encodeURIComponent(del.roomCode)}&req=${encodeURIComponent(del.requestCode)}`}
-                        className="btn-primary inline-flex items-center gap-1 text-xs"
-                      >
-                        {t.dispatch} <ArrowRight size={13} />
-                      </Link>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          <div className="min-w-0">
+            <p id="simrs-status-title" className="text-xs font-medium txt-sec">{id ? 'Status koneksi' : 'Connection status'}</p>
+            <p className="mt-1 font-semibold txt-main" aria-live="polite">{statusLabel}</p>
+            {!checking && !connected && <p className="mt-1 text-sm txt-sec">{status?.message || (id ? 'Backend belum menerima respons SIMRS yang valid.' : 'The backend has not received a valid SIMRS response.')}</p>}
+            {status?.lastSyncTime && <p className="mt-1 text-xs txt-sec">{id ? 'Pemeriksaan berhasil terakhir' : 'Last successful check'}: {new Date(status.lastSyncTime).toLocaleString(id ? 'id-ID' : 'en-US')}</p>}
           </div>
-        )}
-      </div>
-
-      {/* Hospital Room Directory */}
-      <div className="glass-panel p-6 space-y-4">
-        <h3 className="font-bold text-sm txt-main flex items-center gap-2">
-          <Building size={16} className="text-accent" />
-          {t.roomDirectory} ({liveRooms} {t.roomLive} / {rooms.length})
-        </h3>
-        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 text-xs">
-          {rooms.map((rm) => (
-            <div key={rm.roomCode} className="p-3 bg-elevated/60 border border-base rounded-xl space-y-1">
-              <span className="font-semibold txt-main block">{rm.name}</span>
-              <p className="text-[11px] font-mono txt-sec">
-                {t.roomCode}: <strong>{rm.roomCode}</strong>
-              </p>
-              <p className="text-[10px] txt-sec">{rm.wardName} · {t.floor} {rm.floor}</p>
-              <p className={`text-[10px] ${rm.availableInSimrs === false ? 'text-error' : 'text-success'}`}>
-                {rm.source} · {rm.waypointStatus || t.notMapped}
-              </p>
-            </div>
-          ))}
         </div>
-      </div>
+      </section>
+
+      <section className="glass-panel p-5 sm:p-6 max-w-3xl space-y-5" aria-labelledby="simrs-config-title">
+        <div>
+          <h2 id="simrs-config-title" className="font-semibold txt-main">{id ? 'Konfigurasi API' : 'API Configuration'}</h2>
+          <p className="mt-1 text-sm txt-sec">{admin ? (id ? 'URL diuji oleh backend sebelum diaktifkan.' : 'The backend tests the URL before activation.') : (id ? 'Konfigurasi hanya dapat diubah oleh Admin.' : 'Only an Admin can change this configuration.')}</p>
+        </div>
+
+        <div className="space-y-2">
+          <label htmlFor="simrs-base-url" className="text-sm font-medium txt-main">Base URL API SIMRS</label>
+          <input
+            id="simrs-base-url"
+            className="input-field font-mono"
+            type="url"
+            inputMode="url"
+            autoComplete="url"
+            placeholder="https://simrs.example.id"
+            value={baseUrl}
+            onChange={(event) => setBaseUrl(event.target.value)}
+            disabled={loading || action !== null || !admin}
+            readOnly={!admin}
+            aria-invalid={admin && Boolean(baseUrl && validation)}
+            aria-describedby="simrs-url-help"
+          />
+          <p id="simrs-url-help" className={`text-xs ${admin && baseUrl && validation ? 'text-error' : 'txt-sec'}`}>
+            {admin && baseUrl && validation ? validation : (id ? 'Credential dan token tetap tersimpan di backend.' : 'Credentials and tokens remain on the backend.')}
+          </p>
+        </div>
+
+        {feedback && <div role={feedback.tone === 'error' ? 'alert' : 'status'} className={`rounded-xl border p-3 text-sm ${feedback.tone === 'success' ? 'border-success/30 bg-success/5 text-success' : 'border-error/30 bg-error/5 text-error'}`}>{feedback.text}</div>}
+
+        {admin && <div className="flex flex-col sm:flex-row gap-3">
+          <button type="button" className="btn-primary inline-flex items-center justify-center gap-2" onClick={saveUrl} disabled={checking || Boolean(validation) || baseUrl.trim() === savedUrl}>
+            {action === 'save' ? <Loader2 size={18} className="animate-spin" /> : <Save size={18} />}{id ? 'Simpan URL' : 'Save URL'}
+          </button>
+          <button type="button" className="btn-secondary inline-flex items-center justify-center gap-2" onClick={testConnection} disabled={checking || Boolean(validation)}>
+            {action === 'test' ? <Loader2 size={18} className="animate-spin" /> : <RefreshCw size={18} />}{id ? 'Uji Koneksi' : 'Test Connection'}
+          </button>
+        </div>}
+      </section>
     </div>
   );
 }

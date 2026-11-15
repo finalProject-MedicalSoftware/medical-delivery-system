@@ -20,6 +20,7 @@ nevo:
   storage-dir: ${NEVO_STORAGE_DIR:./data/uploads}
   robot:
     mode: ${ROBOT_MODE:sim}
+    compartment-count: ${NEVO_COMPARTMENT_COUNT:6}
   gateway:
     url: ${GATEWAY_URL:}
   ws:
@@ -34,6 +35,9 @@ nevo:
     write-max-attempts: ${SIMRS_WRITE_MAX_ATTEMPTS:5}
     connect-timeout-ms: ${SIMRS_CONNECT_TIMEOUT_MS:5000}
     read-timeout-ms: ${SIMRS_READ_TIMEOUT_MS:10000}
+    allowed-hosts: ${SIMRS_ALLOWED_HOSTS:localhost,simrs-web}
+    allow-private-networks: ${SIMRS_ALLOW_PRIVATE_NETWORKS:false}
+    max-response-bytes: ${SIMRS_MAX_RESPONSE_BYTES:2000000}
   internal-publish:
     url: ${INTERNAL_PUBLISH_URL:http://localhost:8081/internal/publish}
     secret: ${INTERNAL_PUBLISH_SECRET:}

@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { useApp } from '../../components/AppShell';
 import { useLanguage } from '../../components/LanguageProvider';
+import { PageHeading } from '../../components/NevoUI';
 import { statusPillClass, missionStatusLabel } from '../../lib/mission-status';
 import { ArrowLeft, Navigation, Ban, Clock, User, MapPin, KeyRound, Bot, RefreshCw, Package } from 'lucide-react';
 
@@ -69,6 +70,7 @@ export default function MissionDetailPage() {
 
   return (
     <div className="space-y-6">
+      <PageHeading title={t.detail} description={mission.id ? String(mission.id) : undefined} />
       {/* Header */}
       <div className="glass-panel p-6 space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-3">
@@ -87,7 +89,7 @@ export default function MissionDetailPage() {
         <div className="flex flex-wrap items-center gap-3">
           <Navigation className="text-accent" size={24} />
           <div>
-            <h2 className="text-xl font-bold txt-main">{t.detail}</h2>
+            <h2 className="text-xl font-bold txt-main">{mission.waypointName || mission.roomCode || t.detail}</h2>
             <p className="text-[11px] txt-sec font-mono mt-0.5">{mission.id}</p>
           </div>
           <span className={`status-pill ${statusPillClass(mission.status)} ml-2`}>

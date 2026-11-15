@@ -1,7 +1,8 @@
 'use client';
 
 import { useState, useRef, useEffect } from 'react';
-import { LogOut, ChevronDown } from 'lucide-react';
+import { LogOut, ChevronDown, UserRound } from 'lucide-react';
+import Link from 'next/link';
 import { useLanguage } from './LanguageProvider';
 
 interface UserDropdownProps {
@@ -80,6 +81,7 @@ export default function UserDropdown({ username, role, onLogoutClick }: UserDrop
             </div>
           </div>
 
+          <Link href="/account" onClick={() => setIsOpen(false)} className="flex items-center gap-2.5 px-2.5 py-2 text-sm rounded-lg hover:bg-elevated"><UserRound size={15} />{dict.header.account}</Link>
           <button
             type="button"
             onClick={() => {

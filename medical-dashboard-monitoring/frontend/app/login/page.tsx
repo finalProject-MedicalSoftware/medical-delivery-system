@@ -2,18 +2,19 @@
 
 import { FormEvent, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { LockKeyhole, LogIn, ShieldCheck, Bot } from 'lucide-react';
-import { csrfHeaders } from '../lib/csrf';
+import { LockKeyhole, LogIn, ShieldCheck, Eye, EyeOff, User } from 'lucide-react';
+import { NevoBrand, RobotArtwork } from '../components/NevoUI';
 import { useLanguage } from '../components/LanguageProvider';
 
 export default function LoginPage() {
   const router = useRouter();
-  const { dict } = useLanguage();
+  const { dict, language } = useLanguage();
   const t = dict.login;
   const [username, setUsername] = useState('operator');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -41,55 +42,35 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-page px-4">
-      <div className="w-full max-w-md">
-        <div className="flex flex-col items-center mb-8">
-          <div className="w-16 h-16 rounded-2xl bg-accent flex items-center justify-center shadow-lg mb-4">
-            <Bot size={36} className="text-white" />
+    <div className="login-page">
+      <section className="login-brand">
+        <NevoBrand />
+        <h1>{language === 'id' ? 'Sistem Kendali & Monitoring Robot Pengantar Obat' : 'Medicine Delivery Robot Control & Monitoring'}</h1>
+        <p>{language === 'id' ? 'Distribusi obat yang lebih aman, terkendali, dan efisien di lingkungan rumah sakit.' : 'Safer, controlled and efficient medicine delivery throughout the hospital.'}</p>
+        <RobotArtwork className="login-art" />
+      </section>
+      <form onSubmit={submit} className="glass-panel login-form">
+        <h2>{language === 'id' ? 'Masuk ke NEVO' : 'Sign in to NEVO'}</h2>
+        <p>{language === 'id' ? 'Masukkan akun Anda untuk melanjutkan' : 'Enter your account to continue'}</p>
+        <div className="space-y-5">
+          <div className="space-y-2">
+            <label htmlFor="username" className="block text-sm font-medium">{dict.auth.username}</label>
+            <div className="relative"><User size={20} className="absolute left-4 top-1/2 -translate-y-1/2 txt-sec pointer-events-none" />
+              <input id="username" type="text" required autoComplete="username" value={username} onChange={e => setUsername(e.target.value)} className="input-field !pl-12" placeholder={dict.auth.username} />
+            </div>
           </div>
-          <h1 className="text-2xl font-bold txt-main">{t.title}</h1>
-          <p className="text-sm txt-sec mt-1 text-center">{t.subtitle}</p>
+          <div className="space-y-2">
+            <label htmlFor="password" className="block text-sm font-medium">{dict.auth.password}</label>
+            <div className="relative"><LockKeyhole size={20} className="absolute left-4 top-1/2 -translate-y-1/2 txt-sec pointer-events-none" />
+              <input id="password" type={showPassword ? 'text' : 'password'} required autoComplete="current-password" value={password} onChange={e => setPassword(e.target.value)} className="input-field !pl-12 !pr-12" placeholder="••••••••" />
+              <button type="button" onClick={() => setShowPassword(!showPassword)} className="absolute right-3 top-1/2 -translate-y-1/2 p-2 txt-sec" aria-label={showPassword ? 'Sembunyikan kata sandi' : 'Tampilkan kata sandi'} aria-pressed={showPassword}>{showPassword ? <EyeOff size={20} /> : <Eye size={20} />}</button>
+            </div>
+          </div>
+          {error && <div role="alert" className="rounded-xl bg-error/10 text-error p-3 text-sm flex gap-2"><ShieldCheck size={18} />{error}</div>}
         </div>
-
-        <form onSubmit={submit} className="glass-panel p-8 space-y-5">
-          <div className="space-y-1.5">
-            <label htmlFor="username" className="block text-xs font-semibold txt-sec uppercase tracking-wide">
-              {dict.auth.username}
-            </label>
-            <div className="relative">
-              <LockKeyhole size={16} className="absolute left-3 top-1/2 -translate-y-1/2 txt-sec pointer-events-none" />
-              <input
-                id="username" type="text" required autoComplete="username"
-                value={username} onChange={(e) => setUsername(e.target.value)}
-                className="input-field pl-10" placeholder={dict.auth.username}
-              />
-            </div>
-          </div>
-
-          <div className="space-y-1.5">
-            <label htmlFor="password" className="block text-xs font-semibold txt-sec uppercase tracking-wide">
-              {dict.auth.password}
-            </label>
-            <input
-              id="password" type="password" required autoComplete="current-password"
-              value={password} onChange={(e) => setPassword(e.target.value)}
-              className="input-field" placeholder="••••••••"
-            />
-          </div>
-
-          {error && (
-            <div className="status-pill status-danger inline-flex items-center gap-1.5 px-3 py-1.5">
-              <ShieldCheck size={12} /> {error}
-            </div>
-          )}
-
-          <button type="submit" disabled={busy} className="btn-primary w-full flex items-center justify-center gap-2">
-            <LogIn size={16} /> {busy ? t.signingIn : t.signIn}
-          </button>
-
-          <p className="text-xs text-center txt-sec">{t.demoHint}</p>
-        </form>
-      </div>
+        <button type="submit" disabled={busy} className="btn-primary w-full flex items-center justify-center gap-3"><LogIn size={22} />{busy ? t.signingIn : t.signIn}</button>
+        <p className="text-xs text-center !mb-0 !mt-5">{t.demoHint}</p>
+      </form>
     </div>
   );
 }

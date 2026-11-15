@@ -251,6 +251,16 @@ function ok(label) { passed += 1; console.log(`  ✓ ${label}`); }
   assert.ok(producedOn(require('../src/kafka/config').TOPICS.SIMRS_ROBOT_EVENTS).some((p) => p.value.code === 'ROBOT_COMMAND_RESULT' && p.value.data.commandId === 'cmd-2'), 'result sintetis ke Kafka');
   ok('Robot tak dikenal -> ROBOT_COMMAND_RESULT REJECTED/UNKNOWN_ROBAT (Kafka+UI)'.replace('ROBAT', 'BOT'));
 
+  // Robot disconnect diumumkan sebagai READY/OFFLINE agar roster UI tidak stale.
+  const D = await openSock();
+  D.ws.send(JSON.stringify({ code: 'SI', data: { type: 'ROBOT', robot_id: 'nevo-offline-test' } }));
+  await D.inbox.next((x) => isFrame(x) && x.code === 'ACK_SOFT', 'D: ACK_SOFT');
+  D.ws.close();
+  m = await U0.inbox.next((x) => isFrame(x) && x.code === 'READY' && x.data.robot_id === 'nevo-offline-test', 'U0: robot OFFLINE');
+  assert.strictEqual(m.data.status, 'OFFLINE');
+  assert.strictEqual(m.data.mode, 'OFFLINE');
+  ok('Robot disconnect -> READY/OFFLINE ke UI');
+
   // 12) Bridge secret salah -> 401
   const bad = await post('/internal/publish', { v: 1, eventId: 'e-x', type: 'X' }, { 'X-Internal-Secret': 'wrong' });
   assert.strictEqual(bad.status, 401);

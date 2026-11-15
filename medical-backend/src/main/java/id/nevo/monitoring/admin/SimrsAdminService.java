@@ -1,6 +1,10 @@
 package id.nevo.monitoring.admin;
 
 import id.nevo.monitoring.SimrsProperties;
+import id.nevo.monitoring.SimrsDestinationPolicy;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import jakarta.annotation.PostConstruct;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -18,10 +22,28 @@ public class SimrsAdminService {
     private static final Logger log = LoggerFactory.getLogger(SimrsAdminService.class);
     private final JdbcTemplate db;
     private final SimrsProperties props;
+    private final SimrsDestinationPolicy destinationPolicy;
+    private final ObjectMapper json = new ObjectMapper();
 
-    public SimrsAdminService(JdbcTemplate db, SimrsProperties props) {
+    public SimrsAdminService(JdbcTemplate db, SimrsProperties props, SimrsDestinationPolicy destinationPolicy) {
         this.db = db;
         this.props = props;
+        this.destinationPolicy = destinationPolicy;
+        this.props.captureBootstrapBaseUrl();
+    }
+
+    @PostConstruct
+    public void loadPersistedConfig() {
+        List<String> rows = db.query("SELECT value_::text FROM m_setting WHERE key_ = ?", (rs, n) -> rs.getString(1), "simrs.config");
+        if (rows.isEmpty()) return;
+        try {
+            JsonNode saved = json.readTree(rows.get(0));
+            String baseUrl = saved.path("baseUrl").asText("");
+            if (!baseUrl.isBlank()) props.setBaseUrl(destinationPolicy.validate(baseUrl).toString());
+            log.info("Persisted SIMRS runtime configuration loaded");
+        } catch (Exception ex) {
+            log.error("Persisted SIMRS Base URL rejected; bootstrap configuration remains active");
+        }
     }
 
     // ── config ────────────────────────────────────────────────────────────────
@@ -29,7 +51,7 @@ public class SimrsAdminService {
     public Map<String, Object> getConfig() {
         Map<String, Object> cfg = new LinkedHashMap<>();
         cfg.put("enabled", props.isEnabled());
-        cfg.put("baseUrl", maskBaseUrl(props.getBaseUrl()));
+        cfg.put("baseUrl", props.normalizedBaseUrl());
         cfg.put("writeEnabled", props.isWriteEnabled());
         cfg.put("pollIntervalSeconds", props.getPollIntervalSeconds());
         cfg.put("connectTimeoutMs", props.getConnectTimeoutMs());
@@ -39,34 +61,20 @@ public class SimrsAdminService {
         return cfg;
     }
 
-    public Map<String, Object> updateConfig(Map<String, Object> patch) {
+    public Map<String, Object> updateConfig(Map<String, Object> patch, String actor) {
         if (patch == null) throw new IllegalArgumentException("patch wajib ada");
 
         String baseUrl = stringFrom(patch, "baseUrl");
-        if (baseUrl != null) props.setBaseUrl(baseUrl.trim());
-
-        Object writeEnabled = patch.get("writeEnabled");
-        if (writeEnabled != null) props.setWriteEnabled(Boolean.parseBoolean(writeEnabled.toString()));
-
-        Object pollSec = patch.get("pollIntervalSeconds");
-        if (pollSec != null) props.setPollIntervalSeconds(toInt(pollSec, 30));
-
-        Object connTimeout = patch.get("connectTimeoutMs");
-        if (connTimeout != null) props.setConnectTimeoutMs(toInt(connTimeout, 5000));
-
-        Object readTimeout = patch.get("readTimeoutMs");
-        if (readTimeout != null) props.setReadTimeoutMs(toInt(readTimeout, 10000));
-
-        Object writeMax = patch.get("writeMaxAttempts");
-        if (writeMax != null) props.setWriteMaxAttempts(toInt(writeMax, 5));
-
+        if (baseUrl == null) throw new IllegalArgumentException("baseUrl wajib ada");
+        props.setBaseUrl(destinationPolicy.validate(baseUrl).toString());
         savePropsToDb();
+        db.update("INSERT INTO h_mapping_audit(actor,operation,mapping_id) VALUES (?,?,?)", safeAgent(actor), "SIMRS_BASE_URL_UPDATE", null);
         return getConfig();
     }
 
-    public Map<String, Object> patchConfig(Map<String, Object> patch) {
+    public Map<String, Object> patchConfig(Map<String, Object> patch, String actor) {
         // alias — same as update; preserves endpoint contract flexibility
-        return updateConfig(patch);
+        return updateConfig(patch, actor);
     }
 
     // ── mission reassign ──────────────────────────────────────────────────────
@@ -147,25 +155,11 @@ public class SimrsAdminService {
     private void savePropsToDb() {
         // Persist to m_setting for config-sync across frontend sessions.
         // ponytail: saat ini hanya properti polling; tambahkan mapping fields lain ke kolom settings jika perlu.
-        Map<String, Object> snapshot = getConfig();
+        Map<String, Object> snapshot = Map.of("baseUrl", props.normalizedBaseUrl(), "version", 1);
         db.update("INSERT INTO m_setting (key_, value_, updated_at) VALUES (?, ?::jsonb, ?) " +
                         "ON CONFLICT (key_) DO UPDATE SET value_ = excluded.value_, updated_at = excluded.updated_at",
                 "simrs.config", toJson(snapshot), OffsetDateTime.now(ZoneOffset.UTC));
         log.info("Simrs config persisted");
-    }
-
-    private String maskBaseUrl(String url) {
-        if (url == null || url.isBlank()) return url;
-        try {
-            java.net.URI uri = java.net.URI.create(url);
-            String scheme = uri.getScheme();
-            String host = uri.getHost();
-            int port = uri.getPort() < 0 ? (uri.getScheme().equals("https") ? 443 : 80) : uri.getPort();
-            String path = uri.getPath() == null || uri.getPath().isBlank() ? "/" : uri.getPath();
-            return scheme + "://" + host + ":" + port + path;
-        } catch (Exception e) {
-            return "[INVALID]" + url.substring(Math.max(0, url.length() - 20));
-        }
     }
 
     private static String toJson(Map<String, Object> map) {
@@ -194,10 +188,6 @@ public class SimrsAdminService {
     private static String stringFrom(Map<String, Object> map, String key) {
         Object v = map.get(key);
         return v instanceof String s ? s : null;
-    }
-
-    private static int toInt(Object v, int def) {
-        try { return Integer.parseInt(v.toString()); } catch (Exception e) { return def; }
     }
 
     private static String safeAgent(String agent) {

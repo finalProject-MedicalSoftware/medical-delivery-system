@@ -8,10 +8,12 @@
  * Tanpa useApp().request/telemetry — semua data live dari relay, bukan simulator backend.
  */
 import React, { useState, useEffect, useRef } from 'react';
+import { PageHeading, RobotArtwork } from '../components/NevoUI';
 import { useLanguage } from '../components/LanguageProvider';
-import { ArrowUp, ArrowDown, ArrowLeft, ArrowRight } from 'lucide-react';
+import { ArrowUp, ArrowDown, ArrowLeft, ArrowRight, Square } from 'lucide-react';
+import { useApp } from '../components/AppShell';
 
-type RosterEntry = { robot_id: string; lastCode: string; lastSeen: number; status: string; position: any; battery: number | null };
+type RosterEntry = { robot_id: string; lastCode: string; lastSeen: number; status: string; mode?: string; position: any; battery: number | null };
 type Vec = { linear: number; angular: number };
 
 /** Merge frame TIFA uplink ke roster (mirror trackRoster di lib/ws-relay). */
@@ -24,18 +26,23 @@ function applyFrame(list: RosterEntry[], f: any): RosterEntry[] {
     lastCode: f.code,
     lastSeen: Date.now(),
     status: old?.status || 'UNKNOWN',
+    mode: old?.mode,
     position: old?.position ?? null,
     battery: old?.battery ?? null,
   };
   const d = f.data || {};
   if (f.code === 'POSITION') next.position = d;
   if (f.code === 'BATTERY') next.battery = d.battery_percent ?? d.battery ?? null;
-  if (f.code === 'READY') next.status = d.status || 'READY';
+  if (f.code === 'READY') next.status = d.status === 'OFFLINE' ? 'OFFLINE' :
+    d.device_authenticated === true ? (d.status || 'UNKNOWN') : 'UNKNOWN';
+  if (f.code === 'READY' && typeof d.mode === 'string') next.mode = d.mode;
+  if (f.code === 'MODE' && typeof d.mode === 'string') next.mode = d.mode;
   if (f.code === 'ERROR') next.status = d.status || 'ERROR';
   return [...list.filter((x) => x.robot_id !== id), next].sort((a, b) => a.robot_id.localeCompare(b.robot_id));
 }
 
 export default function RobotsPage() {
+  const { user, selectedRobotId, selectRobot } = useApp();
   const { dict, language } = useLanguage();
   const t = dict.robots;
   const locale = language === 'id' ? 'id-ID' : 'en-US';
@@ -50,6 +57,10 @@ export default function RobotsPage() {
   // Registry (backend) — robot terdaftar ikut masuk pilihan meski belum online.
   const [registry, setRegistry] = useState<{ robotId: string; name: string }[]>([]);
 
+  useEffect(() => {
+    if (selectedRobotId) setTargetId(selectedRobotId);
+  }, [selectedRobotId]);
+
   // SSE roster — gateway dipegang relay BFF; halaman hanya konsumen event.
   useEffect(() => {
     const es = new EventSource('/api/ws/stream?channels=all');
@@ -58,7 +69,8 @@ export default function RobotsPage() {
     es.onmessage = (ev) => {
       let item: any;
       try { item = JSON.parse(ev.data); } catch { return; }
-      if (item?.type === 'SSE_INIT') { setConnected(true); setStreamError(''); }
+      if (item?.type === 'SSE_INIT') { setConnected(item.relayConnected === true); setStreamError(''); }
+      else if (item?.type === 'SSE_RELAY') { setConnected(item.connected === true); setRoster(item.robots || []); }
       else if (item?.type === 'SSE_ROSTER') setRoster(item.robots || []);
       else if (item?.code && item.data?.robot_id) setRoster((cur) => applyFrame(cur, item));
       else if (item?.error) setStreamError(item.error);
@@ -76,11 +88,11 @@ export default function RobotsPage() {
 
   const target = roster.find((r) => r.robot_id === targetId) || null;
 
-  const postCommand = async (code: string, data: Record<string, unknown>) => {
+  const postCommand = async (code: string, data: Record<string, unknown>, robotId = targetId) => {
     setActionError('');
     setSending(true);
     try {
-      const payload = { code, data: targetId ? { ...data, robot_id: targetId } : data };
+      const payload = { code, data: robotId ? { ...data, robot_id: robotId } : data };
       const res = await fetch('/api/ws/command', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
@@ -88,24 +100,67 @@ export default function RobotsPage() {
       });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) setActionError(`${t.sendFail}: ${body.error || res.status}`);
+      return res.ok;
     } finally {
       setSending(false);
     }
   };
 
-  // ---- teleop 10Hz: sumber kombinasi linear/angular dari tombol hold + WASD ----
+  // Manual movement needs affirmative relay, target, role and robot mode evidence.
+  // An absent/unknown mode is intentionally treated as unsafe.
+  const hardwareAuthenticated = false; // Gateway has no device credential contract yet.
+  const canMove = hardwareAuthenticated && connected && !!target && ['ADMIN', 'FARMASI', 'OPERATOR'].includes(user?.role?.toUpperCase() || '') &&
+    ['READY', 'IDLE'].includes((target.status || '').toUpperCase()) &&
+    ['MANUAL', 'TELEOP'].includes((target.mode || '').toUpperCase());
+  const gate = useRef({ canMove, targetId, connected });
+  gate.current = { canMove, targetId, connected };
+
+  // ---- teleop: all inputs share one gate and one cancellation path ----
   const held = useRef(new Map<string, Vec>());
   const lastSent = useRef<Vec>({ linear: 0, angular: 0 });
+  const activeTarget = useRef<string | null>(null);
+  const generation = useRef(0);
+  const queue = useRef<Promise<void>>(Promise.resolve());
+  const [controlUncertain, setControlUncertain] = useState(false);
   const sendRef = useRef(postCommand);
   sendRef.current = postCommand;
-
-  const addVec = (id: string, v: Vec) => held.current.set(id, v);
+  const enqueue = (vec: Vec, robotId: string, epoch: number) => {
+    queue.current = queue.current.catch(() => {}).then(async () => {
+      const moving = vec.linear !== 0 || vec.angular !== 0;
+      if (moving && (epoch !== generation.current || !gate.current.canMove || gate.current.targetId !== robotId || !navigator.onLine)) return;
+      if (!moving && (!gate.current.connected || !navigator.onLine)) { setControlUncertain(true); return; }
+      const delivered = await sendRef.current('TELEOP', vec, robotId);
+      if (!moving && !delivered) setControlUncertain(true);
+    }).catch(() => { setControlUncertain(true); });
+  };
+  const stop = (force = false) => {
+    const robotId = activeTarget.current;
+    const hadMotion = held.current.size > 0 || lastSent.current.linear !== 0 || lastSent.current.angular !== 0;
+    held.current.clear();
+    lastSent.current = { linear: 0, angular: 0 };
+    activeTarget.current = null;
+    generation.current += 1;
+    if (robotId && (hadMotion || force)) enqueue({ linear: 0, angular: 0 }, robotId, generation.current);
+    else if (force && gate.current.connected && gate.current.targetId && navigator.onLine) {
+      enqueue({ linear: 0, angular: 0 }, gate.current.targetId, generation.current);
+    }
+  };
+  const stopRef = useRef(stop);
+  stopRef.current = stop;
+  const addVec = (id: string, v: Vec) => {
+    if (!gate.current.canMove || !gate.current.targetId || !navigator.onLine || document.hidden) return;
+    if (!activeTarget.current) activeTarget.current = gate.current.targetId;
+    held.current.set(id, v);
+  };
   const removeVec = (id: string) => {
     if (!held.current.has(id)) return;
     held.current.delete(id);
-    if (held.current.size === 0) postCommandRefStop();
+    if (held.current.size === 0) stopRef.current();
   };
-  const postCommandRefStop = () => { sendRef.current('TELEOP', { linear: 0, angular: 0 }); };
+
+  useEffect(() => {
+    if (activeTarget.current && (!canMove || activeTarget.current !== targetId)) stopRef.current();
+  }, [canMove, targetId]);
 
   useEffect(() => {
     const KEYS = ['w', 's', 'a', 'd'];
@@ -128,9 +183,14 @@ export default function RobotsPage() {
     };
     window.addEventListener('keydown', onKey);
     window.addEventListener('keyup', onUp);
+    const onBlur = () => stopRef.current();
+    const onVisibility = () => { if (document.hidden) stopRef.current(); };
+    window.addEventListener('blur', onBlur);
+    document.addEventListener('visibilitychange', onVisibility);
     // Ticker 10Hz: kirim kombinasi aktif; transisi ke nol dikirim sekali di sini
     // bila terjadi langsung dari ticker (keyup sudah kirim stop sendiri).
     const timer = setInterval(() => {
+      if (!gate.current.canMove || !navigator.onLine || document.hidden) { stopRef.current(); return; }
       const cur: Vec = { linear: 0, angular: 0 };
       for (const v of held.current.values()) { cur.linear += v.linear; cur.angular += v.angular; }
       cur.linear = Math.max(-1, Math.min(1, cur.linear));
@@ -138,13 +198,16 @@ export default function RobotsPage() {
       const last = lastSent.current;
       if (cur.linear !== last.linear || cur.angular !== last.angular) {
         lastSent.current = cur;
-        sendRef.current('TELEOP', cur);
+        if (activeTarget.current) enqueue(cur, activeTarget.current, generation.current);
       }
     }, 100);
     return () => {
       window.removeEventListener('keydown', onKey);
       window.removeEventListener('keyup', onUp);
+      window.removeEventListener('blur', onBlur);
+      document.removeEventListener('visibilitychange', onVisibility);
       clearInterval(timer);
+      stopRef.current();
     };
   }, []);
 
@@ -165,11 +228,13 @@ export default function RobotsPage() {
       key={id}
       type="button"
       className="btn-secondary inline-flex items-center gap-1 text-xs"
-      disabled={!targetId}
-      onPointerDown={() => addVec(id, v)}
+      disabled={!canMove}
+      style={{ touchAction: 'none' }}
+      onPointerDown={(e) => { e.currentTarget.setPointerCapture(e.pointerId); addVec(id, v); }}
       onPointerUp={() => removeVec(id)}
       onPointerLeave={() => removeVec(id)}
       onPointerCancel={() => removeVec(id)}
+      onLostPointerCapture={() => removeVec(id)}
       aria-label={id}
     >
       {React.createElement(Icon, { size: 14 })} {id}
@@ -177,35 +242,9 @@ export default function RobotsPage() {
   );
 
   return (
-    <div className="max-w-5xl mx-auto px-4 md:px-6 py-6 md:py-8 space-y-5">
-      <div className="flex items-start justify-between gap-4 flex-wrap">
-        <div>
-          <h1 className="text-xl md:text-2xl font-bold txt-main">{t.title}</h1>
-          <p className="text-sm txt-sec mt-1">{t.subtitle}</p>
-        </div>
-        <span className={`status-pill ${connected ? 'status-success' : 'status-danger'}`}>
-          {connected ? dict.common.live : dict.common.disconnected}
-        </span>
-      </div>
-
-      {streamError && <div className="glass-panel p-3 text-sm text-error">SSE: {streamError} — atur UI ID di /settings lalu aktifkan relay.</div>}
-      {actionError && <div className="glass-panel p-3 text-sm text-error">{actionError}</div>}
-
-      {/* KPI armada dari roster WS (total, online, rata-rata baterai) */}
-      <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-        {[
-          { label: t.fleetTotal, value: String(roster.length), cls: 'txt-main' },
-          { label: t.fleetOnline, value: String(onlineCount), cls: 'text-success' },
-          { label: t.fleetAvgBattery, value: `${avgBattery.toFixed(0)}%`, cls: roster.some((r) => (r.battery ?? 100) <= 20) ? 'text-error' : 'txt-main' },
-        ].map((kpi) => (
-          <div key={kpi.label} className="glass-panel card-hover p-4">
-            <p className="text-xs txt-sec">{kpi.label}</p>
-            <p className={`text-2xl font-bold tabular-nums mt-1 ${kpi.cls}`}>{kpi.value}</p>
-          </div>
-        ))}
-      </div>
-
-      <section className="glass-panel p-4 md:p-6 space-y-5">
+    <div className="robots-page space-y-5">
+      <PageHeading title={t.title} description={t.subtitle} actions={<span className={`status-pill ${statusClass(target?.status || '')}`}>{target?.mode ? `${target.mode} · ` : ''}{target?.status || dict.common.unknown}</span>} />
+      <section className="glass-panel robots-workspace p-4 md:p-5">
         <div className="flex items-center justify-between gap-3 flex-wrap">
           <div className="flex items-center gap-2 min-w-0">
             <label className="text-xs txt-sec shrink-0" htmlFor="robot-target">{t.targetRobot}</label>
@@ -213,7 +252,7 @@ export default function RobotsPage() {
               id="robot-target"
               className="bg-input border border-border-base rounded-xl px-3 py-2 text-sm txt-main"
               value={targetId}
-              onChange={(e) => setTargetId(e.target.value)}
+              onChange={(e) => { setTargetId(e.target.value); if (e.target.value) selectRobot(e.target.value); }}
             >
               <option value="">— {t.none}</option>
               {roster.map((r) => (
@@ -226,9 +265,7 @@ export default function RobotsPage() {
                 ))}
             </select>
           </div>
-          <div className="flex items-center gap-2">
-            <span className={`status-pill ${statusClass(target?.status || '')}`}>{target?.status || dict.common.unknown}</span>
-          </div>
+          <span className="text-xs txt-sec">{targetId || t.none}</span>
         </div>
 
         <dl className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
@@ -260,20 +297,27 @@ export default function RobotsPage() {
           </div>
         </dl>
 
-        {/* Teleop: tombol hold + WASD, kombinasi dikirim 10Hz oleh ticker */}
-        <div className="border-t border-border-base pt-4 space-y-3">
-          <p className="text-xs font-semibold txt-main">TELEOP</p>
-          <div className="flex items-center gap-2 flex-wrap">
+        <div className="robot-control-grid"><figure className="robot-preview"><RobotArtwork variant="fullbody" /><figcaption>{language === 'id' ? 'Ilustrasi desain robot NEVO · bukan video langsung. Feed kamera belum tersedia.' : 'NEVO design illustration · not a live video. Camera feed unavailable.'}</figcaption></figure>        {/* Teleop: tombol hold + WASD, kombinasi dikirim 10Hz oleh ticker */}
+        <div className="robot-control-panel glass-panel p-5 space-y-3">
+          <h2 className="section-title">Teleop (Manual)</h2>
+          {!connected && <p role="status" className="rounded-xl bg-warning/10 text-warning p-3 text-xs">{language === 'id' ? 'Koneksi robot belum tersedia. Periksa Pengaturan Sistem sebelum mengendalikan robot.' : 'Robot connection unavailable. Check System Settings before controlling the robot.'}</p>}
+          {connected && targetId && !canMove && <p role="status" className="rounded-xl bg-warning/10 text-warning p-3 text-xs">{language === 'id' ? 'Gerak manual diblokir sampai autentikasi perangkat tersedia. Status koneksi bukan bukti READY.' : 'Manual movement is blocked until device authentication is available. Connection is not proof of READY.'}</p>}
+          {controlUncertain && <p role="alert" className="rounded-xl bg-error/10 text-error p-3 text-xs">{language === 'id' ? 'Koneksi terputus saat kendali aktif. Gerakan lokal dihentikan, tetapi penghentian robot belum dapat dipastikan. Periksa robot sebelum melanjutkan.' : 'Connection lost during control. Local motion stopped, but robot stop is unconfirmed. Check the robot before continuing.'}</p>}
+          {streamError && <p className="text-xs text-error">SSE: {streamError} — periksa Pengaturan Sistem.</p>}
+          {actionError && <p className="text-xs text-error">{actionError}</p>}
+          <div className="direction-pad">
             {holdBtn('forward', ArrowUp, { linear: 1, angular: 0 })}
             {holdBtn('left', ArrowLeft, { linear: 0, angular: 1 })}
             {holdBtn('right', ArrowRight, { linear: 0, angular: -1 })}
             {holdBtn('reverse', ArrowDown, { linear: -1, angular: 0 })}
+            <button type="button" aria-label="Stop" className="btn-secondary" disabled={!connected || !targetId} onClick={() => stopRef.current(true)}><Square size={24} fill="currentColor" />Stop</button>
           </div>
           <p className="text-[11px] txt-sec">{t.wasdHint}</p>
         </div>
 
+</div>
         {/* Kontrol mapping TIFA: MAPPING_START/STOP/SAVE/FLAG + MAP_SELECTED */}
-        <div className="border-t border-border-base pt-4 space-y-3">
+        <div className="robot-mapping border-t border-border-base pt-4 space-y-3">
           <p className="text-xs font-semibold txt-main">{t.mapping}</p>
           <div className="flex items-center gap-2 flex-wrap">
             <button type="button" className="btn-primary text-xs" disabled={!targetId || sending} onClick={() => postCommand('MAPPING_START', {})}>{t.mapStart}</button>
@@ -301,6 +345,19 @@ export default function RobotsPage() {
           </div>
         </div>
       </section>
+
+      <div className="grid grid-cols-2 md:grid-cols-3 gap-3" role="group" aria-label={t.fleetTotal}>
+        {[
+          { label: t.fleetTotal, value: String(roster.length), cls: 'txt-main' },
+          { label: t.fleetOnline, value: String(onlineCount), cls: 'text-success' },
+          { label: t.fleetAvgBattery, value: `${avgBattery.toFixed(0)}%`, cls: roster.some((r) => (r.battery ?? 100) <= 20) ? 'text-error' : 'txt-main' },
+        ].map((kpi) => (
+          <div key={kpi.label} className="glass-panel p-3">
+            <p className="text-xs txt-sec">{kpi.label}</p>
+            <p className={`text-xl font-bold tabular-nums mt-1 ${kpi.cls}`}>{kpi.value}</p>
+          </div>
+        ))}
+      </div>
 
       <section className="glass-panel divide-y divide-border-base">
         {roster.length === 0 ? (

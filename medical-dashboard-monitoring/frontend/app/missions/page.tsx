@@ -2,17 +2,15 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
+import { PageHeading, StatCard } from '../components/NevoUI';
 import { useApp } from '../components/AppShell';
 import { useLanguage } from '../components/LanguageProvider';
 import { statusPillClass, missionStatusLabel } from '../lib/mission-status';
 import {
-  History, Search, Filter, ChevronRight, RefreshCw, Plus,
+  History, Search, Filter, ChevronRight, RefreshCw, Plus, ClipboardList, Play, CheckCircle2, XCircle,
 } from 'lucide-react';
 
 const STATUS_FILTERS = ['ALL', 'QUEUED', 'EXECUTING', 'SUCCEEDED', 'CANCELLED', 'FAILED'];
-
-// ponytail: stepper & KPI diturunkan dari status lifecycle, bukan event MISSION_EVENT per fase — upgrade: derive dari MISSION_EVENT saat konsumsi Kafka aktif.
-const stepNum = (s: string) => (s === 'SUCCEEDED' ? 4 : s === 'EXECUTING' ? 2 : 1);
 
 const KPI_GROUPS = [
   { statuses: ['QUEUED', 'CREATED', 'PENDING', 'SUBMITTED', 'BACKEND_ACCEPTED', 'ROBOT_ACKNOWLEDGED'] },
@@ -22,7 +20,7 @@ const KPI_GROUPS = [
 ];
 
 export default function MissionsPage() {
-  const { request } = useApp();
+  const { request, selectedRobotId } = useApp();
   const { dict, language } = useLanguage();
   const t = dict.missions;
   const locale = language === 'id' ? 'id-ID' : 'en-US';
@@ -46,7 +44,8 @@ export default function MissionsPage() {
     return () => window.clearInterval(timer);
   }, [loadMissions]);
 
-  const filteredMissions = missions.filter((m) => {
+  const robotMissions = selectedRobotId ? missions.filter((mission) => mission.robotId === selectedRobotId) : missions;
+  const filteredMissions = robotMissions.filter((m) => {
     if (statusFilter !== 'ALL' && m.status !== statusFilter) return false;
     if (searchQuery) {
       const query = searchQuery.toLowerCase();
@@ -62,45 +61,25 @@ export default function MissionsPage() {
   });
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="glass-panel p-6 flex flex-wrap items-center justify-between gap-4">
-        <div>
-          <h2 className="text-xl font-bold txt-main flex items-center gap-2">
-            <History className="text-accent" size={22} />
-            {t.title}
-          </h2>
-          <p className="text-xs txt-sec mt-1">{t.subtitle}</p>
-        </div>
-        <div className="flex items-center gap-2">
-          <Link href="/missions/create" className="btn-primary flex items-center gap-2 text-xs">
-            <Plus size={14} /> {t.newMission}
-          </Link>
-          <button onClick={() => loadMissions()} className="btn-secondary flex items-center gap-2 text-xs">
-            <RefreshCw size={14} /> {dict.common.refresh}
-          </button>
-        </div>
-      </div>
-
+    <div className="missions-page space-y-6">
+      <PageHeading title={t.title} description={t.subtitle} actions={<><Link href="/missions/create" className="btn-primary flex items-center gap-2"><Plus size={18} />{t.newMission}</Link><button onClick={() => loadMissions()} className="btn-secondary flex items-center gap-2"><RefreshCw size={18} />{dict.common.refresh}</button></>} />
       {/* KPI strip misi per status (mockup monitoring-missions) */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        {KPI_GROUPS.map((g) => {
-          const count = missions.filter((m) => g.statuses.includes(m.status)).length;
+        {KPI_GROUPS.map((g, index) => {
+          const count = robotMissions.filter((m) => g.statuses.includes(m.status)).length;
           return (
-            <div key={g.statuses[0]} className="glass-panel card-hover p-4">
-              <p className="text-xs txt-sec">{missionStatusLabel(g.statuses[0], dict)}</p>
-              <p className="text-2xl font-bold tabular-nums mt-1">{count}</p>
-            </div>
+            <StatCard key={g.statuses[0]} label={missionStatusLabel(g.statuses[0], dict)} value={count} icon={[ClipboardList, Play, CheckCircle2, XCircle][index]} tone={index === 1 || index === 2 ? 'success' : 'brand'} />
           );
         })}
       </div>
 
       {/* Filter & Search */}
-      <div className="glass-panel p-4 flex flex-wrap items-center justify-between gap-3 text-xs">
+      <div className="glass-panel missions-filters p-4 flex flex-wrap items-center justify-between gap-3 text-xs">
         <div className="flex items-center gap-2 flex-1 max-w-md bg-input border border-base rounded-xl px-3 py-2">
           <Search size={15} className="txt-sec" />
           <input
             type="text" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)}
+            aria-label={t.searchPlaceholder}
             placeholder={t.searchPlaceholder}
             className="bg-transparent border-none txt-main focus:outline-none w-full"
           />
@@ -112,6 +91,7 @@ export default function MissionsPage() {
             <button
               key={st}
               onClick={() => setStatusFilter(st)}
+              aria-pressed={statusFilter === st}
               className={`px-3 py-1.5 rounded-lg font-medium transition-all ${
                 statusFilter === st
                   ? 'bg-accent text-white shadow-sm'
@@ -125,9 +105,9 @@ export default function MissionsPage() {
       </div>
 
       {/* Table */}
-      <div className="glass-panel overflow-hidden">
+      <div className="glass-panel missions-table overflow-hidden">
         <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs">
+          <table className="w-full text-left text-xs" aria-label={t.title}>
             <thead>
               <tr className="border-b border-base bg-elevated txt-sec">
                 <th className="py-3 px-4 font-semibold">ID</th>
@@ -179,13 +159,9 @@ export default function MissionsPage() {
                       </span>
                     </td>
                     <td className="py-3 px-4">
-                      <div className="step-track" title={missionStatusLabel(m.status, dict)}>
-                        {(m.status === 'CANCELLED' || m.status === 'FAILED')
-                          ? [0, 1, 2, 3].map((i) => <span key={i} className="step-seg failed" />)
-                          : [0, 1, 2, 3].map((i) => {
-                              const n = stepNum(m.status);
-                              return <span key={i} className={`step-seg ${i < n - 1 ? 'done' : i === n - 1 ? 'active' : ''}`} />;
-                            })}
+                      <div className="mission-progress" role="group" aria-label={`${t.progress}: ${missionStatusLabel(m.status, dict)}`}>
+                        <span className="mission-progress-label">{missionStatusLabel(m.status, dict)}</span>
+                        <span className={`mission-progress-track ${m.status === 'EXECUTING' ? 'is-running' : ''} ${m.status === 'SUCCEEDED' ? 'is-complete' : ''} ${m.status === 'FAILED' || m.status === 'CANCELLED' ? 'is-ended' : ''}`} aria-hidden="true"><span /></span>
                       </div>
                     </td>
                     <td className="py-3 px-4 txt-sec">{m.createdBy}</td>

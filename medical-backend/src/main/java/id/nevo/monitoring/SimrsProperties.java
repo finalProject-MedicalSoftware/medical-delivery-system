@@ -16,14 +16,17 @@ public class SimrsProperties {
     private int writeMaxAttempts = 5; // Kontrak §1.1: maks 5 kali (percobaan 1 + 4 retry).
     private int connectTimeoutMs = 5000;
     private int readTimeoutMs = 10000;
+    private String allowedHosts = "localhost,simrs-web";
+    private boolean allowPrivateNetworks;
+    private int maxResponseBytes = 2_000_000;
+    private String bootstrapBaseUrl = "";
 
     public boolean isConfigured() {
         if (!enabled || baseUrl == null || baseUrl.isBlank() || monitoringToken == null || monitoringToken.isBlank()) return false;
         try {
             URI uri = URI.create(baseUrl.trim());
             return uri.getHost() != null && ("https".equalsIgnoreCase(uri.getScheme())
-                    || ("http".equalsIgnoreCase(uri.getScheme()) && ("localhost".equalsIgnoreCase(uri.getHost())
-                    || "simrs-web".equalsIgnoreCase(uri.getHost()))));
+                    || "http".equalsIgnoreCase(uri.getScheme()));
         } catch (IllegalArgumentException ex) {
             return false;
         }
@@ -34,6 +37,10 @@ public class SimrsProperties {
     public String normalizedBaseUrl() {
         if (baseUrl == null) return "";
         return baseUrl.trim().replaceAll("/+$", "");
+    }
+
+    public void captureBootstrapBaseUrl() {
+        if (bootstrapBaseUrl == null || bootstrapBaseUrl.isBlank()) bootstrapBaseUrl = baseUrl == null ? "" : baseUrl;
     }
 
     public boolean isEnabled() { return enabled; }
@@ -56,4 +63,11 @@ public class SimrsProperties {
     public void setConnectTimeoutMs(int value) { this.connectTimeoutMs = value; }
     public int getReadTimeoutMs() { return readTimeoutMs; }
     public void setReadTimeoutMs(int value) { this.readTimeoutMs = value; }
+    public String getAllowedHosts() { return allowedHosts; }
+    public void setAllowedHosts(String value) { this.allowedHosts = value; }
+    public boolean isAllowPrivateNetworks() { return allowPrivateNetworks; }
+    public void setAllowPrivateNetworks(boolean value) { this.allowPrivateNetworks = value; }
+    public int getMaxResponseBytes() { return maxResponseBytes; }
+    public void setMaxResponseBytes(int value) { this.maxResponseBytes = value; }
+    public String getBootstrapBaseUrl() { return bootstrapBaseUrl; }
 }

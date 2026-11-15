@@ -5,6 +5,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.server.ResponseStatusException;
@@ -21,13 +22,21 @@ public class MissionApi {
     private final RobotAdapter robotAdapter;
     private final SimrsClientService simrsService;
     private final SimrsAdminService adminService;
+    private final MissionPlanningService planningService;
 
-    public MissionApi(JdbcTemplate db, ObjectProvider<SimulatedRobotService> robotService, RobotAdapter robotAdapter, SimrsClientService simrsService, SimrsAdminService adminService) {
+    @Autowired
+    public MissionApi(JdbcTemplate db, ObjectProvider<SimulatedRobotService> robotService, RobotAdapter robotAdapter, SimrsClientService simrsService, SimrsAdminService adminService, MissionPlanningService planningService) {
         this.db = db;
         this.robotService = robotService.getIfAvailable();
         this.robotAdapter = robotAdapter;
         this.simrsService = simrsService;
         this.adminService = adminService;
+        this.planningService = planningService;
+    }
+
+    MissionApi(JdbcTemplate db, ObjectProvider<SimulatedRobotService> robotService, RobotAdapter robotAdapter,
+               SimrsClientService simrsService, SimrsAdminService adminService) {
+        this(db, robotService, robotAdapter, simrsService, adminService, null);
     }
 
     @GetMapping("/robots")
@@ -49,6 +58,19 @@ public class MissionApi {
         if (count == null || count == 0) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Robot tidak ditemukan");
         }
+        if (robotAdapter instanceof RealRobotAdapter) {
+            String registration = db.queryForObject(
+                    "SELECT registration_status FROM m_robot WHERE robot_id = ?", String.class, robotId);
+            if (!"VERIFIED".equals(registration)) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT, "Robot belum terverifikasi untuk operasi fisik");
+            }
+        } else {
+            String registration = db.queryForObject(
+                    "SELECT registration_status FROM m_robot WHERE robot_id = ?", String.class, robotId);
+            if ("DISABLED".equals(registration) || "ARCHIVED".equals(registration)) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT, "Robot tidak aktif");
+            }
+        }
         UUID commandId = UUID.randomUUID();
         robotAdapter.executeCommand(commandId, robotId, req.command(), user.getName(), req.params() == null ? Map.of() : req.params());
         return Map.of("commandId", commandId.toString(), "simulated", robotAdapter == robotService);
@@ -56,6 +78,11 @@ public class MissionApi {
 
     @PostMapping("/missions")
     public Map<String, Object> createMission(@RequestBody MissionReq req, Authentication user) {
+        String simulationRegistration = db.queryForObject(
+                "SELECT registration_status FROM m_robot WHERE robot_id = 'NEVO-01'", String.class);
+        if ("DISABLED".equals(simulationRegistration) || "ARCHIVED".equals(simulationRegistration)) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Robot simulasi tidak aktif");
+        }
         if (req.waypointId() == null) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "waypointId wajib diisi");
         }
@@ -68,9 +95,14 @@ public class MissionApi {
         }
     }
 
+    @PostMapping("/missions/manifest")
+    public Map<String, Object> createManifest(@RequestBody MissionPlanningService.ManifestRequest request, Authentication user) {
+        return planningService.dispatch(request, user.getName());
+    }
+
     private static final String MISSION_SELECT =
             "SELECT m.id, m.robot_id, m.waypoint_id, m.room_code, m.created_by, m.status, m.request_code, " +
-                    "m.simulated, m.created_at, m.updated_at, w.name as waypoint_name, w.x, w.y, " +
+            "m.simulated, m.created_at, m.updated_at, m.manifest_id, m.manifest_sequence, m.patient_mrn, m.bed_id, m.mission_source, w.name as waypoint_name, w.x, w.y, " +
                     "(SELECT dc.compartment_no FROM t_delivery_compartment dc WHERE dc.mission_id = m.id " +
                     " ORDER BY dc.compartment_no LIMIT 1) as compartment_no, " +
                     "c.payload->'patient'->>'fullName' as patient_name, " +
@@ -89,6 +121,11 @@ public class MissionApi {
         map.put("createdBy", rs.getString("created_by"));
         map.put("status", rs.getString("status"));
         map.put("requestCode", rs.getString("request_code"));
+        map.put("manifestId", rs.getObject("manifest_id"));
+        map.put("manifestSequence", rs.getObject("manifest_sequence"));
+        map.put("patientMrn", rs.getString("patient_mrn"));
+        map.put("bedId", rs.getString("bed_id"));
+        map.put("missionSource", rs.getString("mission_source"));
         map.put("compartmentNo", rs.getObject("compartment_no"));
         map.put("patientName", rs.getString("patient_name"));
         map.put("patientRoomName", rs.getString("patient_room_name"));
@@ -149,6 +186,12 @@ public class MissionApi {
         return simrsService.getConnectionStatus();
     }
 
+    /** Authenticated read-only view; credentials are never returned. */
+    @GetMapping("/integrations/simrs/config")
+    public Map<String, Object> getSimrsConfig() {
+        return adminService.getConfig();
+    }
+
     @PostMapping("/integrations/simrs/sync")
     public Map<String, Object> syncSimrs() {
         simrsService.pollAll();
@@ -179,6 +222,14 @@ public class MissionApi {
         return simrsService.getPatient(mrn);
     }
 
+    @GetMapping("/integrations/simrs/patients")
+    public Object getSimrsPatients(@RequestParam(required = false, defaultValue = "") String query,
+                                   @RequestParam(required = false, defaultValue = "") String cursor,
+                                   @RequestParam(defaultValue = "50") int limit) {
+        if (limit < 1 || limit > 100) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "limit harus 1..100");
+        return simrsService.getPatients(query, cursor, limit);
+    }
+
     @PostMapping("/integrations/simrs/delivery-status")
     public Map<String, Object> updateDeliveryStatus(@RequestBody DeliveryStatusReq req) {
         try {
@@ -204,12 +255,34 @@ public class MissionApi {
 
     @PostMapping("/simrs/admin/config")
     public Map<String, Object> updateSimrsAdminConfig(@RequestBody Map<String, Object> patch, Authentication user) {
-        return adminService.updateConfig(patch);
+        String candidate = patch == null ? null : Objects.toString(patch.get("baseUrl"), null);
+        try {
+            simrsService.testConnection(candidate);
+            Map<String, Object> config = adminService.updateConfig(patch, user.getName());
+            simrsService.configurationChanged();
+            return config;
+        } catch (IllegalArgumentException e) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, e.getMessage());
+        } catch (IllegalStateException e) {
+            throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, e.getMessage());
+        }
     }
 
     @PatchMapping("/simrs/admin/config")
     public Map<String, Object> patchSimrsAdminConfig(@RequestBody Map<String, Object> patch, Authentication user) {
-        return adminService.patchConfig(patch);
+        return updateSimrsAdminConfig(patch, user);
+    }
+
+    @PostMapping("/simrs/admin/config/test")
+    public Map<String, Object> testSimrsAdminConfig(@RequestBody Map<String, Object> patch) {
+        String candidate = patch == null ? null : Objects.toString(patch.get("baseUrl"), null);
+        try {
+            return simrsService.testConnection(candidate);
+        } catch (IllegalArgumentException e) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, e.getMessage());
+        } catch (IllegalStateException e) {
+            throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, e.getMessage());
+        }
     }
 
     @PostMapping("/simrs/admin/mission/reassign")

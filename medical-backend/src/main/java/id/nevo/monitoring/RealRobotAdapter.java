@@ -59,12 +59,17 @@ public class RealRobotAdapter implements RobotAdapter {
         requireConfigured();
         Set<String> connected = fetchConnectedRobots();
         List<Map<String, Object>> out = new ArrayList<>();
-        for (Map<String, Object> row : db.queryForList("SELECT robot_id, name FROM m_robot ORDER BY robot_id")) {
+        for (Map<String, Object> row : db.queryForList("SELECT robot_id, name, registration_status FROM m_robot ORDER BY robot_id")) {
             String rid = (String) row.get("robot_id");
+            String registration = (String) row.get("registration_status");
             Map<String, Object> m = new LinkedHashMap<>();
             m.put("robotId", rid);
             m.put("name", row.get("name"));
-            m.put("status", connected.contains(rid) ? "IDLE" : "OFFLINE");
+            String connection = connected == null ? "UNKNOWN" :
+                    connected.contains(rid) ? "ONLINE" : "OFFLINE";
+            m.put("connectionStatus", connection);
+            m.put("status", "ONLINE".equals(connection) ? "UNKNOWN" : connection);
+            m.put("registrationStatus", registration);
             m.put("activeMissionId", null);
             m.put("simulated", false);
             out.add(m);
@@ -91,12 +96,17 @@ public class RealRobotAdapter implements RobotAdapter {
             return;
         }
 
-        publisher.publishCommand("ROBOT_COMMAND", Map.of(
-                "commandId", commandId,
-                "robotId", robotId,
-                "command", command,
-                "issuedBy", userName == null ? "" : userName,
-                "params", params == null ? Map.of() : params));
+        try {
+            publisher.publishCommandChecked(Map.of(
+                    "commandId", commandId,
+                    "robotId", robotId,
+                    "command", command,
+                    "issuedBy", userName == null ? "" : userName,
+                    "params", params == null ? Map.of() : params));
+        } catch (ResponseStatusException e) {
+            db.update("UPDATE t_robot_command SET status='UNKNOWN', reason_code='GATEWAY_RESPONSE_UNKNOWN', finished_at=now() WHERE command_id=?", commandId);
+            throw e;
+        }
     }
 
     private void requireConfigured() {
@@ -106,7 +116,7 @@ public class RealRobotAdapter implements RobotAdapter {
         }
     }
 
-    /** true = robot terhubung ke gateway. Gateway mati -> semua OFFLINE (fail-closed, tidak melempar). */
+    /** null = gateway unavailable; never infer physical readiness from a socket roster. */
     private Set<String> fetchConnectedRobots() {
         try {
             HttpRequest request = HttpRequest.newBuilder(URI.create(gatewayUrl + "/internal/robots"))
@@ -115,14 +125,18 @@ public class RealRobotAdapter implements RobotAdapter {
                     .GET()
                     .build();
             HttpResponse<String> res = http.send(request, HttpResponse.BodyHandlers.ofString());
-            if (res.statusCode() != 200) return Set.of();
+            if (res.statusCode() != 200) return null;
             JsonNode arr = JSON.readTree(res.body()).path("robots");
+            if (!arr.isArray()) return null;
             Set<String> ids = new HashSet<>();
-            arr.forEach(n -> ids.add(n.asText()));
+            for (JsonNode n : arr) {
+                if (!n.isTextual()) return null;
+                ids.add(n.asText());
+            }
             return ids;
         } catch (Exception e) {
             log.warn("Gagal mengambil daftar robot dari gateway: {}", e.getMessage());
-            return Set.of();
+            return null;
         }
     }
 

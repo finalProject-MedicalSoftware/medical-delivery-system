@@ -9,6 +9,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.scheduling.annotation.EnableScheduling;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
+import org.springframework.beans.factory.annotation.Value;
 
 import jakarta.annotation.PreDestroy;
 
@@ -49,6 +50,8 @@ public class SimulatedRobotService implements RobotAdapter {
     private double configuredSpeed = 0.55;
     private double teleopLinear = 0.0;
     private double teleopAngular = 0.0;
+    @Value("${nevo.robot.compartment-count:6}")
+    private int compartmentCount = 6;
 
     // Navigation tracking
     private UUID activeMissionId = null;
@@ -187,6 +190,7 @@ public class SimulatedRobotService implements RobotAdapter {
         map.put("configuredSpeed", configuredSpeed);
         map.put("activeMissionId", activeMissionId);
         map.put("queueLength", countQueued());
+        map.put("compartmentCount", compartmentCount);
         map.put("simulated", true);
         map.put("lastSeen", Instant.now().toString());
         return map;
@@ -218,15 +222,22 @@ public class SimulatedRobotService implements RobotAdapter {
      * berikutnya masuk status QUEUED dan otomatis mulai saat misi aktif selesai/dibatalkan.
      */
     public synchronized Map<String, Object> dispatchMission(UUID waypointId, String roomCode, String userName, String requestCode, Integer compartmentNo) {
-        if (compartmentNo != null && (compartmentNo < 0 || compartmentNo > 5)) {
-            throw new IllegalArgumentException("compartmentNo harus 0..5 (6 kompartemen tray)");
+        return dispatchMission(waypointId, roomCode, userName, requestCode, compartmentNo, null, null, null, "LEGACY", null, null);
+    }
+
+    public synchronized Map<String, Object> dispatchMission(UUID waypointId, String roomCode, String userName,
+            String requestCode, Integer compartmentNo, String patientMrn, String bedId, Instant placementUpdatedAt,
+            String missionSource, UUID manifestId, Integer manifestSequence) {
+        if (compartmentNo != null && (compartmentNo < 0 || compartmentNo >= compartmentCount)) {
+            throw new IllegalArgumentException("compartmentNo harus berada pada konfigurasi robot aktif");
         }
         Target target = loadTarget(waypointId);
         UUID missionId = UUID.randomUUID();
 
         // 1. Record SUBMITTED
-        db.update("INSERT INTO t_mission(id, robot_id, waypoint_id, room_code, created_by, status, request_code, simulated, created_at, updated_at) " +
-                "VALUES (?, ?, ?, ?, ?, 'SUBMITTED', ?, true, now(), now())", missionId, robotId, waypointId, roomCode, userName, requestCode);
+        db.update("INSERT INTO t_mission(id, robot_id, waypoint_id, room_code, created_by, status, request_code, simulated, manifest_id, manifest_sequence, patient_mrn, bed_id, placement_updated_at, mission_source, created_at, updated_at) " +
+                "VALUES (?, ?, ?, ?, ?, 'SUBMITTED', ?, true, ?, ?, ?, ?, ?, ?, now(), now())", missionId, robotId, waypointId, roomCode, userName, requestCode,
+                manifestId, manifestSequence, patientMrn, bedId, placementUpdatedAt == null ? null : java.sql.Timestamp.from(placementUpdatedAt), missionSource);
         db.update("INSERT INTO h_mission_event(mission_id, status, source, message) VALUES (?, 'SUBMITTED', 'OPERATOR', ?)",
                 missionId, "Perintah navigasi diserahkan ke backend oleh " + userName);
 
@@ -237,8 +248,8 @@ public class SimulatedRobotService implements RobotAdapter {
 
         // 3. Kompartemen tray per misi (bukan state global: antrian bisa menumpuk beberapa misi).
         if (compartmentNo != null) {
-            db.update("INSERT INTO t_delivery_compartment(id, mission_id, compartment_no, filled_at) VALUES (?, ?, ?, now())",
-                    UUID.randomUUID(), missionId, compartmentNo);
+            db.update("INSERT INTO t_delivery_compartment(id, mission_id, compartment_no, patient_mrn, filled_at) VALUES (?, ?, ?, ?, now())",
+                    UUID.randomUUID(), missionId, compartmentNo, patientMrn);
         }
 
         Map<String, Object> result = new LinkedHashMap<>();
@@ -273,6 +284,8 @@ public class SimulatedRobotService implements RobotAdapter {
         result.put("queuePosition", position);
         return result;
     }
+
+    public int getCompartmentCount() { return compartmentCount; }
 
     /** Mulai eksekusi misi (dipakai dispatch langsung maupun saat antrian maju). */
     private void startMission(UUID missionId, Target target, String roomCode, String requestCode) {

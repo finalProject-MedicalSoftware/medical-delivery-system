@@ -147,15 +147,20 @@ async function handlePublish(req, res) {
     return send(400, { error: 'INVALID_JSON' });
   }
 
+  if (envelope.type === 'ROBOT_COMMAND') {
+    if (!isValidEnvelope(envelope)) return send(400, { error: 'INVALID_ENVELOPE' });
+    if (dedupe.seen(envelope.eventId)) return send(409, { error: 'DUPLICATE' });
+    const delivery = await router.deliverRobotCommand(envelope);
+    if (!delivery.accepted) {
+      dedupe.map.delete(envelope.eventId);
+      return send(409, { error: delivery.reason });
+    }
+    broadcast(envelope);
+    return send(202, { accepted: true, outcome: delivery.reason });
+  }
+
   const result = handleEnvelope(envelope);
   if (!result.ok) return send(400, { error: result.reason });
-
-  // Perintah robot (kontrak robot-command.md): broadcast UI sudah lewat
-  // handleEnvelope; FORWARD ke robot via TIFA, TIDAK ke topic delivery.
-  if (envelope.type === 'ROBOT_COMMAND') {
-    await router.deliverRobotCommand(envelope);
-    return send(202, { accepted: true });
-  }
 
   // Bridge -> Kafka: forward ke `simrs.delivery.events.v1` (key=requestCode) agar
   // HMI/konsumen lain menerima event jalur backend. No-op saat Kafka off/belum connect.
@@ -251,6 +256,7 @@ async function start() {
     sessionManager.attach(socket, { bearer: !!config.WS_AUTH_TOKEN && auth === `Bearer ${config.WS_AUTH_TOKEN}` });
     socket.on('message', (data) => router.handleIncoming(socket, data));
     socket.on('close', () => {
+      router.handleDisconnect(socket);
       sessionManager.detach(socket);
       logger.info('[WS] disconnect');
     });

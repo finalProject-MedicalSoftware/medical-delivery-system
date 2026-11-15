@@ -4,9 +4,9 @@
  */
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
-import { wsAuthToken } from '../../../lib/ws-config.server';
+import { simrsUrl, wsAuthToken } from '../../../lib/ws-config.server';
 import { getSession } from '../../../lib/ws-session';
-import { addSubscriber, removeSubscriber, ensureRelay, rosterSnapshot, type Channel } from '../../../lib/ws-relay';
+import { addSubscriber, removeSubscriber, ensureRelay, relayRegistered, rosterSnapshot, type Channel } from '../../../lib/ws-relay';
 
 // ---- channel parsing (mirror medical-ws/src/core/channels.js) ----
 function parseChannel(raw: string): Channel | null {
@@ -18,6 +18,25 @@ function parseChannel(raw: string): Channel | null {
 }
 
 export async function GET(req: NextRequest) {
+  const cookie = req.headers.get('cookie');
+  if (!cookie) {
+    return NextResponse.json({ error: 'UNAUTHENTICATED' }, { status: 401 });
+  }
+  try {
+    const response = await fetch(`${simrsUrl()}/api/v1/auth/me`, {
+      headers: { cookie },
+      cache: 'no-store',
+    });
+    if (response.status >= 500) {
+      return NextResponse.json({ error: 'BACKEND_UNAVAILABLE' }, { status: 502 });
+    }
+    if (!response.ok) {
+      return NextResponse.json({ error: 'UNAUTHENTICATED' }, { status: 401 });
+    }
+  } catch {
+    return NextResponse.json({ error: 'BACKEND_UNAVAILABLE' }, { status: 502 });
+  }
+
   if (!wsAuthToken()) {
     return NextResponse.json({ error: 'WS_AUTH_TOKEN_NOT_SET' }, { status: 500 });
   }
@@ -45,7 +64,7 @@ export async function GET(req: NextRequest) {
     start(controller) {
       const send = (s: string) => controller.enqueue(new TextEncoder().encode(`data: ${s}\n\n`));
       addSubscriber(sseId, channels, send);
-      send(JSON.stringify({ type: 'SSE_INIT', sseId, channels: channels.map((c) => c.kind === 'all' ? 'all' : `${c.kind}:${c.code}`) }));
+      send(JSON.stringify({ type: 'SSE_INIT', sseId, relayConnected: relayRegistered(), channels: channels.map((c) => c.kind === 'all' ? 'all' : `${c.kind}:${c.code}`) }));
       // Burst awal: roster cache (READY/POSITION/BATTERY terakhir) agar UI
       // tidak menunggu uplink robot berikutnya.
       send(JSON.stringify({ type: 'SSE_ROSTER', robots: rosterSnapshot() }));

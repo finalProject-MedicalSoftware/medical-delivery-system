@@ -6,6 +6,7 @@ const nextConfig = {
       { source: '/control', destination: '/missions/create', permanent: false },
       { source: '/monitoring', destination: '/tracking', permanent: false },
       { source: '/mapping', destination: '/maps', permanent: false },
+      { source: '/reports', destination: '/missions', permanent: false },
     ];
   },
 };
