@@ -120,6 +120,17 @@ data:{linear,angular,robot_id}}` pada 10 Hz dengan stop `{linear:0,
 angular:0}` saat tombol/key dilepas. Kontrol mapping memakai
 `MAPPING_START/STOP/SAVE/FLAG` + `MAP_SELECTED {map_id}`.
 
+#### ACK `MAPPING_FLAG` membawa pose (keputusan kontrak — 5/11/2026)
+
+Robot menjawab `MAPPING_FLAG` dengan ACK uplink `{code:"MAPPING_FLAG",
+data:{...}}` yang kini **memuat koordinat pose saat flag**: `data.x`,
+`data.y`, `data.yaw` (numerik). UI `tifa-web` membaca ACK ini lalu insert
+`m_goal` lokal (`goal_type='CUSTOM'`) pada `m_device.active_map_id` milik
+`data.robot_id`. Gate: hanya insert bila `data.x` & `data.y` hadir — echo
+flag dari UI tidak punya pose sehingga tidak di-insert. Tanpa pose robot,
+tidak ada goal koordinat live; jalur prod yang sudah terbukti tetaplah
+`POST /api/maps/upload/full` → `saveMapMetadata` (`m_goal` CUSTOM).
+
 ### 5b. Envelope ROBOT_COMMAND dari backend (kontrak robot-command.md)
 
 Downlink berjalan lewat jalur yang
