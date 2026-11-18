@@ -31,6 +31,38 @@ export default async function PasienDetailPage({
 
   if (!patient) notFound();
 
+  const [handovers, transfers] = await Promise.all([
+    prisma.deliveryEvent.findMany({
+      where: {
+        statusAfter: "HANDOVER_CONFIRMED",
+        deliveryRequest: { prescription: { patientId: id } },
+      },
+      orderBy: { createdAt: "desc" },
+      include: {
+        deliveryRequest: {
+          select: {
+            id: true,
+            requestCode: true,
+            roomCode: true,
+            prescription: {
+              select: { items: { select: { quantity: true, medicine: { select: { name: true, unit: true } } } } },
+            },
+          },
+        },
+      },
+    }),
+    prisma.auditLog.findMany({
+      where: { entityType: "PATIENT", entityId: id, action: "TRANSFER_PATIENT" },
+      orderBy: { createdAt: "desc" },
+      take: 20,
+    }),
+  ]);
+  const actorIds = [...new Set(handovers.map((h) => h.actorId).filter((x): x is string => !!x))];
+  const actors = actorIds.length
+    ? await prisma.user.findMany({ where: { id: { in: actorIds } }, select: { id: true, fullName: true } })
+    : [];
+  const actorName = (aid: string | null) => actors.find((a) => a.id === aid)?.fullName ?? "-";
+
   const canEdit =
     user?.roles.includes("SYSTEM_ADMIN") ||
     user?.permissions.includes("master:manage");
@@ -52,9 +84,6 @@ export default async function PasienDetailPage({
           </h1>
           <p className="font-mono text-xs text-slate-500">{patient.mrn}</p>
         </div>
-        <span className="rounded-md border border-amber-200 bg-amber-50 px-2 py-0.5 text-xs font-semibold text-amber-800">
-          SINTETIS
-        </span>
         {canEdit && (
           <Link href={`/pasien/${patient.id}/edit`} className={btnSecondary}>
             <Pencil className="h-3.5 w-3.5" />
@@ -119,6 +148,47 @@ export default async function PasienDetailPage({
           }
         />
       )}
+
+      <div className={cardCls}>
+        <h2 className="mb-3 text-base font-semibold text-slate-900">Riwayat serah terima obat</h2>
+        {handovers.length === 0 ? (
+          <p className="text-sm text-slate-500">Belum ada obat yang diserahterimakan.</p>
+        ) : (
+          <ul className="divide-y divide-slate-100">
+            {handovers.map((h) => (
+              <li key={h.id} className="flex flex-wrap items-start justify-between gap-2 py-3">
+                <div>
+                  <Link href={`/pengantaran/${h.deliveryRequest.id}/berita-acara`} className="font-mono text-sm font-semibold text-teal-700 hover:underline">
+                    {h.deliveryRequest.requestCode}
+                  </Link>
+                  <p className="text-xs text-slate-500">
+                    {h.deliveryRequest.prescription.items.map((i) => `${i.medicine.name} ${i.quantity} ${i.medicine.unit}`).join(", ")}
+                  </p>
+                </div>
+                <div className="text-right text-xs text-slate-500">
+                  <p>{new Date(h.createdAt).toLocaleString("id-ID")}</p>
+                  <p>Diterima via QR · {actorName(h.actorId)}</p>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+        {transfers.length > 0 && (
+          <>
+            <h3 className="mb-2 mt-5 text-sm font-semibold text-slate-900">Riwayat pindah ruang</h3>
+            <ul className="space-y-1 text-xs text-slate-600">
+              {transfers.map((t) => {
+                const d = (t.details ?? {}) as { fromRoom?: string | null; toRoom?: string | null };
+                return (
+                  <li key={t.id}>
+                    {new Date(t.createdAt).toLocaleString("id-ID")} · {d.fromRoom ?? "-"} → {d.toRoom ?? "-"}
+                  </li>
+                );
+              })}
+            </ul>
+          </>
+        )}
+      </div>
 
       <div className={cardCls}>
         <h2 className="mb-4 text-sm font-semibold text-slate-900">

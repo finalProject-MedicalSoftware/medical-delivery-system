@@ -6,5 +6,5 @@
 
 /** Robot harus sudah tiba di ruang sebelum serah-terima boleh dikonfirmasi. */
 export function canConfirmHandover(status: string): boolean {
-  return status === "MOCK_ARRIVED_AT_ROOM";
+  return status === "ARRIVED_AT_ROOM";
 }

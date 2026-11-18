@@ -14,14 +14,12 @@ function yq(v: string): string {
 
 // Severity khusus tampilan YAML monitoring. Label dan daftar status
 // berasal dari lib/delivery-status supaya tidak pernah berbeda dengan UI.
-// Label kode MOCK_ memuat awalan [MOCK]; monitoring menampilkan
-// `simulation: true` untuk kode tersebut.
 const DELIVERY_SEVERITIES: Record<DeliveryStatus, string> = {
   DELIVERY_REQUESTED: "info",
   PENDING_INTEGRATION: "warning",
-  MOCK_IN_TRANSIT: "info",
-  MOCK_ARRIVED_AT_ROOM: "ok",
-  MOCK_HANDOVER_CONFIRMED: "ok",
+  IN_TRANSIT: "info",
+  ARRIVED_AT_ROOM: "ok",
+  HANDOVER_CONFIRMED: "ok",
   CANCELLED: "muted",
 };
 
@@ -35,14 +33,13 @@ const PRESCRIPTION_SEVERITIES: Record<PrescriptionStatus, string> = {
   CANCELLED: "muted",
 };
 
-const DELIVERY_META: Record<string, { label: string; severity: string; simulation?: boolean }> =
+const DELIVERY_META: Record<string, { label: string; severity: string }> =
   Object.fromEntries(
     (Object.keys(DELIVERY_STATUS_LABELS) as DeliveryStatus[]).map((code) => [
       code,
       {
         label: deliveryStatusLabel(code),
         severity: DELIVERY_SEVERITIES[code],
-        ...(code.startsWith("MOCK_") ? { simulation: true } : {}),
       },
     ])
   );

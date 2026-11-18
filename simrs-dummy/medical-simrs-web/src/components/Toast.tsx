@@ -267,7 +267,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
                     {t.title}
                   </span>
                   {t.description && (
-                    <span className="mt-0.5 block text-[11px] leading-relaxed text-slate-500">
+                    <span className="mt-0.5 block text-xs leading-relaxed text-slate-500">
                       {t.description}
                     </span>
                   )}
@@ -278,7 +278,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
                         t.action!.onClick();
                         dismiss(t.id);
                       }}
-                      className="mt-1.5 rounded-md border border-slate-300 px-2 py-1 text-[11px] font-semibold text-teal-700 transition hover:bg-slate-50"
+                      className="mt-1.5 rounded-md border border-slate-300 px-2 py-1 text-xs font-semibold text-teal-700 transition hover:bg-slate-50"
                     >
                       {t.action.label}
                     </button>

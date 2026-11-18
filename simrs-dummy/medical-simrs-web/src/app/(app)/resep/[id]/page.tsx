@@ -1,10 +1,11 @@
+import { HANDLING_LABELS } from "@/lib/clinical";
 import prisma from "@/lib/prisma";
 import { getCurrentUser } from "@/lib/auth";
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft, FileText, AlertTriangle, Truck } from "lucide-react";
 import PrescriptionActions from "@/components/PrescriptionActions";
-import { StatusBadge, cardCls, btnPrimary } from "@/components/ui";
+import { StatusBadge, PriorityBadge, cardCls, btnPrimary } from "@/components/ui";
 import { ACTIVE_DELIVERY_STATUSES, deliveryStatusLabel } from "@/lib/delivery-status";
 import { PERMISSION_CODES } from "@/lib/rbac";
 import { bedDisplayName } from "@/lib/bed-info";
@@ -56,7 +57,10 @@ export default async function ResepDetailPage({
             Dibuat {new Date(rx.createdAt).toLocaleString("id-ID")}
           </p>
         </div>
-        <StatusBadge status={rx.status} />
+        <div className="flex items-center gap-2">
+          <PriorityBadge priority={rx.priority} />
+          <StatusBadge status={rx.status} />
+        </div>
       </div>
 
       <div className="grid gap-4 md:grid-cols-2">
@@ -130,7 +134,14 @@ export default async function ResepDetailPage({
               className="flex items-center justify-between rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm"
             >
               <div>
-                <p className="font-medium text-slate-900">{item.medicine.name}</p>
+                <p className="font-medium text-slate-900">
+                  {item.medicine.name}
+                  {item.medicine.handling !== "NONE" && (
+                    <span className="ml-2 rounded-md bg-amber-100 px-1.5 py-0.5 text-xs font-medium text-amber-800">
+                      {HANDLING_LABELS[item.medicine.handling]}
+                    </span>
+                  )}
+                </p>
                 <p className="font-mono text-xs text-slate-400">{item.medicine.code}</p>
               </div>
               <div className="text-right">

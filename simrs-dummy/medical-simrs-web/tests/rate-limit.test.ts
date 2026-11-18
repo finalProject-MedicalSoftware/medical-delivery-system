@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
-import { checkRateLimit, resetRateLimits } from "@/lib/rate-limit";
+import { checkRateLimit, resetRateLimits, clientIpFrom } from "@/lib/rate-limit";
 
 describe("checkRateLimit", () => {
   beforeEach(() => {
@@ -36,5 +36,16 @@ describe("checkRateLimit", () => {
     for (let i = 0; i < 5; i++) checkRateLimit("k4", 5, 60_000);
     expect(checkRateLimit("k4", 5, 60_000).ok).toBe(false);
     expect(checkRateLimit("k5", 5, 60_000).ok).toBe(true);
+  });
+});
+
+describe("clientIpFrom", () => {
+  afterEach(() => { delete process.env.TRUST_PROXY; });
+  it("mengabaikan X-Forwarded-For tanpa TRUST_PROXY", () => {
+    expect(clientIpFrom(new Headers({ "x-forwarded-for": "1.2.3.4" }))).toBeUndefined();
+  });
+  it("memakai IP pertama bila TRUST_PROXY=true", () => {
+    process.env.TRUST_PROXY = "true";
+    expect(clientIpFrom(new Headers({ "x-forwarded-for": "1.2.3.4, 5.6.7.8" }))).toBe("1.2.3.4");
   });
 });

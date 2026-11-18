@@ -17,4 +17,5 @@ RUN addgroup --system --gid 1001 nodejs && adduser --system --uid 1001 nextjs
 COPY --from=build --chown=nextjs:nodejs /app ./
 USER nextjs
 EXPOSE 3000
-CMD ["npm", "run", "start"]
+# Terapkan migrasi (idempoten) sebelum melayani; gagal migrasi = container berhenti.
+CMD ["sh", "-c", "npx prisma migrate deploy && npm run start"]

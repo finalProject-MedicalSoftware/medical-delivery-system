@@ -32,6 +32,8 @@ export default async function UbahObatPage({
         unit: medicine.unit,
         category: medicine.category,
         stock: medicine.stock,
+        minStock: medicine.minStock,
+        handling: medicine.handling,
       }}
     />
   );

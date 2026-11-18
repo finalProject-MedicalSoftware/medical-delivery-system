@@ -40,9 +40,9 @@ Aturan yang wajib dipatuhi konsumen:
 
 1. Auth machine: header `x-monitoring-token: <MONITORING_TOKEN>`. Salah: `401`; token server belum diset: `503` fail-closed.
 2. Cocokkan status via **kode**, bukan label. Label `MOCK_*` berprefix `[MOCK]` dan bisa berubah.
-3. `compartmentNo`: integer `>= 0`, HANYA bermakna saat lapor `MOCK_ARRIVED_AT_ROOM`. Tidak ada endpoint read yang me-return-nya.
+3. `compartmentNo`: integer `>= 0`, HANYA bermakna saat lapor `ARRIVED_AT_ROOM`. Tidak ada endpoint read yang me-return-nya.
 4. `idempotencyKey` regex `^[A-Za-z0-9._:-]{1,64}$`. Replay kombinasi sama -> `200 duplicate:true`. Kombinasi beda -> `409` + `idempotencyKeyUsedFor`.
-5. `MOCK_HANDOVER_CONFIRMED` TIDAK bisa dilempar via API (422). Serah-terima HANYA manusia login di `/scan/[mrn]`.
+5. `HANDOVER_CONFIRMED` TIDAK bisa dilempar via API (422). Serah-terima HANYA manusia login di `/scan/[mrn]`.
 6. QR wristband berisi HANYA `{base}/scan/{mrn}?t={exp}.{sig}` — URL scan + token tanda tangan HMAC, tanpa data klinis. Token diverifikasi sebelum pasien di-query.
 7. `isInfectious: true` = ALERT wajib tampil (kewaspadaan kontak/droplet/airborne).
 8. Halaman web monitoring WAJIB fetch `/api/v1/monitoring/mapping` tiap 30 detik atau saat boot.
@@ -63,7 +63,7 @@ Saat `POST /api/v1/monitoring/delivery-status` gagal:
 
 - Retryable: network error/timeout/`5xx` (plus `429`), backoff diskrit `1s, 5s, 30s, 2m`, idempotencyKey SAMA di semua percobaan, maks `SIMRS_WRITE_MAX_ATTEMPTS` percobaan (default 5).
 - Non-retryable (`422/404/409/401` dan `4xx` lain): tidak diretry; hasil dikembalikan ke pemanggil untuk ditampilkan/erekonsiliasi.
-- Push status robot (`MOCK_IN_TRANSIT` / `MOCK_ARRIVED_AT_ROOM` / `CANCELLED`) bersifat fire-and-forget di thread daemon `simrs-writer`: kegagalan write TIDAK membuat misi robot gagal; rekonsiliasi tetap lewat snapshot.
+- Push status robot (`IN_TRANSIT` / `ARRIVED_AT_ROOM` / `CANCELLED`) bersifat fire-and-forget di thread daemon `simrs-writer`: kegagalan write TIDAK membuat misi robot gagal; rekonsiliasi tetap lewat snapshot.
 - Detail hasil POST memuat field `attempts` (jumlah percobaan terpakai) untuk diagnosis.
 - Endpoint manual admin `POST /api/v1/integrations/simrs/delivery-status` kini mengembalikan body hasil (termasuk `httpStatus` SIMRS) alih-alih 503 untuk semua kegagalan HTTP sisi SIMRS.
 
@@ -91,23 +91,23 @@ Resep SIMRS dapat membawa jadwal minum; generator SIMRS membuat
 
 ### 1.3 Klarifikasi: status "tiba" masih aktif, serah-terima tetap QR (2026-11-02)
 
-Bug yang dilaporkan: pengantaran yang sudah `MOCK_ARRIVED_AT_ROOM` masih bisa diajukan ulang dari resep dan
+Bug yang dilaporkan: pengantaran yang sudah `ARRIVED_AT_ROOM` masih bisa diajukan ulang dari resep dan
 tombol aksi di halaman pengantaran hilang (tidak ada jalan keluar).
 
 Akar masalah: daftar status aktif untuk cek duplikat masih versi lama (3 status) yang tidak memuat
-`MOCK_ARRIVED_AT_ROOM`, sedangkan read API monitoring sudah memakai 4 status.
+`ARRIVED_AT_ROOM`, sedangkan read API monitoring sudah memakai 4 status.
 
 Penetapan (tidak ada perubahan kontrak read/write):
 
 - **Satu sumber kebenaran status aktif** = `ACTIVE_DELIVERY_STATUSES` di
   `simrs-dummy/medical-simrs-web/src/lib/delivery-status.ts`
-  (`DELIVERY_REQUESTED`, `PENDING_INTEGRATION`, `MOCK_IN_TRANSIT`, `MOCK_ARRIVED_AT_ROOM`).
+  (`DELIVERY_REQUESTED`, `PENDING_INTEGRATION`, `IN_TRANSIT`, `ARRIVED_AT_ROOM`).
   Gate duplikat server action, guard tombol "Ajukan Pengantaran", dan filter `/pengantaran/baru` memakai
   konstanta itu — bukan array hardcoded.
 - Implikasi bagi konsumen: selama `status` masih di daftar itu (termasuk sudah tiba), resep **tidak bisa**
-  diajukan pengantaran baru. Pengantaran ulang baru boleh setelah `MOCK_HANDOVER_CONFIRMED` (resep kembali
+  diajukan pengantaran baru. Pengantaran ulang baru boleh setelah `HANDOVER_CONFIRMED` (resep kembali
   tidak punya pengantaran aktif).
-- `DELIVERY_TRANSITIONS` tidak berubah: `MOCK_ARRIVED_AT_ROOM → MOCK_HANDOVER_CONFIRMED` hanya lewat scan QR
+- `DELIVERY_TRANSITIONS` tidak berubah: `ARRIVED_AT_ROOM → HANDOVER_CONFIRMED` hanya lewat scan QR
   manusia di `/scan/[mrn]?t=…`. Aturan 5 di §1 tetap berlaku; status "tiba" masih bisa `CANCELLED` lewat
   endpoint monitoring sesuai tabel transisi.
 - UI halaman pengantaran untuk status tiba hanya menampilkan tautan: **Buka Scan QR Pasien** (jalur
@@ -180,7 +180,7 @@ Dashboard  --(SSE /api/ws/stream via BFF)-->  medical-ws
   "wardCode": "A",
   "data": {
     "from": "PENDING_INTEGRATION",
-    "to": "MOCK_IN_TRANSIT",
+    "to": "IN_TRANSIT",
     "statusLabel": "[MOCK] Transit",
     "note": "Robot berangkat",
     "source": "monitoring"
@@ -285,7 +285,7 @@ WS:
 HTTP (kontras dengan final):
 7. Token salah -> 401; semua layanan tetap jalan.
 8. Retry `5xx` dengan idempotencyKey sama -> tidak ada event dobel di SIMRS (lihat 1.1).
-9. Lapor `MOCK_HANDOVER_CONFIRMED` via API -> 422.
+9. Lapor `HANDOVER_CONFIRMED` via API -> 422.
 10. Fetch mapping tiap 30 detik -> ward/room/bed baru dari SIMRS muncul tanpa deploy ulang.
 
 ## 7. Keputusan yang masih harus disepakati bersama

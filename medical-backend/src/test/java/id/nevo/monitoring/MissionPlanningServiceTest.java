@@ -60,6 +60,17 @@ class MissionPlanningServiceTest {
                 eq("MRN-1"), eq("BED-1"), any(), eq("MANUAL_SIMRS"), any(), eq(1));
     }
 
+    @Test
+    void rejectsPatientWithoutDeliverySentToRobot() throws Exception {
+        Fixture fixture = fixture();
+        when(fixture.simrs.getPatient("MRN-1")).thenReturn(new ObjectMapper().readTree("""
+                {"patient":{"mrn":"MRN-1","active":true,"robotEligible":false,"roomCode":"ROOM-1","bedId":"BED-1","placementUpdatedAt":"2026-11-06T00:00:00Z"},"activeDeliveries":[]}
+                """));
+        ResponseStatusException ex = assertThrows(ResponseStatusException.class,
+                () -> fixture.service.dispatch(request(item("MRN-1", 0, "2026-11-06T00:00:00Z", null)), "operator"));
+        assertEquals(409, ex.getStatusCode().value());
+    }
+
     private Fixture fixture() throws Exception {
         JdbcTemplate db = mock(JdbcTemplate.class);
         SimrsClientService simrs = mock(SimrsClientService.class);
@@ -69,9 +80,9 @@ class MissionPlanningServiceTest {
         when(simulator.getRobotState()).thenReturn(Map.of("robotId", "NEVO-01", "status", "IDLE"));
         when(simulator.getCompartmentCount()).thenReturn(6);
         when(simrs.getPatient("MRN-1")).thenReturn(new ObjectMapper().readTree("""
-                {"patient":{"mrn":"MRN-1","active":true,"roomCode":"ROOM-1","bedId":"BED-1","placementUpdatedAt":"2026-11-06T00:00:00Z"},"activeDeliveries":[]}
+                {"patient":{"mrn":"MRN-1","active":true,"robotEligible":true,"roomCode":"ROOM-1","bedId":"BED-1","placementUpdatedAt":"2026-11-06T00:00:00Z"},"activeDeliveries":[]}
                 """));
-        return new Fixture(db, simulator, new MissionPlanningService(db, simrs, provider));
+        return new Fixture(db, simulator, simrs, new MissionPlanningService(db, simrs, provider));
     }
 
     private MissionPlanningService.ManifestRequest request(MissionPlanningService.ManifestItem item) {
@@ -82,5 +93,5 @@ class MissionPlanningServiceTest {
         return new MissionPlanningService.ManifestItem(mrn, "ROOM-1", "BED-1", updatedAt, waypointId, compartment, requestCode);
     }
 
-    private record Fixture(JdbcTemplate db, SimulatedRobotService simulator, MissionPlanningService service) { }
+    private record Fixture(JdbcTemplate db, SimulatedRobotService simulator, SimrsClientService simrs, MissionPlanningService service) { }
 }

@@ -11,7 +11,7 @@ import MapViewer, { MapMetadata, WaypointItem } from '../../maps/MapViewer';
 
 type PatientSummary = {
   id: string; mrn: string; fullName: string; roomCode: string | null; roomName: string | null;
-  bedId: string | null; bedNumber: string | null; active: boolean; isInfectious: boolean; placementUpdatedAt: string;
+  bedId: string | null; bedNumber: string | null; active: boolean; isInfectious: boolean; robotEligible?: boolean; robotReason?: string | null; placementUpdatedAt: string;
 };
 type Delivery = { requestCode: string; status: string; statusLabel?: string };
 type PatientDetail = PatientSummary & { activeDeliveries: Delivery[] };
@@ -97,11 +97,11 @@ function NavigationContent() {
   const compartmentCount = telemetry.compartmentCount ?? 0;
   const usedCompartments = new Set(manifest.map((item) => item.compartmentNo));
   const selectedAlreadyAdded = selected ? manifest.some((item) => item.mrn === selected.mrn) : false;
-  const placementValid = Boolean(selected?.isInfectious && selected.active && selected.roomCode && selected.bedId && selected.placementUpdatedAt);
-  const manifestValid = manifest.every((item) => item.isInfectious === true);
+  const placementValid = Boolean(selected?.robotEligible && selected.active && selected.roomCode && selected.bedId && selected.placementUpdatedAt);
+  const manifestValid = manifest.every((item) => item.robotEligible === true);
 
   const addToManifest = () => {
-    if (!selected?.isInfectious) return setMessage({ tone: 'error', text: id ? 'Pasien tidak memiliki flag penyakit menular aktif.' : 'The patient does not have an active infectious-disease flag.' });
+    if (!selected?.robotEligible) return setMessage({ tone: 'error', text: id ? 'Pasien belum memiliki pengantaran yang dikirim ke robot (atau alasannya belum diisi di SIMRS).' : 'The patient has no delivery sent to the robot (or the reason is missing in SIMRS).' });
     if (!selected || !placementValid) return setMessage({ tone: 'error', text: id ? 'Pasien tidak memiliki placement rawat inap aktif.' : 'Patient has no active inpatient placement.' });
     if (!selectedWaypoint) return setMessage({ tone: 'error', text: id ? 'Waypoint kasur pasien belum dikonfigurasi.' : 'The patient bed waypoint has not been configured.' });
     if (compartment === null) return setMessage({ tone: 'error', text: id ? 'Pilih kompartemen.' : 'Select a compartment.' });
@@ -128,17 +128,17 @@ function NavigationContent() {
       const infectionChecks = await Promise.all(manifest.map(async (item) => {
         try {
           const latest = await request(`integrations/simrs/patient/${encodeURIComponent(item.mrn)}`);
-          return { mrn: item.mrn, valid: latest?.patient?.isInfectious === true };
+          return { mrn: item.mrn, valid: latest?.patient?.robotEligible === true };
         } catch {
           return { mrn: item.mrn, valid: false };
         }
       }));
       const invalidMrns = new Set(infectionChecks.filter((check) => !check.valid).map((check) => check.mrn));
       if (invalidMrns.size) {
-        setManifest((current) => current.map((item) => invalidMrns.has(item.mrn) ? { ...item, isInfectious: false } : item));
+        setManifest((current) => current.map((item) => invalidMrns.has(item.mrn) ? { ...item, robotEligible: false } : item));
         throw new Error(id
-          ? 'Status penyakit menular satu atau lebih pasien tidak aktif atau tidak dapat diverifikasi. Tinjau manifest.'
-          : 'The infectious-disease status of one or more patients is inactive or cannot be verified. Review the manifest.');
+          ? 'Satu atau lebih pasien tidak lagi memiliki pengantaran yang dikirim ke robot. Tinjau manifest.'
+          : 'One or more patients no longer have a delivery sent to the robot. Review the manifest.');
       }
       const response = await request('missions/manifest', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -202,7 +202,8 @@ function NavigationContent() {
       <div className="flex flex-wrap items-center justify-between gap-3"><div><h2 id="manifest-title" className="font-semibold txt-main">{id ? 'Manifest Pasien' : 'Patient Manifest'}</h2><p className="text-xs txt-sec mt-1">{manifest.length} {id ? 'tujuan kasur individual' : 'individual bed destinations'}</p></div><span className={`status-pill ${selectedRobotConnected && telemetry.status === 'IDLE' ? 'status-success' : 'status-warning'}`}>{telemetry.name} · {telemetry.status}</span></div>
       {!manifest.length ? <div className="rounded-xl border border-dashed border-base p-8 text-center txt-sec"><BedDouble size={28} className="mx-auto mb-2" /><p>{id ? 'Belum ada pasien dalam manifest.' : 'No patients in the manifest yet.'}</p></div> : <div className="space-y-2">{manifest.map((item, index) => <article key={item.mrn} className={`grid grid-cols-1 md:grid-cols-[auto_minmax(0,1fr)_minmax(150px,0.3fr)_auto] gap-3 items-center rounded-xl border bg-card p-3 ${item.isInfectious ? 'border-base' : 'border-error/50 bg-error/5'}`}>
         <span className="grid h-8 w-8 place-items-center rounded-lg bg-accent/10 text-sm font-bold text-accent">{index + 1}</span><div className="min-w-0"><p className="font-medium txt-main truncate">{item.fullName} <span className="font-normal txt-sec">· {item.mrn}</span></p><p className="text-xs txt-sec">{item.roomName ?? item.roomCode} · Bed {item.bedNumber} · {item.waypoint.name}</p><p className="text-[11px] mt-1 text-accent">{item.requestCode ? `SIMRS ${item.requestCode}` : (id ? 'Misi manual tanpa write-back' : 'Manual mission without write-back')}</p></div><select aria-label={`${id ? 'Kompartemen' : 'Compartment'} ${item.fullName}`} className="input-field" value={item.compartmentNo} onChange={(event) => updateCompartment(item.mrn, Number(event.target.value))}>{Array.from({ length: compartmentCount }, (_, value) => <option key={value} value={value} disabled={manifest.some((other) => other.mrn !== item.mrn && other.compartmentNo === value)}>#{value + 1}</option>)}</select><button type="button" className="p-2 text-error" aria-label={`${id ? 'Hapus' : 'Remove'} ${item.fullName}`} onClick={() => setManifest((current) => current.filter((row) => row.mrn !== item.mrn))}><Trash2 size={18} /></button>
-        {!item.isInfectious && <p className="md:col-start-2 md:col-span-2 text-xs font-medium text-error">{id ? 'Tidak valid: flag penyakit menular tidak aktif atau tidak dapat diverifikasi.' : 'Invalid: infectious-disease flag is inactive or cannot be verified.'}</p>}
+        {item.robotReason && <p className="md:col-start-2 md:col-span-2 text-xs txt-sec">{id ? 'Alasan pengantaran robot' : 'Robot delivery reason'}: {item.robotReason}</p>}
+        {!item.robotEligible && <p className="md:col-start-2 md:col-span-2 text-xs font-medium text-error">{id ? 'Tidak valid: tidak ada pengantaran yang dikirim ke robot untuk pasien ini.' : 'Invalid: no delivery has been sent to the robot for this patient.'}</p>}
       </article>)}</div>}
       <div className="flex flex-col sm:flex-row justify-between gap-3 border-t border-base pt-4"><p className="text-xs txt-sec max-w-xl">{id ? 'Backend akan memeriksa ulang flag penyakit menular, placement pasien, dan waypoint peta aktif sebelum dispatch. Setiap pasien dibuat sebagai misi individual dalam satu manifest.' : 'The backend revalidates the infectious-disease flag, patient placement, and active-map waypoint before dispatch. Each patient becomes an individual mission within one manifest.'}</p><div className="flex gap-2">{telemetry.activeMissionId && <button type="button" className="btn-secondary inline-flex items-center gap-2" onClick={cancelActive}><XCircle size={17} />{id ? 'Batalkan Misi Aktif' : 'Cancel Active Mission'}</button>}<button type="button" className="btn-primary inline-flex items-center justify-center gap-2" onClick={() => void dispatch()} disabled={!manifest.length || !manifestValid || submitting || !selectedRobotConnected || telemetry.status !== 'IDLE'}>{submitting ? <Loader2 size={17} className="animate-spin" /> : <Send size={17} />}{id ? 'Kirim Manifest' : 'Dispatch Manifest'}</button></div></div>
     </section>

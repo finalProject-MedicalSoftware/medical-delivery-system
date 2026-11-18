@@ -10,7 +10,7 @@ QR menghubungkan pasien fisik dengan halaman konfirmasi di SIMRS Dummy.
 3. Petugas mencetak halaman itu (tombol Cetak Gelang); hasil cetak hanya kotak gelang.
 4. Saat robot tiba di ruang, petugas yang login memindai QR pada gelang.
 5. QR terbuka ke `/scan/[mrn]?t=<token>`, lalu petugas menekan Konfirmasi Serah-Terima.
-6. SIMRS Dummy mencatat status `MOCK_HANDOVER_CONFIRMED` dan audit trail.
+6. SIMRS Dummy mencatat status `HANDOVER_CONFIRMED` dan audit trail.
 
 ## Aturan isi QR
 - QR hanya berisi URL halaman scan + token tanda tangan: `{base}/scan/{mrn}?t={exp}.{sig}`.

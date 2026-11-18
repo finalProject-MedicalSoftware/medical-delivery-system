@@ -21,6 +21,9 @@ nevo:
   robot:
     mode: ${ROBOT_MODE:sim}
     compartment-count: ${NEVO_COMPARTMENT_COUNT:6}
+    # Pose dock "x,y,yaw" (peta ROS). Kosong = robot tidak diperintah pulang otomatis setelah misi.
+    home-base: ${NEVO_HOME_BASE:}
+    mission-timeout-minutes: ${NEVO_MISSION_TIMEOUT_MINUTES:60}
   gateway:
     url: ${GATEWAY_URL:}
   ws:

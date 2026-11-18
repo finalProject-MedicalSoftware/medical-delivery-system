@@ -14,6 +14,7 @@ import {
   rowCls,
 } from "@/components/ui";
 import Pagination from "@/components/Pagination";
+import { HANDLING_LABELS, isLowStock } from "@/lib/clinical";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Katalog Obat - SIMRS Dummy" };
@@ -89,30 +90,36 @@ export default async function ObatPage({
           <table className="w-full text-sm">
             <thead className={theadCls}>
               <tr>
-                <th className="px-4 py-3 text-left">Kode</th>
-                <th className="px-4 py-3 text-left">Nama</th>
-                <th className="px-4 py-3 text-left">Satuan</th>
-                <th className="px-4 py-3 text-left">Kategori</th>
-                <th className="px-4 py-3 text-right">Stok</th>
-                <th className="px-4 py-3 text-center">Status</th>
-                {canManage && <th className="px-4 py-3 text-right">Kelola</th>}
+                <th scope="col" className="px-4 py-3 text-left">Kode</th>
+                <th scope="col" className="px-4 py-3 text-left">Nama</th>
+                <th scope="col" className="px-4 py-3 text-left">Satuan</th>
+                <th scope="col" className="px-4 py-3 text-left">Kategori</th>
+                <th scope="col" className="px-4 py-3 text-right">Stok</th>
+                <th scope="col" className="px-4 py-3 text-center">Status</th>
+                {canManage && <th scope="col" className="px-4 py-3 text-right">Kelola</th>}
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {medicines.map((m) => (
                 <tr key={m.id} className={rowCls}>
                   <td className="px-4 py-3 font-mono text-xs font-semibold text-teal-700">{m.code}</td>
-                  <td className="px-4 py-3 font-medium text-slate-900">{m.name}</td>
+                  <td className="px-4 py-3 font-medium text-slate-900">
+                    {m.name}
+                    {m.handling !== "NONE" && (
+                      <span className="ml-2 rounded-md bg-amber-100 px-1.5 py-0.5 text-xs font-medium text-amber-800">
+                        {HANDLING_LABELS[m.handling]}
+                      </span>
+                    )}
+                  </td>
                   <td className="px-4 py-3 text-slate-600">{m.unit}</td>
                   <td className="px-4 py-3 text-slate-600">{m.category}</td>
                   <td className="px-4 py-3 text-right">
-                    <span
-                      className={`font-semibold ${
-                        m.stock <= 10 ? "text-rose-600" : "text-slate-900"
-                      }`}
-                    >
+                    <span className={`font-semibold tabular-nums ${isLowStock(m.stock, m.minStock) ? "text-rose-700" : "text-slate-900"}`}>
                       {m.stock}
                     </span>
+                    {isLowStock(m.stock, m.minStock) && (
+                      <span className="ml-2 rounded-md bg-rose-100 px-1.5 py-0.5 text-xs font-medium text-rose-800">Menipis</span>
+                    )}
                   </td>
                   <td className="px-4 py-3 text-center">
                     <span
@@ -128,6 +135,12 @@ export default async function ObatPage({
                   {canManage && (
                     <td className="px-4 py-3">
                       <div className="flex items-center justify-end gap-2">
+                        <Link
+                          href={`/obat/${m.id}/riwayat`}
+                          className="text-xs font-medium text-teal-700 hover:underline"
+                        >
+                          Riwayat stok
+                        </Link>
                         <Link
                           href={`/obat/${m.id}/edit`}
                           title="Ubah obat"

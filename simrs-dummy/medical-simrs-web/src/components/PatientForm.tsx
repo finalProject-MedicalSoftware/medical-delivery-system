@@ -23,6 +23,7 @@ export interface PatientInitial {
   notes: string | null;
   diagnosis: string | null;
   isInfectious: boolean;
+  allergies: string[];
 }
 
 export default function PatientForm({
@@ -48,7 +49,7 @@ export default function PatientForm({
       title: isEdit ? "Simpan perubahan?" : "Simpan pasien baru?",
       message: isEdit
         ? "Perubahan data pasien akan dicatat di audit trail."
-        : "Data pasien sintetis baru akan ditambahkan.",
+        : "Data pasien baru akan ditambahkan.",
       confirmLabel: "Simpan",
     });
     if (!ok || !formRef.current) return;
@@ -78,7 +79,7 @@ export default function PatientForm({
         <div>
           <h1 className="flex items-center gap-2 text-xl font-bold text-slate-900">
             <Users className="h-5 w-5 text-teal-700" />
-            {isEdit ? "Ubah Pasien Sintetis" : "Tambah Pasien Sintetis"}
+            {isEdit ? "Ubah Pasien" : "Tambah Pasien"}
           </h1>
           <p className="mt-0.5 text-xs text-slate-500">
             Data fiktif untuk demonstrasi - jangan masukkan identitas orang nyata
@@ -179,7 +180,7 @@ export default function PatientForm({
                     (r.freeCount === 0 ? " · Penuh" : ""),
                 }))}
               />
-              <p className="mt-1 text-[11px] text-slate-400">
+              <p className="mt-1 text-xs text-slate-400">
                 Hanya ruang dengan bed bebas yang tampil. Data hunian dibaca live dari database.
               </p>
             </div>
@@ -238,6 +239,21 @@ export default function PatientForm({
                 className={inputCls}
               />
             </div>
+            <div className="md:col-span-2">
+              <label htmlFor="allergies" className={labelCls}>
+                Alergi (opsional)
+              </label>
+              <input
+                id="allergies"
+                name="allergies"
+                type="text"
+                defaultValue={initial?.allergies?.join(", ") ?? ""}
+                placeholder="pisahkan dengan koma, cth: penisilin, latex"
+                autoComplete="off"
+                className={inputCls}
+              />
+              <p className="mt-1 text-xs text-slate-500">Dicek terhadap nama obat saat dokter membuat resep.</p>
+            </div>
             <div className="flex items-end pb-1">
               <label
                 htmlFor="isInfectious"
@@ -258,7 +274,7 @@ export default function PatientForm({
               </label>
             </div>
           </div>
-          <p className="mt-3 text-[11px] text-slate-400">
+          <p className="mt-3 text-xs text-slate-400">
             Pasien menular ditandai ALERT infeksi dan ikut dilempar ke website monitoring.
           </p>
         </div>

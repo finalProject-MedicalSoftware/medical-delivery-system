@@ -2,6 +2,7 @@ interface SimrsLogoProps {
   tileClassName?: string;
   iconClassName?: string;
   showWordmark?: boolean;
+  showSubtitle?: boolean;
   title?: string;
   subtitle?: string;
   titleClassName?: string;
@@ -16,15 +17,16 @@ export default function SimrsLogo({
   tileClassName = "h-10 w-10 rounded-xl",
   iconClassName = "h-5 w-5",
   showWordmark = true,
-  title = "SIMRS Dummy",
-  subtitle = "Medical Delivery System",
+  showSubtitle = true,
+  title = "SIMRS",
+  subtitle = "Farmasi & Pengantaran Obat",
   titleClassName = "text-slate-900",
   subtitleClassName = "text-slate-500",
 }: SimrsLogoProps) {
   return (
     <span className="inline-flex items-center gap-2.5">
       <span
-        className={`inline-flex shrink-0 items-center justify-center bg-teal-600 ${tileClassName}`}
+        className={`inline-flex shrink-0 items-center justify-center bg-teal-700 ${tileClassName}`}
       >
         <svg
           viewBox="0 0 32 32"
@@ -48,9 +50,11 @@ export default function SimrsLogo({
           <span className={`block text-base font-bold ${titleClassName}`}>
             {title}
           </span>
-          <span className={`block text-xs ${subtitleClassName}`}>
-            {subtitle}
-          </span>
+          {showSubtitle && (
+            <span className={`block text-xs ${subtitleClassName}`}>
+              {subtitle}
+            </span>
+          )}
         </span>
       )}
     </span>

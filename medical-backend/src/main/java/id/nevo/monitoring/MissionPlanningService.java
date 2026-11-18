@@ -16,26 +16,46 @@ public class MissionPlanningService {
     private final JdbcTemplate db;
     private final SimrsClientService simrs;
     private final SimulatedRobotService simulator;
+    private final RealMissionService real;
 
     public MissionPlanningService(JdbcTemplate db, SimrsClientService simrs,
                                   ObjectProvider<SimulatedRobotService> simulator) {
+        this(db, simrs, simulator, null);
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public MissionPlanningService(JdbcTemplate db, SimrsClientService simrs,
+                                  ObjectProvider<SimulatedRobotService> simulator,
+                                  ObjectProvider<RealMissionService> real) {
         this.db = db;
         this.simrs = simrs;
         this.simulator = simulator.getIfAvailable();
+        this.real = real == null ? null : real.getIfAvailable();
     }
 
     public Map<String, Object> dispatch(ManifestRequest request, String userName) {
-        if (simulator == null) throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "Dispatch manifest hanya tersedia ketika adapter navigasi mendukung lifecycle misi");
+        if (simulator == null && real == null) throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "Dispatch manifest hanya tersedia ketika adapter navigasi mendukung lifecycle misi");
         if (request == null || request.items() == null || request.items().isEmpty()) throw bad("Manifest tidak boleh kosong");
-        if (!Objects.equals(request.robotId(), simulator.getRobotState().get("robotId"))) throw bad("Robot target tidak valid");
-        if (!"IDLE".equals(simulator.getRobotState().get("status"))) throw conflict("Robot belum siap menerima manifest baru");
+        if (simulator != null) {
+            if (!Objects.equals(request.robotId(), simulator.getRobotState().get("robotId"))) throw bad("Robot target tidak valid");
+            if (!"IDLE".equals(simulator.getRobotState().get("status"))) throw conflict("Robot belum siap menerima manifest baru");
+        } else {
+            if (blank(request.robotId())) throw bad("Robot target wajib diisi");
+            real.requireDispatchable(request.robotId());
+        }
 
-        int compartmentCount = simulator.getCompartmentCount();
+        int compartmentCount = simulator != null ? simulator.getCompartmentCount() : real.getCompartmentCount();
         validateShape(request.items(), compartmentCount);
         List<PreparedItem> prepared = new ArrayList<>();
         for (ManifestItem item : request.items()) prepared.add(validateLive(item));
 
         UUID manifestId = UUID.randomUUID();
+        if (simulator == null) {
+            List<RealMissionService.Stop> stops = new ArrayList<>();
+            for (PreparedItem p : prepared) stops.add(new RealMissionService.Stop(p.waypointId(), p.roomCode(), p.bedId(),
+                    p.patientMrn(), p.requestCode(), p.compartmentNo(), p.placementUpdatedAt(), p.source()));
+            return real.dispatchManifest(request.robotId(), stops, userName, manifestId);
+        }
         List<Map<String, Object>> missions = new ArrayList<>();
         for (int i = 0; i < prepared.size(); i++) {
             PreparedItem item = prepared.get(i);
@@ -63,9 +83,11 @@ public class MissionPlanningService {
         try { root = simrs.getPatient(item.patientMrn().trim()); }
         catch (Exception ex) { throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "Data pasien SIMRS tidak dapat diverifikasi"); }
         JsonNode patient = root.path("patient");
-        JsonNode infectiousFlag = patient.get("isInfectious");
-        if (infectiousFlag == null || !infectiousFlag.isBoolean() || !infectiousFlag.asBoolean()) {
-            throw conflict("Status penyakit menular pasien tidak aktif atau tidak dapat diverifikasi. Muat ulang pasien dan tinjau manifest.");
+        // robotEligible dari SIMRS: ada pengantaran yang sudah dikirim ke robot DAN
+        // (pasien menular ATAU petugas menulis alasan untuk pasien tidak menular).
+        JsonNode eligibleFlag = patient.get("robotEligible");
+        if (eligibleFlag == null || !eligibleFlag.isBoolean() || !eligibleFlag.asBoolean()) {
+            throw conflict("Pasien tidak memiliki pengantaran yang dikirim ke robot, atau alasan/status menularnya tidak dapat diverifikasi. Muat ulang pasien dan tinjau manifest.");
         }
         if (!patient.path("active").asBoolean(false)) throw conflict("Pasien tidak memiliki placement rawat inap aktif");
         String roomCode = patient.path("roomCode").asText("");

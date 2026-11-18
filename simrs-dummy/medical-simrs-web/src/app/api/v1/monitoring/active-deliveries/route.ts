@@ -1,11 +1,12 @@
 import { NextRequest } from "next/server";
 import { checkMonitoringToken } from "@/lib/monitoring";
-import { ACTIVE_DELIVERY_STATUSES, deliveryStatusLabel } from "@/lib/delivery-status";
+import { ITEMS_SELECT, mapItems } from "@/lib/delivery-items";
+import { MONITORING_ACTIVE_STATUSES, deliveryStatusLabel } from "@/lib/delivery-status";
 
 /**
  * Kontrak FINAL (fase mock) - read API: daftar pengantaran yang masih
  * berjalan untuk antrian web monitoring. Tanpa `compartmentNo`;
- * data kompartemen hanya di payload event MOCK_ARRIVED_AT_ROOM.
+ * data kompartemen hanya di payload event ARRIVED_AT_ROOM.
  *
  * Query: `?limit=` default 100, maks 200.
  */
@@ -26,7 +27,7 @@ export async function GET(req: NextRequest) {
 
   const { default: prisma } = await import("@/lib/prisma");
   const deliveries = await prisma.deliveryRequest.findMany({
-    where: { status: { in: ACTIVE_DELIVERY_STATUSES } },
+    where: { status: { in: MONITORING_ACTIVE_STATUSES } },
     orderBy: { requestedAt: "desc" },
     take: limit,
     include: {
@@ -34,6 +35,8 @@ export async function GET(req: NextRequest) {
       prescription: {
         select: {
           code: true,
+          priority: true,
+          ...ITEMS_SELECT,
           doseTimes: true,
           repeatMode: true,
           intervalDays: true,
@@ -43,6 +46,7 @@ export async function GET(req: NextRequest) {
               fullName: true,
               gender: true,
               isInfectious: true,
+              allergies: true,
               roomCode: true,
               dischargedAt: true,
               bed: {
@@ -72,6 +76,11 @@ export async function GET(req: NextRequest) {
         roomCode: d.room.roomCode,
         roomName: d.room.name,
         prescriptionCode: d.prescription.code,
+        // Alasan pengantaran robot (hanya untuk pasien tidak menular).
+        robotReason: d.robotReason,
+        priority: d.prescription.priority,
+        // Item obat yang harus diserahkan (nama, jumlah, aturan pakai).
+        items: mapItems(d.prescription.items),
         // doseTimes adalah metadata informasional resep, bukan penjadwalan otomatis.
         schedule: d.prescription.doseTimes.length > 0
           ? {
@@ -87,6 +96,7 @@ export async function GET(req: NextRequest) {
           fullName: p.fullName,
           gender: p.gender, // "L" / "P"
           isInfectious: p.isInfectious,
+          allergies: p.allergies,
           // Ruang PASIEN saat ini (bisa beda bila pasien pindah bed).
           roomCode: p.roomCode,
           roomName: p.bed?.room.name ?? null,

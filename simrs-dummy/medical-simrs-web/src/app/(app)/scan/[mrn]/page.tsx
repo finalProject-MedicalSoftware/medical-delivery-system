@@ -14,7 +14,7 @@ export const dynamic = "force-dynamic";
 
 const ERR_MESSAGES: Record<string, string> = {
   "no-delivery": "Tidak ada pengantaran aktif untuk pasien ini.",
-  "not-arrived": "Robot belum tiba di ruang. Konfirmasi hanya setelah status Mock: Tiba.",
+  "not-arrived": "Robot belum tiba di ruang. Konfirmasi hanya setelah status Tiba di Ruangan.",
   "invalid-token": "QR tidak valid atau sudah kedaluwarsa. Cetak ulang gelang pasien.",
 };
 
@@ -53,8 +53,8 @@ export default async function ScanPage({
   if (!info) notFound();
 
   const { patient, delivery } = info;
-  const confirmed = delivery?.status === "MOCK_HANDOVER_CONFIRMED";
-  const arrived = delivery?.status === "MOCK_ARRIVED_AT_ROOM";
+  const confirmed = delivery?.status === "HANDOVER_CONFIRMED";
+  const arrived = delivery?.status === "ARRIVED_AT_ROOM";
 
   return (
     <div className="space-y-5">
@@ -187,7 +187,7 @@ export default async function ScanPage({
             )
           ) : (
             <p className="mt-4 text-xs text-slate-500">
-              Robot belum tiba di ruang. Tombol konfirmasi muncul setelah status Mock: Tiba.
+              Robot belum tiba di ruang. Tombol konfirmasi muncul setelah status Tiba di Ruangan.
             </p>
           )}
         </div>

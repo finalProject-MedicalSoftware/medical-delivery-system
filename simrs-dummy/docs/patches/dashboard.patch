@@ -1,0 +1,161 @@
+diff --git a/frontend/app/api/ws/command/route.ts b/frontend/app/api/ws/command/route.ts
+index 2753143..1d14366 100644
+--- a/frontend/app/api/ws/command/route.ts
++++ b/frontend/app/api/ws/command/route.ts
+@@ -69,14 +69,16 @@ export async function POST(req: NextRequest) {
+   }
+   // Until hardware possession can be proved, only a targeted zero-velocity
+   // stop attempt is permitted. Readiness must not block this safety attempt.
+-  if (code !== 'TELEOP' || data.linear !== 0 || data.angular !== 0) {
++  // ALLOW_ROBOT_MOTION=true (uji robot fisik yang diawasi) membuka gerak; gateway punya gate yang sama.
++  const allowMotion = process.env.ALLOW_ROBOT_MOTION === 'true';
++  if (!allowMotion && (code !== 'TELEOP' || data.linear !== 0 || data.angular !== 0)) {
+     return NextResponse.json({ error: 'DEVICE_AUTH_UNAVAILABLE' }, { status: 409 });
+   }
+   if (!rosterSnapshot().some(robot => robot.robot_id === data.robot_id)) {
+     return NextResponse.json({ error: 'ROBOT_OFFLINE', outcome: 'UNKNOWN' }, { status: 409 });
+   }
+   // Kontrak: map_id MAP_SELECTED selalu integer (kontrak robot-ws-tifa §5).
+-  if (code === 'MAP_SELECTED' && !Number.isInteger(data.map_id)) {
++  if ((code as string) === 'MAP_SELECTED' && !Number.isInteger(data.map_id)) {
+     return NextResponse.json({ error: 'MAP_ID_MUST_BE_INTEGER' }, { status: 400 });
+   }
+   if (!sendDownlink({ code, data })) {
+diff --git a/frontend/app/api/ws/stream/route.ts b/frontend/app/api/ws/stream/route.ts
+index 61f3161..8ed0ab4 100644
+--- a/frontend/app/api/ws/stream/route.ts
++++ b/frontend/app/api/ws/stream/route.ts
+@@ -64,7 +64,7 @@ export async function GET(req: NextRequest) {
+     start(controller) {
+       const send = (s: string) => controller.enqueue(new TextEncoder().encode(`data: ${s}\n\n`));
+       addSubscriber(sseId, channels, send);
+-      send(JSON.stringify({ type: 'SSE_INIT', sseId, relayConnected: relayRegistered(), channels: channels.map((c) => c.kind === 'all' ? 'all' : `${c.kind}:${c.code}`) }));
++      send(JSON.stringify({ type: 'SSE_INIT', sseId, relayConnected: relayRegistered(), motionAllowed: process.env.ALLOW_ROBOT_MOTION === 'true', channels: channels.map((c) => c.kind === 'all' ? 'all' : `${c.kind}:${c.code}`) }));
+       // Burst awal: roster cache (READY/POSITION/BATTERY terakhir) agar UI
+       // tidak menunggu uplink robot berikutnya.
+       send(JSON.stringify({ type: 'SSE_ROSTER', robots: rosterSnapshot() }));
+diff --git a/frontend/app/dashboard/page.tsx b/frontend/app/dashboard/page.tsx
+index 96310ff..3ff0a6e 100644
+--- a/frontend/app/dashboard/page.tsx
++++ b/frontend/app/dashboard/page.tsx
+@@ -62,7 +62,8 @@ export default function DashboardPage() {
+           {deliveries.length === 0 ? <EmptyState icon={BedDouble} title={dict.simrs.deliveryEmpty} /> : deliveries.map(del => <article key={del.requestCode} className="delivery-card">
+             <div className="flex items-center gap-3"><BedDouble size={25} className="txt-sec shrink-0" /><div className="min-w-0 flex-1"><h3 className="font-bold">{del.roomName || del.roomCode}</h3><p className="txt-sec text-sm break-all">{del.requestCode}</p></div><Link href={`/missions/create${del.patientMrn || del.patient?.mrn ? `?mrn=${encodeURIComponent(del.patientMrn || del.patient.mrn)}` : ''}`} aria-label={t.newMission + ' ' + del.requestCode} className="bg-accent text-white rounded-full p-2"><ArrowRight size={20} /></Link></div>
+             <div className="text-xs txt-sec mt-3 space-y-1"><p>{t.patient}: {del.patientName ?? del.patient?.fullName ?? '—'} ({del.patientMrn ?? del.mrn ?? del.patient?.mrn ?? '—'})</p><p>{t.medicine}: {del.medicineName ?? del.medicine ?? del.prescription?.medicineName ?? '—'}</p></div>
+-            {del.isInfectious && <p className="mt-3 p-2 bg-error/10 text-error rounded-lg text-sm flex gap-2"><ShieldAlert size={16} />{t.infectious} — APD</p>}
++            {(del.isInfectious ?? del.patient?.isInfectious) && <p className="mt-3 p-2 bg-error/10 text-error rounded-lg text-sm flex gap-2"><ShieldAlert size={16} />{t.infectious} — APD</p>}
++            {!(del.isInfectious ?? del.patient?.isInfectious) && del.robotReason && <p className="mt-3 p-2 bg-accent/10 rounded-lg text-sm">{language === 'id' ? 'Alasan robot' : 'Robot reason'}: {del.robotReason}</p>}
+             <span className="status-pill status-info inline-block mt-3">{del.status}</span>
+           </article>)}
+           <Link href="/simrs" className="text-sm text-accent inline-flex items-center gap-2 mt-5">{t.viewAll}<ArrowRight size={14} /></Link>
+diff --git a/frontend/app/missions/create/page.tsx b/frontend/app/missions/create/page.tsx
+index 57e347c..1e39bc7 100644
+--- a/frontend/app/missions/create/page.tsx
++++ b/frontend/app/missions/create/page.tsx
+@@ -11,7 +11,7 @@ import MapViewer, { MapMetadata, WaypointItem } from '../../maps/MapViewer';
+ 
+ type PatientSummary = {
+   id: string; mrn: string; fullName: string; roomCode: string | null; roomName: string | null;
+-  bedId: string | null; bedNumber: string | null; active: boolean; isInfectious: boolean; placementUpdatedAt: string;
++  bedId: string | null; bedNumber: string | null; active: boolean; isInfectious: boolean; robotEligible?: boolean; robotReason?: string | null; placementUpdatedAt: string;
+ };
+ type Delivery = { requestCode: string; status: string; statusLabel?: string };
+ type PatientDetail = PatientSummary & { activeDeliveries: Delivery[] };
+@@ -97,11 +97,11 @@ function NavigationContent() {
+   const compartmentCount = telemetry.compartmentCount ?? 0;
+   const usedCompartments = new Set(manifest.map((item) => item.compartmentNo));
+   const selectedAlreadyAdded = selected ? manifest.some((item) => item.mrn === selected.mrn) : false;
+-  const placementValid = Boolean(selected?.isInfectious && selected.active && selected.roomCode && selected.bedId && selected.placementUpdatedAt);
+-  const manifestValid = manifest.every((item) => item.isInfectious === true);
++  const placementValid = Boolean(selected?.robotEligible && selected.active && selected.roomCode && selected.bedId && selected.placementUpdatedAt);
++  const manifestValid = manifest.every((item) => item.robotEligible === true);
+ 
+   const addToManifest = () => {
+-    if (!selected?.isInfectious) return setMessage({ tone: 'error', text: id ? 'Pasien tidak memiliki flag penyakit menular aktif.' : 'The patient does not have an active infectious-disease flag.' });
++    if (!selected?.robotEligible) return setMessage({ tone: 'error', text: id ? 'Pasien belum memiliki pengantaran yang dikirim ke robot (atau alasannya belum diisi di SIMRS).' : 'The patient has no delivery sent to the robot (or the reason is missing in SIMRS).' });
+     if (!selected || !placementValid) return setMessage({ tone: 'error', text: id ? 'Pasien tidak memiliki placement rawat inap aktif.' : 'Patient has no active inpatient placement.' });
+     if (!selectedWaypoint) return setMessage({ tone: 'error', text: id ? 'Waypoint kasur pasien belum dikonfigurasi.' : 'The patient bed waypoint has not been configured.' });
+     if (compartment === null) return setMessage({ tone: 'error', text: id ? 'Pilih kompartemen.' : 'Select a compartment.' });
+@@ -128,17 +128,17 @@ function NavigationContent() {
+       const infectionChecks = await Promise.all(manifest.map(async (item) => {
+         try {
+           const latest = await request(`integrations/simrs/patient/${encodeURIComponent(item.mrn)}`);
+-          return { mrn: item.mrn, valid: latest?.patient?.isInfectious === true };
++          return { mrn: item.mrn, valid: latest?.patient?.robotEligible === true };
+         } catch {
+           return { mrn: item.mrn, valid: false };
+         }
+       }));
+       const invalidMrns = new Set(infectionChecks.filter((check) => !check.valid).map((check) => check.mrn));
+       if (invalidMrns.size) {
+-        setManifest((current) => current.map((item) => invalidMrns.has(item.mrn) ? { ...item, isInfectious: false } : item));
++        setManifest((current) => current.map((item) => invalidMrns.has(item.mrn) ? { ...item, robotEligible: false } : item));
+         throw new Error(id
+-          ? 'Status penyakit menular satu atau lebih pasien tidak aktif atau tidak dapat diverifikasi. Tinjau manifest.'
+-          : 'The infectious-disease status of one or more patients is inactive or cannot be verified. Review the manifest.');
++          ? 'Satu atau lebih pasien tidak lagi memiliki pengantaran yang dikirim ke robot. Tinjau manifest.'
++          : 'One or more patients no longer have a delivery sent to the robot. Review the manifest.');
+       }
+       const response = await request('missions/manifest', {
+         method: 'POST', headers: { 'Content-Type': 'application/json' },
+@@ -202,7 +202,8 @@ function NavigationContent() {
+       <div className="flex flex-wrap items-center justify-between gap-3"><div><h2 id="manifest-title" className="font-semibold txt-main">{id ? 'Manifest Pasien' : 'Patient Manifest'}</h2><p className="text-xs txt-sec mt-1">{manifest.length} {id ? 'tujuan kasur individual' : 'individual bed destinations'}</p></div><span className={`status-pill ${selectedRobotConnected && telemetry.status === 'IDLE' ? 'status-success' : 'status-warning'}`}>{telemetry.name} · {telemetry.status}</span></div>
+       {!manifest.length ? <div className="rounded-xl border border-dashed border-base p-8 text-center txt-sec"><BedDouble size={28} className="mx-auto mb-2" /><p>{id ? 'Belum ada pasien dalam manifest.' : 'No patients in the manifest yet.'}</p></div> : <div className="space-y-2">{manifest.map((item, index) => <article key={item.mrn} className={`grid grid-cols-1 md:grid-cols-[auto_minmax(0,1fr)_minmax(150px,0.3fr)_auto] gap-3 items-center rounded-xl border bg-card p-3 ${item.isInfectious ? 'border-base' : 'border-error/50 bg-error/5'}`}>
+         <span className="grid h-8 w-8 place-items-center rounded-lg bg-accent/10 text-sm font-bold text-accent">{index + 1}</span><div className="min-w-0"><p className="font-medium txt-main truncate">{item.fullName} <span className="font-normal txt-sec">· {item.mrn}</span></p><p className="text-xs txt-sec">{item.roomName ?? item.roomCode} · Bed {item.bedNumber} · {item.waypoint.name}</p><p className="text-[11px] mt-1 text-accent">{item.requestCode ? `SIMRS ${item.requestCode}` : (id ? 'Misi manual tanpa write-back' : 'Manual mission without write-back')}</p></div><select aria-label={`${id ? 'Kompartemen' : 'Compartment'} ${item.fullName}`} className="input-field" value={item.compartmentNo} onChange={(event) => updateCompartment(item.mrn, Number(event.target.value))}>{Array.from({ length: compartmentCount }, (_, value) => <option key={value} value={value} disabled={manifest.some((other) => other.mrn !== item.mrn && other.compartmentNo === value)}>#{value + 1}</option>)}</select><button type="button" className="p-2 text-error" aria-label={`${id ? 'Hapus' : 'Remove'} ${item.fullName}`} onClick={() => setManifest((current) => current.filter((row) => row.mrn !== item.mrn))}><Trash2 size={18} /></button>
+-        {!item.isInfectious && <p className="md:col-start-2 md:col-span-2 text-xs font-medium text-error">{id ? 'Tidak valid: flag penyakit menular tidak aktif atau tidak dapat diverifikasi.' : 'Invalid: infectious-disease flag is inactive or cannot be verified.'}</p>}
++        {item.robotReason && <p className="md:col-start-2 md:col-span-2 text-xs txt-sec">{id ? 'Alasan pengantaran robot' : 'Robot delivery reason'}: {item.robotReason}</p>}
++        {!item.robotEligible && <p className="md:col-start-2 md:col-span-2 text-xs font-medium text-error">{id ? 'Tidak valid: tidak ada pengantaran yang dikirim ke robot untuk pasien ini.' : 'Invalid: no delivery has been sent to the robot for this patient.'}</p>}
+       </article>)}</div>}
+       <div className="flex flex-col sm:flex-row justify-between gap-3 border-t border-base pt-4"><p className="text-xs txt-sec max-w-xl">{id ? 'Backend akan memeriksa ulang flag penyakit menular, placement pasien, dan waypoint peta aktif sebelum dispatch. Setiap pasien dibuat sebagai misi individual dalam satu manifest.' : 'The backend revalidates the infectious-disease flag, patient placement, and active-map waypoint before dispatch. Each patient becomes an individual mission within one manifest.'}</p><div className="flex gap-2">{telemetry.activeMissionId && <button type="button" className="btn-secondary inline-flex items-center gap-2" onClick={cancelActive}><XCircle size={17} />{id ? 'Batalkan Misi Aktif' : 'Cancel Active Mission'}</button>}<button type="button" className="btn-primary inline-flex items-center justify-center gap-2" onClick={() => void dispatch()} disabled={!manifest.length || !manifestValid || submitting || !selectedRobotConnected || telemetry.status !== 'IDLE'}>{submitting ? <Loader2 size={17} className="animate-spin" /> : <Send size={17} />}{id ? 'Kirim Manifest' : 'Dispatch Manifest'}</button></div></div>
+     </section>
+diff --git a/frontend/app/robots/page.tsx b/frontend/app/robots/page.tsx
+index be5a4f7..268f70f 100644
+--- a/frontend/app/robots/page.tsx
++++ b/frontend/app/robots/page.tsx
+@@ -49,6 +49,7 @@ export default function RobotsPage() {
+ 
+   const [roster, setRoster] = useState<RosterEntry[]>([]);
+   const [connected, setConnected] = useState(false);
++  const [motionAllowed, setMotionAllowed] = useState(false); // dari server: ALLOW_ROBOT_MOTION (uji robot fisik yang diawasi)
+   const [streamError, setStreamError] = useState('');
+   const [actionError, setActionError] = useState('');
+   const [targetId, setTargetId] = useState('');
+@@ -69,7 +70,7 @@ export default function RobotsPage() {
+     es.onmessage = (ev) => {
+       let item: any;
+       try { item = JSON.parse(ev.data); } catch { return; }
+-      if (item?.type === 'SSE_INIT') { setConnected(item.relayConnected === true); setStreamError(''); }
++      if (item?.type === 'SSE_INIT') { setConnected(item.relayConnected === true); setMotionAllowed(item.motionAllowed === true); setStreamError(''); }
+       else if (item?.type === 'SSE_RELAY') { setConnected(item.connected === true); setRoster(item.robots || []); }
+       else if (item?.type === 'SSE_ROSTER') setRoster(item.robots || []);
+       else if (item?.code && item.data?.robot_id) setRoster((cur) => applyFrame(cur, item));
+@@ -108,10 +109,10 @@ export default function RobotsPage() {
+ 
+   // Manual movement needs affirmative relay, target, role and robot mode evidence.
+   // An absent/unknown mode is intentionally treated as unsafe.
+-  const hardwareAuthenticated = false; // Gateway has no device credential contract yet.
+-  const canMove = hardwareAuthenticated && connected && !!target && ['ADMIN', 'FARMASI', 'OPERATOR'].includes(user?.role?.toUpperCase() || '') &&
+-    ['READY', 'IDLE'].includes((target.status || '').toUpperCase()) &&
+-    ['MANUAL', 'TELEOP'].includes((target.mode || '').toUpperCase());
++  // Gateway belum punya kredensial perangkat, jadi gerak hanya dibuka eksplisit lewat ALLOW_ROBOT_MOTION
++  // (uji robot fisik yang diawasi). Robot sendiri menerima TELEOP tanpa syarat mode, jadi bukti
++  // status/mode tidak diminta saat dibuka.
++  const canMove = motionAllowed && connected && !!target && ['ADMIN', 'FARMASI', 'OPERATOR'].includes(user?.role?.toUpperCase() || '');
+   const gate = useRef({ canMove, targetId, connected });
+   gate.current = { canMove, targetId, connected };
+ 
+diff --git a/samples/simrs-mapping.yaml b/samples/simrs-mapping.yaml
+index 4b36a48..f706e25 100644
+--- a/samples/simrs-mapping.yaml
++++ b/samples/simrs-mapping.yaml
+@@ -16,8 +16,8 @@ statuses:
+   delivery:
+     DELIVERY_REQUESTED: { label: "Diminta", severity: info }
+     PENDING_INTEGRATION: { label: "Pending Integrasi", severity: warning }
+-    MOCK_IN_TRANSIT: { label: "Mock Transit", severity: info, simulation: true }
+-    MOCK_ARRIVED_AT_ROOM: { label: "Mock Tiba", severity: ok, simulation: true }
++    IN_TRANSIT: { label: "Mock Transit", severity: info, simulation: true }
++    ARRIVED_AT_ROOM: { label: "Mock Tiba", severity: ok, simulation: true }
+     CANCELLED: { label: "Dibatalkan", severity: muted }
+   prescription:
+     DRAFT: { label: "Draft", severity: muted }

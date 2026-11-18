@@ -2,9 +2,10 @@ import prisma from "@/lib/prisma";
 import { getCurrentUser } from "@/lib/auth";
 import { notFound } from "next/navigation";
 import Link from "next/link";
-import { ArrowLeft, Truck, Info } from "lucide-react";
+import { ArrowLeft, Truck } from "lucide-react";
 import DeliveryStatusActions from "@/components/DeliveryStatusActions";
 import { StatusBadge, cardCls } from "@/components/ui";
+import { DELIVERY_STATUS_LABELS } from "@/lib/delivery-status";
 import { bedDisplayName } from "@/lib/bed-info";
 import { patientScanPath } from "@/lib/wristband";
 import { signScanToken } from "@/lib/qr-token";
@@ -36,9 +37,6 @@ export default async function PengantaranDetailPage({
 
   if (!delivery) notFound();
 
-  const isMockStatus =
-    delivery.status === "MOCK_IN_TRANSIT" || delivery.status === "MOCK_ARRIVED_AT_ROOM";
-
   return (
     <div className="space-y-5">
       <div className="flex items-center gap-3">
@@ -51,21 +49,10 @@ export default async function PengantaranDetailPage({
             {delivery.requestCode}
           </h1>
           <p className="font-mono text-xs text-slate-500">{delivery.id}</p>
+          <Link href={`/pengantaran/${delivery.id}/berita-acara`} className="mt-1 inline-block text-xs font-medium text-teal-700 hover:underline">Berita acara serah terima</Link>
         </div>
         <StatusBadge status={delivery.status} />
       </div>
-
-      {isMockStatus && (
-        <div className="flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
-          <Info className="mt-0.5 h-4 w-4 shrink-0" />
-          <div>
-            <p className="font-semibold">[SIMULASI]</p>
-            <p className="mt-0.5">
-              Status ini adalah mock simulasi. Tidak ada robot fisik yang bergerak. Pergerakan robot nyata dikontrol oleh Web Monitoring.
-            </p>
-          </div>
-        </div>
-      )}
 
       <div className="grid gap-4 md:grid-cols-2">
         {/* Delivery info */}
@@ -155,18 +142,13 @@ export default async function PengantaranDetailPage({
                 />
                 <div>
                   <div className="flex items-center gap-2">
-                    <span className="text-xs font-semibold text-slate-900">{ev.statusAfter}</span>
-                    {ev.isSimulation && (
-                      <span className="rounded bg-sky-100 px-1.5 py-0.5 text-[10px] font-medium text-sky-800">
-                        MOCK
-                      </span>
-                    )}
+                    <span className="text-xs font-semibold text-slate-900">{DELIVERY_STATUS_LABELS[ev.statusAfter as keyof typeof DELIVERY_STATUS_LABELS] ?? ev.statusAfter}</span>
                   </div>
                   {ev.statusBefore && (
-                    <p className="text-[10px] text-slate-400">dari: {ev.statusBefore}</p>
+                    <p className="text-xs text-slate-400">dari: {DELIVERY_STATUS_LABELS[ev.statusBefore as keyof typeof DELIVERY_STATUS_LABELS] ?? ev.statusBefore}</p>
                   )}
                   {ev.notes && <p className="text-xs text-slate-500">{ev.notes}</p>}
-                  <p className="text-[10px] text-slate-400">
+                  <p className="text-xs text-slate-400">
                     {new Date(ev.createdAt).toLocaleString("id-ID")}
                   </p>
                 </div>

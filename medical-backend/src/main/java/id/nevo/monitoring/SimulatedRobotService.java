@@ -88,14 +88,14 @@ public class SimulatedRobotService implements RobotAdapter {
         try { return simrsService != null && simrsService.isWriteLive(); } catch (Exception ex) { return false; }
     }
 
-    /** Dispatch (EXECUTING) -> SIMRS MOCK_IN_TRANSIT; tambah PENDING_INTEGRATION dulu bila SIMRS masih DELIVERY_REQUESTED (draf-D2). */
+    /** Dispatch (EXECUTING) -> SIMRS IN_TRANSIT; tambah PENDING_INTEGRATION dulu bila SIMRS masih DELIVERY_REQUESTED (draf-D2). */
     private void postSimrsInTransit(UUID missionId, String requestCode, String roomCode) {
         if (!simrsWriteLive() || requestCode == null || requestCode.isBlank()) return;
         simrsWriter.submit(() -> {
             try {
                 String current = findSimrsStatus(requestCode);
-                if (current != null && (current.equals("MOCK_IN_TRANSIT") || current.equals("MOCK_ARRIVED_AT_ROOM") || current.equals("CANCELLED"))) {
-                    log.info("SIMRS delivery {} sudah {}; lewati MOCK_IN_TRANSIT", requestCode, current);
+                if (current != null && (current.equals("IN_TRANSIT") || current.equals("ARRIVED_AT_ROOM") || current.equals("CANCELLED"))) {
+                    log.info("SIMRS delivery {} sudah {}; lewati IN_TRANSIT", requestCode, current);
                     return;
                 }
                 // Cache active-deliveries bisa stale (refresh tiap polling cycle), jadi
@@ -105,14 +105,14 @@ public class SimulatedRobotService implements RobotAdapter {
                 if (current == null || current.equals("DELIVERY_REQUESTED")) {
                     doSimrsPost(missionId, requestCode, "PENDING_INTEGRATION", "[SIMULASI] Integrasi robot NEVO-01 mengambil permintaan pengantaran.", null);
                 }
-                doSimrsPost(missionId, requestCode, "MOCK_IN_TRANSIT", "[SIMULASI] Robot NEVO-01 dalam transit menuju ruang " + (roomCode == null ? "sasaran" : roomCode) + ".", null);
+                doSimrsPost(missionId, requestCode, "IN_TRANSIT", "[SIMULASI] Robot NEVO-01 dalam transit menuju ruang " + (roomCode == null ? "sasaran" : roomCode) + ".", null);
             } catch (Exception ex) {
-                log.warn("Push status SIMRS (MOCK_IN_TRANSIT) gagal: {}", safeSimrsMessage(ex));
+                log.warn("Push status SIMRS (IN_TRANSIT) gagal: {}", safeSimrsMessage(ex));
             }
         });
     }
 
-    /** Arrival (SUCCEEDED) -> SIMRS MOCK_ARRIVED_AT_ROOM; serah-terima tetap manual lewat scan manusia di SIMRS. */
+    /** Arrival (SUCCEEDED) -> SIMRS ARRIVED_AT_ROOM; serah-terima tetap manual lewat scan manusia di SIMRS. */
     private void postSimrsArrival(UUID missionId) {
         if (!simrsWriteLive()) return;
         simrsWriter.submit(() -> {
@@ -122,9 +122,9 @@ public class SimulatedRobotService implements RobotAdapter {
                 String requestCode = (String) mission.get("request_code");
                 if (requestCode == null || requestCode.isBlank()) return;
                 String roomCode = (String) mission.get("room_code");
-                doSimrsPost(missionId, requestCode, "MOCK_ARRIVED_AT_ROOM", "[SIMULASI] Robot NEVO-01 tiba di ruang " + (roomCode == null ? "sasaran" : roomCode) + "; serah-terima ditentukan via scan manusia.", missionCompartment(missionId));
+                doSimrsPost(missionId, requestCode, "ARRIVED_AT_ROOM", "[SIMULASI] Robot NEVO-01 tiba di ruang " + (roomCode == null ? "sasaran" : roomCode) + "; serah-terima ditentukan via scan manusia.", missionCompartment(missionId));
             } catch (Exception ex) {
-                log.warn("Push status SIMRS (MOCK_ARRIVED_AT_ROOM) gagal: {}", safeSimrsMessage(ex));
+                log.warn("Push status SIMRS (ARRIVED_AT_ROOM) gagal: {}", safeSimrsMessage(ex));
             }
         });
     }

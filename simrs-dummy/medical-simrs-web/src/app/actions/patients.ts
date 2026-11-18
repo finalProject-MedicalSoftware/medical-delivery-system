@@ -7,6 +7,8 @@ import { PERMISSION_CODES } from "@/lib/rbac";
 import { patientSchema } from "@/lib/validations";
 import { createPatient } from "@/lib/master-data";
 import { claimBedForPatient, releaseBedIfUnused } from "@/lib/bed-availability";
+import { ACTIVE_DELIVERY_STATUSES } from "@/lib/delivery-status";
+import { parseAllergies } from "@/lib/clinical";
 import { revalidatePath } from "next/cache";
 
 /**
@@ -48,6 +50,7 @@ export async function createPatientAction(
     notes: (formData.get("notes") as string) || null,
     diagnosis: ((formData.get("diagnosis") as string) || "").trim() || null,
     isInfectious: formData.get("isInfectious") === "1",
+    allergies: parseAllergies(formData.get("allergies") as string),
   };
 
   const parsed = patientSchema.safeParse(raw);
@@ -95,6 +98,7 @@ export async function updatePatientAction(
     notes: (formData.get("notes") as string) || null,
     diagnosis: ((formData.get("diagnosis") as string) || "").trim() || null,
     isInfectious: formData.get("isInfectious") === "1",
+    allergies: parseAllergies(formData.get("allergies") as string),
   };
 
   const parsed = patientSchema.safeParse(raw);
@@ -111,6 +115,20 @@ export async function updatePatientAction(
   });
   if (mrnTaken) {
     return { ok: false, error: `Nomor MRN '${parsed.data.mrn}' sudah dipakai pasien lain` };
+  }
+
+  // Pindah ruang saat ada pengantaran aktif membuat tujuan robot salah: tolak.
+  if ((existing.roomCode ?? null) !== (parsed.data.roomCode ?? null)) {
+    const active = await prisma.deliveryRequest.findFirst({
+      where: { prescription: { patientId }, status: { in: ACTIVE_DELIVERY_STATUSES } },
+      select: { requestCode: true },
+    });
+    if (active) {
+      return {
+        ok: false,
+        error: `Pasien punya pengantaran aktif (${active.requestCode}). Selesaikan atau batalkan dulu sebelum memindahkan ruang.`,
+      };
+    }
   }
 
   // Tanpa ruang tidak ada bed. Ganti ruang tanpa pilih bed melepas bed lama.
@@ -133,6 +151,7 @@ export async function updatePatientAction(
           notes: parsed.data.notes,
           diagnosis: parsed.data.diagnosis,
           isInfectious: parsed.data.isInfectious,
+          allergies: parsed.data.allergies,
         },
       });
 
@@ -151,9 +170,14 @@ export async function updatePatientAction(
         data: {
           entityType: "PATIENT",
           entityId: patientId,
-          action: "UPDATE_PATIENT",
+          action: (existing.roomCode ?? null) !== (parsed.data.roomCode ?? null) || existing.bedId !== newBedId ? "TRANSFER_PATIENT" : "UPDATE_PATIENT",
           actorId: actor.userId,
-          details: { mrn: parsed.data.mrn, fullName: parsed.data.fullName },
+          details: {
+            mrn: parsed.data.mrn,
+            fullName: parsed.data.fullName,
+            fromRoom: existing.roomCode ?? null,
+            toRoom: parsed.data.roomCode ?? null,
+          },
         },
       });
     });

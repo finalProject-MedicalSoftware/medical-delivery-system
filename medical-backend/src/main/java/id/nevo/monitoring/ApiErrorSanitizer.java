@@ -94,7 +94,7 @@ public class ApiErrorSanitizer extends DefaultErrorAttributes {
             "requestCode dan toStatus kontrak wajib valid",
             "idempotencyKey tidak sesuai kontrak",
             "compartmentNo harus integer >= 0",
-            "compartmentNo hanya boleh saat MOCK_ARRIVED_AT_ROOM",
+            "compartmentNo hanya boleh saat ARRIVED_AT_ROOM",
             "SIMRS mapping belum tersedia di cache",
             "SIMRS belum dikonfigurasi; POST ditolak.",
             "Gagal mengirim status SIMRS",

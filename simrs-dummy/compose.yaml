@@ -75,6 +75,9 @@ services:
       INTERNAL_PUBLISH_URL: http://medical-ws:8081/internal/publish
       INTERNAL_PUBLISH_SECRET: ${INTERNAL_PUBLISH_SECRET:-}
       GATEWAY_URL: http://medical-ws:8081
+      # sim = robot simulasi bawaan; real = robot fisik lewat gateway (butuh ROBOT_MODE=real di simrs-dummy/.env)
+      ROBOT_MODE: ${ROBOT_MODE:-sim}
+      NEVO_HOME_BASE: ${NEVO_HOME_BASE:-}
     depends_on:
       medical-postgres:
         condition: service_healthy
@@ -95,6 +98,7 @@ services:
       SIMRS_URL: ${DASHBOARD_BACKEND_URL:-http://medical-backend:8080}
       WS_BACKEND_URL: ${DASHBOARD_WS_BACKEND_URL:-ws://medical-ws:8081/ws/v1/deliveries}
       WS_AUTH_TOKEN: ${WS_AUTH_TOKEN:-}
+      ALLOW_ROBOT_MOTION: ${ALLOW_ROBOT_MOTION:-false}
     depends_on:
       medical-backend:
         condition: service_started
@@ -155,11 +159,18 @@ services:
       TOPIC_DLQ: simrs.delivery.events.dlq
       WS_AUTH_TOKEN: ${WS_AUTH_TOKEN:-}
       INTERNAL_PUBLISH_SECRET: ${INTERNAL_PUBLISH_SECRET:-}
+      # Registry robot + tujuan uplink status misi (GOAL_COMPLETE dll) ada di backend.
+      REGISTRY_BACKEND_URL: http://medical-backend:8080
+      # Gerak fisik robot (teleop, misi). false = hanya stop. Nyalakan HANYA saat uji robot yang diawasi.
+      ALLOW_ROBOT_MOTION: ${ALLOW_ROBOT_MOTION:-false}
+      TELEOP_MAX_LINEAR: ${TELEOP_MAX_LINEAR:-0.3}
+      TELEOP_MAX_ANGULAR: ${TELEOP_MAX_ANGULAR:-0.6}
     depends_on:
       redpanda:
         condition: service_healthy
     ports:
-      - "127.0.0.1:${MEDICAL_WS_PORT:-8083}:8081"
+      # MEDICAL_WS_BIND=0.0.0.0 agar robot di jaringan yang sama bisa terhubung (robot tanpa token: hanya untuk jaringan uji tepercaya).
+      - "${MEDICAL_WS_BIND:-127.0.0.1}:${MEDICAL_WS_PORT:-8083}:8081"
 
 volumes:
   simrs_postgres_data:

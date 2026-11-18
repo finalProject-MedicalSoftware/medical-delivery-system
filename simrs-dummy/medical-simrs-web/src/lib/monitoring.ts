@@ -1,4 +1,10 @@
-import { checkRateLimit } from "@/lib/rate-limit";
+import { timingSafeEqual } from "node:crypto";
+import { checkRateLimit, clientIpFrom } from "@/lib/rate-limit";
+
+function tokenEquals(a: string, b: string): boolean {
+  const x = Buffer.from(a), y = Buffer.from(b);
+  return x.length === y.length && timingSafeEqual(x, y);
+}
 
 /**
  * Auth bersama untuk endpoint mock integrasi monitoring.
@@ -14,9 +20,6 @@ const MONITOR_WINDOW_MS = 60_000;
 export const MONITORING_SERVICE_USERNAME = "monitoring_service";
 export const MONITORING_TOKEN_HEADER = "x-monitoring-token";
 
-function clientIpFrom(req: Request): string {
-  return req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "unknown";
-}
 
 /** Audit token salah — fire-and-forget; jangan pernah gagalkan response. */
 async function recordInvalidTokenAttempt(ip: string, got: string | null): Promise<void> {
@@ -58,9 +61,9 @@ export function checkMonitoringToken(
     };
   }
 
-  const ip = clientIpFrom(req);
+  const ip = clientIpFrom(req.headers) ?? "unknown";
   const got = req.headers.get(MONITORING_TOKEN_HEADER);
-  if (!got || got !== configured) {
+  if (!got || !tokenEquals(got, configured)) {
     // limit kegagalan (5/menit/IP) & flood polling dihentikan sebelum dianggap sah.
     const failGate = checkRateLimit(`monitor-fail:${ip}`, MONITOR_MAX_FAILURES, MONITOR_WINDOW_MS);
     if (!failGate.ok) {

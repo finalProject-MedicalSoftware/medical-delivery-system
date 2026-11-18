@@ -10,7 +10,7 @@ import { deliveryStatusLabel, deliveryStatusTone, prescriptionStatusLabel } from
  */
 
 export const btnPrimary =
-  "inline-flex items-center gap-2 rounded-lg bg-teal-700 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-teal-800 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-teal-700 disabled:opacity-60";
+  "inline-flex items-center gap-2 rounded-lg bg-teal-700 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-teal-800 active:bg-teal-900 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-teal-700 disabled:opacity-60";
 
 export const btnSecondary =
   "inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition-colors hover:border-slate-400 hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-teal-700 disabled:opacity-60";
@@ -22,34 +22,30 @@ export const labelCls = "mb-1.5 block text-xs font-medium text-slate-600";
 
 export const cardCls = "rounded-xl border border-slate-200 bg-white p-5";
 
+
 export const tableWrapCls = "overflow-x-auto rounded-xl border border-slate-200 bg-white";
 
 export const theadCls =
-  "border-b border-slate-200 bg-slate-50 text-xs font-semibold uppercase tracking-wider text-slate-500";
+  "border-b border-slate-200 bg-slate-50 text-xs font-medium text-slate-600";
 
 export const rowCls = "bg-white transition-colors hover:bg-slate-50";
 
 export function PageHeader({
-  icon: Icon,
-  iconCls = "text-teal-700",
   title,
   subtitle,
   action,
 }: {
-  icon: LucideIcon;
+  icon?: LucideIcon;
   iconCls?: string;
   title: string;
   subtitle?: string;
   action?: ReactNode;
 }) {
   return (
-    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+    <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
       <div>
-        <h1 className="flex items-center gap-2 text-xl font-bold text-slate-900">
-          <Icon className={`h-5 w-5 ${iconCls}`} />
-          {title}
-        </h1>
-        {subtitle && <p className="mt-0.5 text-xs text-slate-500">{subtitle}</p>}
+        <h1 className="text-2xl font-semibold tracking-tight text-slate-900">{title}</h1>
+        {subtitle && <p className="mt-1 text-sm text-slate-500">{subtitle}</p>}
       </div>
       {action}
     </div>
@@ -83,7 +79,7 @@ const TONE_CLASSES: Record<string, string> = {
   emerald: "bg-emerald-100 text-emerald-800",
   rose: "bg-rose-100 text-rose-800",
   amber: "bg-amber-100 text-amber-800",
-  teal: "bg-teal-700 text-white",
+  teal: "bg-teal-100 text-teal-800",
 };
 
 const RX_TONES: Record<string, string> = {
@@ -101,9 +97,19 @@ export function StatusBadge({ status }: { status: string }) {
   const tone = RX_TONES[status] ?? deliveryStatusTone(status, "slate");
   return (
     <span
-      className={`inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-medium ${TONE_CLASSES[tone]}`}
+      className={`inline-flex items-center gap-1.5 rounded-md px-2 py-0.5 text-xs font-medium ${TONE_CLASSES[tone]}`}
     >
       {label}
+    </span>
+  );
+}
+
+export function PriorityBadge({ priority }: { priority: string }) {
+  if (priority === "ROUTINE") return null;
+  const cls = priority === "STAT" ? "bg-rose-600 text-white" : "bg-amber-100 text-amber-800";
+  return (
+    <span className={`inline-flex items-center rounded-md px-2 py-0.5 text-xs font-semibold ${cls}`}>
+      {priority === "STAT" ? "STAT" : "Mendesak"}
     </span>
   );
 }

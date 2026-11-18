@@ -51,12 +51,12 @@ live.
 `POST {{simrs}}/api/v1/monitoring/delivery-status`, header `x-monitoring-token`. Body: `requestCode, toStatus, note, compartmentNo, idempotencyKey`.
 | ID | Skenario | Ekspektasi |
 |---|---|---|
-| C1 | `PENDING_INTEGRATION → MOCK_IN_TRANSIT` | Diterima |
-| C2 | `MOCK_IN_TRANSIT → MOCK_ARRIVED_AT_ROOM` dengan `compartmentNo` integer | Diterima |
+| C1 | `PENDING_INTEGRATION → IN_TRANSIT` | Diterima |
+| C2 | `IN_TRANSIT → ARRIVED_AT_ROOM` dengan `compartmentNo` integer | Diterima |
 | C3 | Arrival tanpa `compartmentNo` | Ditolak |
 | C4 | Ulang `idempotencyKey` yang sama | Idempoten, tidak ada transisi ganda |
 | C5 | Lompat transisi (mis. langsung ke arrival dari `PENDING_INTEGRATION`) | Ditolak |
-| C6 | `toStatus: MOCK_HANDOVER_CONFIRMED` | Ditolak (hanya scan manusia) |
+| C6 | `toStatus: HANDOVER_CONFIRMED` | Ditolak (hanya scan manusia) |
 | C7 | Tanpa/token salah di header | Ditolak (401/403) |
 | C8 | `compartmentNo` di read API SIMRS | Tidak pernah muncul |
 
@@ -149,7 +149,7 @@ profil `apps`+`ws`) plus dashboard dev native :3100.
 |---|---|---|
 | G4.1 | Health: SIMRS `:3000` → 200, dashboard `:3100` → 200, backend `:8082/actuator/health` → 200 UP, `medical-ws :8083/healthz` → 200 | PASS |
 | G4.2 | `GET :8083/webhooks/simrs/health` | `{"configured":true,"tokenPrefix":"webh***","status":"ok"}` (token hanya prefix 4 karakter, AGENTS aturan 7) |
-| G4.3 | `GET :8082/api/v1/monitoring/active-deliveries` (Bearer MONITORING_TOKEN) | 200 dengan 3 delivery aktif; dua berstatus `MOCK_ARRIVED_AT_ROOM` (`DELIV-20261101-0003`, `DELIV-20261101-0002`) — bukti 4a: status "tiba" tetap terhitung aktif |
+| G4.3 | `GET :8082/api/v1/monitoring/active-deliveries` (Bearer MONITORING_TOKEN) | 200 dengan 3 delivery aktif; dua berstatus `ARRIVED_AT_ROOM` (`DELIV-20261101-0003`, `DELIV-20261101-0002`) — bukti 4a: status "tiba" tetap terhitung aktif |
 | G4.4 | E2E bridge (`medical-ws/e2e.mjs`) `POST :8083/internal/publish` dengan `X-Internal-Secret` dari `simrs-dummy/.env` | `202 {"accepted":true}` |
 | G4.5 | Publish ulang `eventId` sama | `400 {"error":"DUPLICATE"}` → broadcast dilakukan tepat 1× |
 | G4.6 | Klien WS (token `WS_AUTH_TOKEN` dari `simrs-dummy/.env`) | frame `SNAPSHOT_REQUIRED` → kirim `SUBSCRIBED{channels:["all"]}` → terima `DELIVERY_REQUESTED` |

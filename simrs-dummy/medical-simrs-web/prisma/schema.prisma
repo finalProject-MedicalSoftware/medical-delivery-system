@@ -105,6 +105,7 @@ model Patient {
   notes       String?
   diagnosis   String?  // Diagnosis/penyakit (fiktif)
   isInfectious Boolean @default(false) @map("is_infectious") // Penyakit menular → ALERT
+  allergies   String[] @default([]) // Alergi obat/zat (teks bebas, dicocokkan ke nama obat saat membuat resep)
   dischargedAt DateTime? @map("discharged_at") // Terisi = selesai rawat inap (riwayat)
   dischargeNote String? @map("discharge_note")
   isSynthetic Boolean  @default(true) @map("is_synthetic") // Explicit synthetic data flag
@@ -166,11 +167,14 @@ model Medicine {
   unit      String   // tablet, kapsul, botol, ampul
   category  String   // Analgesik, Antibiotik, Vitamin, dll.
   stock     Int      @default(100) // Simple demo stock
+  minStock  Int      @default(20) @map("min_stock") // Ambang peringatan stok menipis
+  handling  Handling @default(NONE) // Penanganan khusus (dikirim ke robot/HMI)
   isActive  Boolean  @default(true) @map("is_active")
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
   prescriptionItems PrescriptionItem[]
+  stockMovements    StockMovement[]
 
   @@map("m_medicine")
 }
@@ -190,6 +194,34 @@ enum PrescriptionStatus {
 }
 
 // Pengulangan pengajuan otomatis (kontrak web-monitoring-integration.md §1.2)
+enum Priority {
+  ROUTINE
+  URGENT
+  STAT
+}
+
+enum Handling {
+  NONE
+  COLD_CHAIN
+  CONTROLLED
+  HIGH_ALERT
+}
+
+// Pergerakan stok obat (pengurangan saat disiapkan, penambahan manual).
+model StockMovement {
+  id             String   @id @default(cuid())
+  medicineId     String   @map("medicine_id")
+  medicine       Medicine @relation(fields: [medicineId], references: [id], onDelete: Cascade)
+  delta          Int      // negatif = keluar
+  reason         String   // DISPENSE, RESTOCK, ADJUST
+  prescriptionId String?  @map("prescription_id")
+  actorId        String?  @map("actor_id")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  @@index([medicineId, createdAt])
+  @@map("h_stock_movement")
+}
+
 enum RepeatMode {
   DAILY
   INTERVAL
@@ -203,6 +235,7 @@ model Prescription {
   doctorId        String             @map("doctor_id")
   doctor          User               @relation("DoctorPrescriptions", fields: [doctorId], references: [id])
   status          PrescriptionStatus @default(DRAFT)
+  priority        Priority           @default(ROUTINE)
   verifiedById    String?            @map("verified_by_id")
   verifiedBy      User?              @relation("PharmacistPrescriptions", fields: [verifiedById], references: [id])
   verifiedAt      DateTime?          @map("verified_at")
@@ -242,9 +275,9 @@ model PrescriptionItem {
 enum DeliveryStatus {
   DELIVERY_REQUESTED
   PENDING_INTEGRATION
-  MOCK_IN_TRANSIT
-  MOCK_ARRIVED_AT_ROOM
-  MOCK_HANDOVER_CONFIRMED
+  IN_TRANSIT
+  ARRIVED_AT_ROOM
+  HANDOVER_CONFIRMED
   CANCELLED
 }
 
@@ -259,6 +292,7 @@ model DeliveryRequest {
   requestedBy    User           @relation("UserDeliveryRequests", fields: [requestedById], references: [id])
   status         DeliveryStatus @default(DELIVERY_REQUESTED)
   notes          String?
+  robotReason    String?        @map("robot_reason") // Alasan pengantaran robot untuk pasien tidak menular
   requestedAt    DateTime       @default(now()) @map("requested_at")
   updatedAt      DateTime       @updatedAt @map("updated_at")
 

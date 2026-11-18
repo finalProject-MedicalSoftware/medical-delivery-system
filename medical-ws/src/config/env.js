@@ -9,6 +9,15 @@ module.exports = {
   // Secret bridge HTTP backend -> WS (POST /internal/publish). Kosong = endpoint ditolak (401).
   INTERNAL_PUBLISH_SECRET: process.env.INTERNAL_PUBLISH_SECRET || '',
   REGISTRY_BACKEND_URL: process.env.REGISTRY_BACKEND_URL || '',
+  // Izinkan gerak fisik robot (teleop, misi OP/MOVE, kembali ke dock). false = hanya "stop nol"
+  // (identitas fisik robot belum terautentikasi). Nyalakan HANYA saat uji dengan robot yang diawasi.
+  ALLOW_ROBOT_MOTION: process.env.ALLOW_ROBOT_MOTION === 'true',
+  // Batas kecepatan teleop: UI mengirim -1..1, dikalikan batas ini (m/s dan rad/s).
+  TELEOP_MAX_LINEAR: parseFloat(process.env.TELEOP_MAX_LINEAR || '0.3'),
+  TELEOP_MAX_ANGULAR: parseFloat(process.env.TELEOP_MAX_ANGULAR || '0.6'),
+  // Tujuan uplink status misi (GOAL_COMPLETE dll). Default: REGISTRY_BACKEND_URL + /internal/robot-events.
+  BACKEND_EVENTS_URL: process.env.BACKEND_EVENTS_URL ||
+    (process.env.REGISTRY_BACKEND_URL ? process.env.REGISTRY_BACKEND_URL.replace(/\/+$/, '') + '/internal/robot-events' : ''),
   INTERNAL_PUBLISH_MAX_BYTES: parseInt(process.env.INTERNAL_PUBLISH_MAX_BYTES || '65536', 10),
   // Fase bridge HTTP: tanpa broker Kafka. Set true setelah broker hidup.
   KAFKA_ENABLED: process.env.KAFKA_ENABLED === 'true',

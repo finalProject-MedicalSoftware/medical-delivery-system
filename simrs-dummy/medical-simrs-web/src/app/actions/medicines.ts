@@ -13,6 +13,8 @@ function parseMedicineForm(formData: FormData) {
     unit: ((formData.get("unit") as string) || "").trim(),
     category: ((formData.get("category") as string) || "").trim(),
     stock: Number(formData.get("stock")),
+    minStock: Number(formData.get("minStock") || 20),
+    handling: ((formData.get("handling") as string) || "NONE"),
   };
 }
 
@@ -39,6 +41,8 @@ export async function createMedicineAction(
         unit: parsed.data.unit,
         category: parsed.data.category,
         stock: parsed.data.stock,
+        minStock: parsed.data.minStock,
+        handling: parsed.data.handling,
         isActive: true,
       },
     });
@@ -82,6 +86,16 @@ export async function updateMedicineAction(
   }
 
   await prisma.$transaction(async (tx) => {
+    if (parsed.data.stock !== existing.stock) {
+      await tx.stockMovement.create({
+        data: {
+          medicineId,
+          delta: parsed.data.stock - existing.stock,
+          reason: parsed.data.stock > existing.stock ? "RESTOCK" : "ADJUST",
+          actorId: actor.userId,
+        },
+      });
+    }
     await tx.medicine.update({
       where: { id: medicineId },
       data: {
@@ -90,6 +104,8 @@ export async function updateMedicineAction(
         unit: parsed.data.unit,
         category: parsed.data.category,
         stock: parsed.data.stock,
+        minStock: parsed.data.minStock,
+        handling: parsed.data.handling,
       },
     });
 

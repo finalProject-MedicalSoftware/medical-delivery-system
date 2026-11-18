@@ -17,11 +17,11 @@ import static org.junit.jupiter.api.Assertions.*;
 public class SimrsClientServiceTest {
 
     @Test
-    @DisplayName("Prohibit MOCK_HANDOVER_CONFIRMED from monitoring service")
+    @DisplayName("Prohibit HANDOVER_CONFIRMED from monitoring service")
     void testProhibitHandoverConfirmed() {
         SimrsClientService service = new SimrsClientService("https://mock.invalid", "mock-token", true, true, 30);
         assertThrows(IllegalArgumentException.class, () ->
-                service.postDeliveryStatus("REQ-123", "MOCK_HANDOVER_CONFIRMED", null, "idemp-1")
+                service.postDeliveryStatus("REQ-123", "HANDOVER_CONFIRMED", null, "idemp-1")
         );
     }
 
@@ -29,7 +29,7 @@ public class SimrsClientServiceTest {
     @DisplayName("Write feature disabled by default returns simulation response")
     void testWriteFeatureDisabledByDefault() {
         SimrsClientService service = new SimrsClientService("https://mock.invalid", "", true, false, 30);
-        Map<String, Object> res = service.postDeliveryStatus("REQ-123", "MOCK_IN_TRANSIT", null, "idemp-1");
+        Map<String, Object> res = service.postDeliveryStatus("REQ-123", "IN_TRANSIT", null, "idemp-1");
         assertTrue((Boolean) res.get("simulated"));
         assertTrue((Boolean) res.get("success"));
     }
@@ -50,7 +50,7 @@ public class SimrsClientServiceTest {
         HttpServer server = HttpServer.create(new InetSocketAddress("localhost", 0), 0);
         server.createContext("/api/v1/monitoring/mapping", e -> respond(e, "application/yaml", "version: 1\nsource: simrs-dummy\nwards:\n  - code: W1\n    name: Ward 1\n    floor: 1\n    rooms:\n      - roomCode: R1\n        name: Room 1\n        beds: []\n" , calls));
         server.createContext("/api/v1/monitoring/snapshot", e -> respond(e, "application/json", "{\"patients\":[],\"deliveries\":[],\"rooms\":[]}", calls));
-        server.createContext("/api/v1/monitoring/active-deliveries", e -> respond(e, "application/json", "{\"generatedAt\":\"2026-01-01T00:00:00Z\",\"count\":1,\"deliveries\":[{\"requestCode\":\"D1\",\"status\":\"MOCK_IN_TRANSIT\"}]}", calls));
+        server.createContext("/api/v1/monitoring/active-deliveries", e -> respond(e, "application/json", "{\"generatedAt\":\"2026-01-01T00:00:00Z\",\"count\":1,\"deliveries\":[{\"requestCode\":\"D1\",\"status\":\"IN_TRANSIT\"}]}", calls));
         server.start();
         try {
             SimrsClientService service = new SimrsClientService("http://localhost:" + server.getAddress().getPort(), "token", true, false, 30);

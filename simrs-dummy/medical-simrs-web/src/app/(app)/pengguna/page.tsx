@@ -63,10 +63,10 @@ export default async function PenggunaPage() {
         <table className="w-full text-sm">
           <thead className={theadCls}>
             <tr>
-              <th className="px-4 py-3 text-left">Pengguna</th>
-              <th className="px-4 py-3 text-left">Username</th>
-              <th className="px-4 py-3 text-left">Status</th>
-              <th className="px-4 py-3 text-left">Role</th>
+              <th scope="col" className="px-4 py-3 text-left">Pengguna</th>
+              <th scope="col" className="px-4 py-3 text-left">Username</th>
+              <th scope="col" className="px-4 py-3 text-left">Status</th>
+              <th scope="col" className="px-4 py-3 text-left">Role</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">

@@ -4,6 +4,7 @@ import prisma from "@/lib/prisma";
 import { requirePermission } from "@/lib/auth";
 import { PERMISSION_CODES } from "@/lib/rbac";
 import { createPrescriptionSchema, verifyPrescriptionSchema } from "@/lib/validations";
+import { findAllergyConflicts } from "@/lib/clinical";
 import { revalidatePath } from "next/cache";
 import { PrescriptionStatus } from "@prisma/client";
 
@@ -34,6 +35,7 @@ export async function createPrescriptionAction(
     notes: (formData.get("notes") as string) || null,
     items: JSON.parse((formData.get("items") as string) || "[]"),
     doseTimes: doseTimesRaw,
+    priority: formData.get("priority") || undefined,
     repeatMode: formData.get("repeatMode") || undefined,
     intervalDays: intervalDaysRaw != null && intervalDaysRaw !== "" ? Number(intervalDaysRaw) : undefined,
   };
@@ -41,6 +43,19 @@ export async function createPrescriptionAction(
   const parsed = createPrescriptionSchema.safeParse(raw);
   if (!parsed.success) {
     return { ok: false, error: parsed.error.issues[0].message };
+  }
+
+  // Cek alergi di server: dokter harus mengakui risiko bila ada kecocokan.
+  const [patient, meds] = await Promise.all([
+    prisma.patient.findUnique({ where: { id: parsed.data.patientId }, select: { allergies: true } }),
+    prisma.medicine.findMany({ where: { id: { in: parsed.data.items.map((i) => i.medicineId) } }, select: { name: true } }),
+  ]);
+  const conflicts = findAllergyConflicts(patient?.allergies ?? [], meds);
+  if (conflicts.length > 0 && formData.get("allergyAck") !== "1") {
+    return {
+      ok: false,
+      error: `Peringatan alergi: ${conflicts.map((c) => `${c.medicine} (alergi ${c.allergy})`).join(", ")}. Centang pernyataan risiko untuk melanjutkan.`,
+    };
   }
 
   const code = await generatePrescriptionCode();
@@ -53,6 +68,7 @@ export async function createPrescriptionAction(
         doctorId: actor.userId,
         notes: parsed.data.notes,
         status: "SUBMITTED",
+        priority: parsed.data.priority,
         doseTimes: parsed.data.doseTimes,
         repeatMode: parsed.data.repeatMode,
         intervalDays:
@@ -73,7 +89,7 @@ export async function createPrescriptionAction(
         entityId: rx.id,
         action: "CREATE_PRESCRIPTION",
         actorId: actor.userId,
-        details: { code: rx.code, patientId: rx.patientId, itemCount: parsed.data.items.length },
+        details: { code: rx.code, patientId: rx.patientId, itemCount: parsed.data.items.length, priority: parsed.data.priority, allergyOverride: conflicts.length > 0 },
       },
     });
   });
@@ -138,6 +154,9 @@ export async function updatePrescriptionStatusAction(
         if (res.count === 0) {
           throw new Error(`Stok obat ${item.medicine.name} tidak mencukupi (sisa ${item.medicine.stock}, dibutuhkan ${item.quantity})`);
         }
+        await tx.stockMovement.create({
+          data: { medicineId: item.medicineId, delta: -item.quantity, reason: "DISPENSE", prescriptionId, actorId: actor.userId },
+        });
       }
 
       await tx.prescription.update({

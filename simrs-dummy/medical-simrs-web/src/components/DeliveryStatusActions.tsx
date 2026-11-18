@@ -1,5 +1,6 @@
 "use client";
 
+import { useConfirm } from "@/components/Confirm";
 import { useTransition, useState } from "react";
 import { advanceDeliveryStatusAction } from "@/app/actions/delivery";
 import { UserAuthContext } from "@/lib/rbac";
@@ -21,17 +22,17 @@ interface Props {
 const TRANSITIONS: Partial<Record<DeliveryStatus, { to: DeliveryStatus; label: string; cls: string }>> = {
   DELIVERY_REQUESTED: {
     to: "PENDING_INTEGRATION",
-    label: "Tandai Pending Integrasi",
+    label: "Kirim ke Robot",
     cls: "bg-amber-100 text-amber-800 ring-amber-200 hover:bg-amber-200",
   },
   PENDING_INTEGRATION: {
-    to: "MOCK_IN_TRANSIT",
-    label: "[MOCK] Simulasi Dalam Perjalanan",
+    to: "IN_TRANSIT",
+    label: "Tandai Dalam Perjalanan",
     cls: "bg-sky-100 text-sky-800 ring-sky-200 hover:bg-sky-200",
   },
-  MOCK_IN_TRANSIT: {
-    to: "MOCK_ARRIVED_AT_ROOM",
-    label: "[MOCK] Simulasi Tiba di Ruang",
+  IN_TRANSIT: {
+    to: "ARRIVED_AT_ROOM",
+    label: "Tandai Tiba di Ruangan",
     cls: "bg-emerald-100 text-emerald-800 ring-emerald-200 hover:bg-emerald-200",
   },
 };
@@ -40,8 +41,10 @@ export default function DeliveryStatusActions({ delivery, user, scanHref, patien
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const toast = useToast();
+  const confirm = useConfirm();
 
   const next = TRANSITIONS[delivery.status];
+  const notYetSent = delivery.status === "DELIVERY_REQUESTED";
   const canAct =
     user.roles.includes("SYSTEM_ADMIN") ||
     user.permissions.includes("delivery:create");
@@ -50,7 +53,7 @@ export default function DeliveryStatusActions({ delivery, user, scanHref, patien
 
   // Sudah tiba: serah-terima HANYA lewat scan QR, jadi tidak ada tombol
   // transisi di sini. Yang ditawarkan hanya jalan keluar yang sah.
-  if (!next && delivery.status === "MOCK_ARRIVED_AT_ROOM") {
+  if (!next && delivery.status === "ARRIVED_AT_ROOM") {
     return (
       <div className={cardCls}>
         <h2 className="mb-4 text-sm font-semibold text-slate-900">Tindakan</h2>
@@ -76,12 +79,20 @@ export default function DeliveryStatusActions({ delivery, user, scanHref, patien
 
   if (!next) return null;
 
-  function handleAdvance() {
+  async function handleAdvance() {
     setError(null);
+    if (notYetSent) {
+      const ok = await confirm({
+        title: "Kirim ke robot?",
+        message: "Pengantaran ini akan masuk ke web monitoring sebagai misi untuk robot. Pastikan obat sudah siap.",
+        confirmLabel: "Kirim ke Robot",
+      });
+      if (!ok) return;
+    }
     startTransition(async () => {
       const result = await advanceDeliveryStatusAction(delivery.id, next!.to);
       if (result.success) {
-        toast.success("Status pengantaran diperbarui");
+        toast.success(notYetSent ? "Dikirim ke robot - kini terlihat di web monitoring" : "Status pengantaran diperbarui");
       } else {
         setError(result.error ?? "Gagal mengubah status");
       }
@@ -103,6 +114,13 @@ export default function DeliveryStatusActions({ delivery, user, scanHref, patien
   return (
     <div className={cardCls}>
       <h2 className="mb-4 text-sm font-semibold text-slate-900">Tindakan</h2>
+
+      {notYetSent && (
+        <p className="mb-4 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600">
+          Pengantaran ini baru tersimpan di SIMRS dan <strong>belum terlihat di web monitoring</strong>. Tekan
+          <strong> Kirim ke Robot</strong> untuk memasukkannya sebagai misi.
+        </p>
+      )}
 
       {error && (
         <div className="mb-4 flex items-center gap-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2.5 text-sm text-rose-700">
@@ -138,11 +156,6 @@ export default function DeliveryStatusActions({ delivery, user, scanHref, patien
         )}
       </div>
 
-      {next.to.startsWith("MOCK_") && (
-        <p className="mt-3 text-xs text-slate-400">
-          ⚠ Tindakan ini adalah simulasi demo. Tidak terhubung ke robot atau sistem eksternal nyata.
-        </p>
-      )}
     </div>
   );
 }

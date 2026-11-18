@@ -12,7 +12,7 @@ import { redirect } from "next/navigation";
 
 /**
  * Konfirmasi serah-terima obat lewat scan QR pasien.
- * Satu-satunya jalur MOCK_ARRIVED_AT_ROOM -> MOCK_HANDOVER_CONFIRMED.
+ * Satu-satunya jalur ARRIVED_AT_ROOM -> HANDOVER_CONFIRMED.
  * Robot tidak boleh konfirmasi sendiri (MONITORING_TRANSITIONS tidak punya
  * entri ini); konfirmasi dilakukan manusia yang login via halaman scan.
  */
@@ -42,7 +42,7 @@ export async function confirmHandoverAction(mrn: string, token: string): Promise
   await prisma.$transaction(async (tx) => {
     await tx.deliveryRequest.update({
       where: { id: delivery.id },
-      data: { status: "MOCK_HANDOVER_CONFIRMED" },
+      data: { status: "HANDOVER_CONFIRMED" },
     });
 
     await tx.deliveryEvent.create({
@@ -50,7 +50,7 @@ export async function confirmHandoverAction(mrn: string, token: string): Promise
         deliveryRequestId: delivery.id,
         eventType: "HANDOVER_CONFIRMED",
         statusBefore: delivery.status,
-        statusAfter: "MOCK_HANDOVER_CONFIRMED",
+        statusAfter: "HANDOVER_CONFIRMED",
         actorId: actor.userId,
         isSimulation: true,
         notes: "Serah-terima dikonfirmasi via scan QR pasien",
@@ -70,7 +70,7 @@ export async function confirmHandoverAction(mrn: string, token: string): Promise
         actorId: actor.userId,
         details: {
           from: delivery.status,
-          to: "MOCK_HANDOVER_CONFIRMED",
+          to: "HANDOVER_CONFIRMED",
           method: "QR_SCAN",
           patientMrn: info.patient.mrn,
         },
@@ -82,9 +82,10 @@ export async function confirmHandoverAction(mrn: string, token: string): Promise
     await enqueueOutbox(tx, {
       requestCode: delivery.requestCode,
       from: delivery.status,
-      to: "MOCK_HANDOVER_CONFIRMED",
+      to: "HANDOVER_CONFIRMED",
       patientMrn: info.patient.mrn,
       compartmentNo: delivery.compartmentNo,
+      actor: actor.username,
     });
   });
 

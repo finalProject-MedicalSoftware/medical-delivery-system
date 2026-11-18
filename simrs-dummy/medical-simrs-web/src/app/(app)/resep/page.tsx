@@ -7,6 +7,7 @@ import {
   PageHeader,
   EmptyState,
   StatusBadge,
+  PriorityBadge,
   CodeLink,
   btnPrimary,
   tableWrapCls,
@@ -71,7 +72,7 @@ export default async function ResepPage({
       <PageHeader
         icon={FileText}
         iconCls="text-teal-700"
-        title="Resep Simulasi"
+        title="Resep"
         subtitle={`${prescriptions.length} resep${statusFilter ? ` · filter: ${STATUS_LABELS[statusFilter]}` : ""}`}
         action={
           canCreate ? (
@@ -118,13 +119,13 @@ export default async function ResepPage({
           <table className="w-full text-sm">
             <thead className={theadCls}>
               <tr>
-                <th className="px-4 py-3 text-left">Kode</th>
-                <th className="px-4 py-3 text-left">Pasien</th>
-                <th className="px-4 py-3 text-left">Dokter</th>
-                <th className="px-4 py-3 text-center">Item</th>
-                <th className="px-4 py-3 text-center">Status</th>
-                <th className="px-4 py-3 text-left">Tanggal</th>
-                <th className="px-4 py-3" />
+                <th scope="col" className="px-4 py-3 text-left">Kode</th>
+                <th scope="col" className="px-4 py-3 text-left">Pasien</th>
+                <th scope="col" className="px-4 py-3 text-left">Dokter</th>
+                <th scope="col" className="px-4 py-3 text-center">Item</th>
+                <th scope="col" className="px-4 py-3 text-center">Status</th>
+                <th scope="col" className="px-4 py-3 text-left">Tanggal</th>
+                <th scope="col" className="px-4 py-3" />
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
@@ -144,7 +145,10 @@ export default async function ResepPage({
                     </span>
                   </td>
                   <td className="px-4 py-3 text-center">
-                    <StatusBadge status={rx.status} />
+                    <div className="flex items-center justify-center gap-1.5">
+                      <PriorityBadge priority={rx.priority} />
+                      <StatusBadge status={rx.status} />
+                    </div>
                   </td>
                   <td className="px-4 py-3 text-xs text-slate-500">
                     {new Date(rx.createdAt).toLocaleDateString("id-ID")}

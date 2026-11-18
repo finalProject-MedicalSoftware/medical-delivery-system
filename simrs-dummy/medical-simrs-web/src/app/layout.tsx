@@ -1,18 +1,16 @@
 import type { Metadata } from "next";
-import { Inter } from "next/font/google";
+import { Plus_Jakarta_Sans, IBM_Plex_Mono } from "next/font/google";
 import "./globals.css";
 import { ToastProvider } from "@/components/Toast";
 import { ConfirmProvider } from "@/components/Confirm";
 
-const inter = Inter({
-  variable: "--font-inter",
-  subsets: ["latin"],
-});
+const jakarta = Plus_Jakarta_Sans({ variable: "--font-jakarta", subsets: ["latin"] });
+const plexMono = IBM_Plex_Mono({ variable: "--font-plex-mono", subsets: ["latin"], weight: ["400", "500", "600"] });
 
 export const metadata: Metadata = {
-  title: "SIMRS Dummy - Medical Delivery System",
+  title: "SIMRS - Layanan Farmasi & Pengantaran Obat",
   description:
-    "Prototipe akademik sistem informasi manajemen rumah sakit untuk demonstrasi workflow permintaan pengantaran obat. Seluruh data adalah sintetis.",
+    "Sistem informasi manajemen rumah sakit: resep, farmasi, dan pengantaran obat. Data demo.",
   icons: { icon: "/simrs-logo.svg" },
 };
 
@@ -23,7 +21,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="id">
-      <body className={`${inter.variable} font-sans antialiased`}>
+      <body className={`${jakarta.variable} ${plexMono.variable} font-sans antialiased`}>
         <ToastProvider>
           <ConfirmProvider>{children}</ConfirmProvider>
         </ToastProvider>

@@ -2,7 +2,7 @@ import bcrypt from "bcryptjs";
 import { headers } from "next/headers";
 import { createSessionCookie, clearSessionCookie, getSession, SessionPayload } from "./session";
 import { hasPermission, hasAnyRole, UserAuthContext } from "./rbac";
-import { checkRateLimit } from "./rate-limit";
+import { checkRateLimit, clientIpFrom } from "./rate-limit";
 
 const LOGIN_MAX_ATTEMPTS = 5;
 const LOGIN_WINDOW_MS = 60_000;
@@ -11,7 +11,7 @@ const LOGIN_WINDOW_MS = 60_000;
 async function getClientIp(): Promise<string | undefined> {
   try {
     const h = await headers();
-    return h.get("x-forwarded-for")?.split(",")[0]?.trim() || undefined;
+    return clientIpFrom(h);
   } catch {
     return undefined;
   }

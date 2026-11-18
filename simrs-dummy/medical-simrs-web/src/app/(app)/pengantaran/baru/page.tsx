@@ -33,6 +33,7 @@ export default async function BuatPengantaranPage({
           select: {
             fullName: true,
             mrn: true,
+            isInfectious: true,
             roomCode: true,
             bed: { select: { bedNumber: true } },
           },

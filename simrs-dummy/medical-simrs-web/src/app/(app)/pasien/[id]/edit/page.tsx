@@ -44,6 +44,7 @@ export default async function UbahPasienPage({
         notes: patient.notes,
         diagnosis: patient.diagnosis,
         isInfectious: patient.isInfectious,
+        allergies: patient.allergies,
       }}
     />
   );

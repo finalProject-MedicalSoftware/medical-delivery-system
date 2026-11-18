@@ -6,28 +6,29 @@ import type { DeliveryStatus, PrescriptionStatus } from "@prisma/client";
  * pengantaran, detail resep, route mapping, server action) yang bisa
  * berbeda satu dengan lain; semua sekarang baca dari sini.
  *
- * Aturan label: kode status dengan awalan `MOCK_` WAJIB memuat `[MOCK]`
- * supaya perilaku simulasi fase mock tidak terbaca seolah kenyataan klinis.
+ * Kode status adalah nilai kontrak (wire) yang dipakai backend/dashboard; label
+ * tampilan memakai bahasa operasional RS. (Awalan MOCK_ dihapus; nama lama masih
+ * diterima pada input POST /monitoring/delivery-status selama masa transisi.)
  *
  * Modul ini sengaja prisma-free (import type saja, tanpa impor runtime
  * prisma/fs) supaya boleh dipakai komponen server maupun client.
  */
 
 export const DELIVERY_STATUS_LABELS: Record<DeliveryStatus, string> = {
-  DELIVERY_REQUESTED: "Diminta",
-  PENDING_INTEGRATION: "Pending Integrasi",
-  MOCK_IN_TRANSIT: "[MOCK] Transit",
-  MOCK_ARRIVED_AT_ROOM: "[MOCK] Tiba",
-  MOCK_HANDOVER_CONFIRMED: "[MOCK] Serah Terima",
+  DELIVERY_REQUESTED: "Belum dikirim ke robot",
+  PENDING_INTEGRATION: "Menunggu Robot",
+  IN_TRANSIT: "Dalam Perjalanan",
+  ARRIVED_AT_ROOM: "Tiba di Ruangan",
+  HANDOVER_CONFIRMED: "Serah Terima Selesai",
   CANCELLED: "Dibatalkan",
 };
 
 export const DELIVERY_STATUS_TONES: Record<DeliveryStatus, string> = {
   DELIVERY_REQUESTED: "sky",
   PENDING_INTEGRATION: "amber",
-  MOCK_IN_TRANSIT: "sky",
-  MOCK_ARRIVED_AT_ROOM: "emerald",
-  MOCK_HANDOVER_CONFIRMED: "teal",
+  IN_TRANSIT: "sky",
+  ARRIVED_AT_ROOM: "emerald",
+  HANDOVER_CONFIRMED: "teal",
   CANCELLED: "slate",
 };
 
@@ -44,24 +45,60 @@ export const PRESCRIPTION_STATUS_LABELS: Record<PrescriptionStatus, string> = {
 /**
  * Transisi status pengantaran yang sah di server (UI + endpoint monitoring
  * memakai bagian/derive dari tabel yang sama). Satu-satunya jalur ke
- * MOCK_HANDOVER_CONFIRMED adalah konfirmasi serah-terima manusia lewat
+ * HANDOVER_CONFIRMED adalah konfirmasi serah-terima manusia lewat
  * halaman /scan/[mrn]; monitoring/desktop TIDAK boleh melompat langsung.
  */
 export const DELIVERY_TRANSITIONS: Partial<Record<DeliveryStatus, DeliveryStatus[]>> = {
   DELIVERY_REQUESTED: ["PENDING_INTEGRATION", "CANCELLED"],
-  PENDING_INTEGRATION: ["MOCK_IN_TRANSIT", "CANCELLED"],
-  MOCK_IN_TRANSIT: ["MOCK_ARRIVED_AT_ROOM", "CANCELLED"],
+  PENDING_INTEGRATION: ["IN_TRANSIT", "CANCELLED"],
+  IN_TRANSIT: ["ARRIVED_AT_ROOM", "CANCELLED"],
   // Serah-terima hanya dari scan QR, bukan tombol UI / lemparan monitoring.
-  MOCK_ARRIVED_AT_ROOM: ["MOCK_HANDOVER_CONFIRMED"],
+  ARRIVED_AT_ROOM: ["HANDOVER_CONFIRMED"],
 };
 
 /** Status pengantaran yang masih berjalan (untuk read API monitoring). */
 export const ACTIVE_DELIVERY_STATUSES: DeliveryStatus[] = [
   "DELIVERY_REQUESTED",
   "PENDING_INTEGRATION",
-  "MOCK_IN_TRANSIT",
-  "MOCK_ARRIVED_AT_ROOM",
+  "IN_TRANSIT",
+  "ARRIVED_AT_ROOM",
 ];
+
+/**
+ * Pengantaran baru masuk web monitoring setelah petugas menekan "Kirim ke Robot"
+ * (DELIVERY_REQUESTED -> PENDING_INTEGRATION). Sebelum itu hanya terlihat di SIMRS.
+ * Pembatalan sebelum dikirim juga tidak pernah diketahui monitoring.
+ */
+export const MONITORING_ACTIVE_STATUSES: DeliveryStatus[] = ACTIVE_DELIVERY_STATUSES.filter(
+  (s) => s !== "DELIVERY_REQUESTED"
+);
+
+/** Filter Prisma: pengantaran yang boleh dilihat monitoring/robot/HMI. */
+export const MONITORING_VISIBLE_WHERE = {
+  OR: [
+    {
+      status: {
+        in: [
+          "PENDING_INTEGRATION",
+          "IN_TRANSIT",
+          "ARRIVED_AT_ROOM",
+          "HANDOVER_CONFIRMED",
+        ] as DeliveryStatus[],
+      },
+    },
+    {
+      status: "CANCELLED" as DeliveryStatus,
+      events: { some: { statusAfter: "PENDING_INTEGRATION" } },
+    },
+  ],
+};
+
+/** Versi murni dari MONITORING_VISIBLE_WHERE (untuk tes dan kode non-Prisma). */
+export function isMonitoringVisible(status: string, wasDispatched: boolean): boolean {
+  if (status === "DELIVERY_REQUESTED") return false;
+  if (status === "CANCELLED") return wasDispatched;
+  return true;
+}
 
 // Cast ke Record<string,...> hanya dilakukan di titik ini agar pemanggil
 // tidak perlu men-cast kode string tak dikenal di banyak file.

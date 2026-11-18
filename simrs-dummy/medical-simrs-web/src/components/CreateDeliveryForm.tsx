@@ -8,7 +8,7 @@ import { useToast } from "@/components/Toast";
 import { bedDisplayName } from "@/lib/bed-info";
 import Select from "@/components/Select";
 import Link from "next/link";
-import { ArrowLeft, Truck, AlertTriangle, Info, BedDouble } from "lucide-react";
+import { ArrowLeft, Truck, AlertTriangle, Info, BedDouble, Biohazard } from "lucide-react";
 import { inputCls, labelCls, cardCls, btnPrimary, btnSecondary } from "@/components/ui";
 
 interface Prescription {
@@ -17,6 +17,7 @@ interface Prescription {
   patient: {
     fullName: string;
     mrn: string;
+    isInfectious: boolean;
     roomCode: string | null;
     bed: { bedNumber: string } | null;
   };
@@ -48,7 +49,9 @@ export default function CreateDeliveryForm({
   const confirm = useConfirm();
   const formRef = useRef<HTMLFormElement>(null);
 
+  const [robotReason, setRobotReason] = useState("");
   const selectedRx = readyPrescriptions.find((r) => r.id === rxId);
+  const nonInfectious = !!selectedRx && !selectedRx.patient.isInfectious;
   const autoRoom = selectedRx?.patient.roomCode ?? "";
 
   function handleRxChange(v: string) {
@@ -61,9 +64,13 @@ export default function CreateDeliveryForm({
   }
 
   async function handleConfirmSubmit() {
+    if (nonInfectious && robotReason.trim().length < 5) {
+      setError("Pasien tidak menular: tulis alasan pengantaran dengan robot (min. 5 karakter).");
+      return;
+    }
     const ok = await confirm({
       title: "Ajukan pengantaran?",
-      message: "Permintaan antar obat akan dibuat dan dicatat di audit trail.",
+      message: "Permintaan dibuat dan dicatat di audit trail. Data baru terlihat di web monitoring setelah Anda menekan Kirim ke Robot.",
       confirmLabel: "Ajukan",
     });
     if (!ok || !formRef.current) return;
@@ -95,8 +102,8 @@ export default function CreateDeliveryForm({
       <div className="flex items-start gap-3 rounded-xl border border-sky-200 bg-sky-50 p-4 text-sm text-sky-800">
         <Info className="mt-0.5 h-4 w-4 shrink-0" />
         <p>
-          Hanya resep berstatus <strong>READY_FOR_DELIVERY</strong> yang dapat diajukan. Setelah diajukan, status akan dicatat sebagai{" "}
-          <strong>DELIVERY_REQUESTED</strong>. Sistem tidak langsung menggerakkan robot.
+          Hanya resep yang sudah <strong>siap kirim</strong> yang dapat diajukan. Pengajuan baru tersimpan di SIMRS (<strong>belum dikirim ke robot</strong>);
+          data baru masuk ke web monitoring setelah Anda menekan <strong>Kirim ke Robot</strong> di halaman pengantaran.
         </p>
       </div>
 
@@ -157,7 +164,7 @@ export default function CreateDeliveryForm({
                   }))}
                 />
                 {autoRoom && roomCode === autoRoom && (
-                  <p className="mt-1 text-[11px] text-teal-700">
+                  <p className="mt-1 text-xs text-teal-700">
                     Otomatis dari ruang pasien ({autoRoom}) - bisa diubah.
                   </p>
                 )}
@@ -178,6 +185,37 @@ export default function CreateDeliveryForm({
                 )}
               </div>
             </div>
+            {selectedRx && selectedRx.patient.isInfectious && (
+              <p className="mt-4 flex items-center gap-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-800">
+                <Biohazard className="h-4 w-4 shrink-0" />
+                Pasien menular: pengantaran dengan robot sesuai prosedur.
+              </p>
+            )}
+            {nonInfectious && (
+              <div role="alert" className="mt-4 rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900">
+                <p className="flex items-center gap-2 font-semibold">
+                  <AlertTriangle className="h-4 w-4" />
+                  Pasien ini tidak ditandai menular
+                </p>
+                <p className="mt-1">
+                  Robot diprioritaskan untuk pasien menular. Lanjutkan hanya bila memang dibutuhkan, dan tulis alasannya.
+                </p>
+                <label htmlFor="robotReason" className="mt-3 block text-xs font-medium">
+                  Alasan pengantaran dengan robot <span className="text-rose-600">*</span>
+                </label>
+                <textarea
+                  id="robotReason"
+                  name="robotReason"
+                  rows={2}
+                  maxLength={300}
+                  required
+                  value={robotReason}
+                  onChange={(e) => setRobotReason(e.target.value)}
+                  placeholder="cth: obat berat, jarak jauh, perawat bangsal kekurangan staf"
+                  className={`${inputCls} mt-1`}
+                />
+              </div>
+            )}
             <div className="mt-4">
               <label htmlFor="notes" className={labelCls}>
                 Catatan (opsional)

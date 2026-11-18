@@ -1,5 +1,6 @@
 "use client";
 
+import { HANDLING_LABELS } from "@/lib/clinical";
 import { useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { createMedicineAction, updateMedicineAction } from "@/app/actions/medicines";
@@ -16,6 +17,8 @@ export interface MedicineInitial {
   unit: string;
   category: string;
   stock: number;
+  minStock: number;
+  handling: string;
 }
 
 export default function MedicineForm({ initial }: { initial?: MedicineInitial }) {
@@ -66,7 +69,7 @@ export default function MedicineForm({ initial }: { initial?: MedicineInitial })
             {isEdit ? "Ubah Obat" : "Tambah Obat"}
           </h1>
           <p className="mt-0.5 text-xs text-slate-500">
-            Katalog obat dummy untuk simulasi farmasi
+            Katalog obat farmasi
           </p>
         </div>
       </div>
@@ -160,6 +163,23 @@ export default function MedicineForm({ initial }: { initial?: MedicineInitial })
                 defaultValue={initial?.stock ?? 100}
                 className={inputCls}
               />
+            </div>
+            <div>
+              <label htmlFor="minStock" className={labelCls}>
+                Ambang stok menipis
+              </label>
+              <input id="minStock" name="minStock" type="number" min={0} step={1} defaultValue={initial?.minStock ?? 20} className={inputCls} />
+            </div>
+            <div>
+              <label htmlFor="handling" className={labelCls}>
+                Penanganan khusus
+              </label>
+              <select id="handling" name="handling" defaultValue={initial?.handling ?? "NONE"} className={inputCls}>
+                {Object.entries(HANDLING_LABELS).map(([v, l]) => (
+                  <option key={v} value={v}>{l}</option>
+                ))}
+              </select>
+              <p className="mt-1 text-xs text-slate-500">Dikirim ke robot/HMI agar obat ditangani sesuai.</p>
             </div>
           </div>
         </div>

@@ -1,6 +1,8 @@
 import { NextRequest } from "next/server";
 import { checkMonitoringToken } from "@/lib/monitoring";
-import { ACTIVE_DELIVERY_STATUSES, deliveryStatusLabel } from "@/lib/delivery-status";
+import { ITEMS_SELECT, mapItems } from "@/lib/delivery-items";
+import { robotEligibility } from "@/lib/robot-eligibility";
+import { MONITORING_ACTIVE_STATUSES, deliveryStatusLabel } from "@/lib/delivery-status";
 
 /**
  * Kontrak FINAL (fase mock) - read API: cek pasien per nomor rekam medis
@@ -8,7 +10,7 @@ import { ACTIVE_DELIVERY_STATUSES, deliveryStatusLabel } from "@/lib/delivery-st
  * seed, semua data sintetis.
  *
  * Isi respons TIDAK menyertakan compartmentNo; pemetaan robot ke
- * kompartemen hanya tersimpan di payload event MOCK_ARRIVED_AT_ROOM.
+ * kompartemen hanya tersimpan di payload event ARRIVED_AT_ROOM.
  */
 export async function GET(req: NextRequest, ctx: { params: Promise<{ mrn: string }> }) {
   const gate = checkMonitoringToken(req);
@@ -35,12 +37,12 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ mrn: string
   const activeDeliveries = await prisma.deliveryRequest.findMany({
     where: {
       prescription: { patientId: patient.id },
-      status: { in: ACTIVE_DELIVERY_STATUSES },
+      status: { in: MONITORING_ACTIVE_STATUSES },
     },
     orderBy: { requestedAt: "desc" },
     include: {
       room: { select: { roomCode: true, name: true } },
-      prescription: { select: { code: true } },
+      prescription: { select: { code: true, priority: true, ...ITEMS_SELECT } },
     },
   });
 
@@ -53,6 +55,11 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ mrn: string
       dateOfBirth: patient.dateOfBirth.toISOString(),
       diagnosis: patient.diagnosis,
       isInfectious: patient.isInfectious,
+      ...robotEligibility(
+        patient.isInfectious,
+        activeDeliveries.map((d) => ({ requestCode: d.requestCode, status: d.status, robotReason: d.robotReason }))
+      ),
+      allergies: patient.allergies,
       // ALERT infeksi (pasien menular -> waspada kontak/droplet/airborne).
       isSynthetic: patient.isSynthetic,
       roomCode: patient.roomCode,
@@ -73,6 +80,8 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ mrn: string
       roomCode: d.room.roomCode,
       roomName: d.room.name,
       prescriptionCode: d.prescription.code,
+      priority: d.prescription.priority,
+      items: mapItems(d.prescription.items),
       requestedAt: d.requestedAt.toISOString(),
       updatedAt: d.updatedAt.toISOString(),
     })),

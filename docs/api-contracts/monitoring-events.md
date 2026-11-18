@@ -58,7 +58,7 @@ Body:
 ```json
 {
   "requestCode": "DELIV-20261014-0001",
-  "toStatus": "MOCK_IN_TRANSIT",
+  "toStatus": "IN_TRANSIT",
   "note": "Robot berangkat dari farmasi",
   "compartmentNo": 2,
   "idempotencyKey": "nevomock-deliv-0001-step2"
@@ -66,23 +66,23 @@ Body:
 ```
 
 - `toStatus` valid: `DELIVERY_REQUESTED, PENDING_INTEGRATION,
-  MOCK_IN_TRANSIT, MOCK_ARRIVED_AT_ROOM, MOCK_HANDOVER_CONFIRMED, CANCELLED`.
-- `MOCK_HANDOVER_CONFIRMED` HANYA dari halaman scan `/scan/[mrn]?t=<token>` oleh
+  IN_TRANSIT, ARRIVED_AT_ROOM, HANDOVER_CONFIRMED, CANCELLED`.
+- `HANDOVER_CONFIRMED` HANYA dari halaman scan `/scan/[mrn]?t=<token>` oleh
   manusia yang login (server action `confirmHandoverAction`). Monitoring
   yang melempar status ini mendapat `422` (edge itu tidak ada di
   `MONITORING_TRANSITIONS`; tabel diturunkan dari
   `DELIVERY_TRANSITIONS` di lib dengan menyaring edge serah-terima).
 - `compartmentNo` opsional, bilangan bulat `>= 0`. Pemetaan
   requestCode ke kompartemen milik robot; SIMRS hanya menyimpannya di
-  payload event `MOCK_ARRIVED_AT_ROOM` supaya halaman scan tahu
+  payload event `ARRIVED_AT_ROOM` supaya halaman scan tahu
   kompartemen mana yang harus dibuka. Selain nilai itu: `400`. Tidak
   ada endpoint SIMRS yang me-return `compartmentNo`.
 - Transisi yang boleh dilempar monitoring (cermin tabel lib, minus
   edge serah-terima):
   - `DELIVERY_REQUESTED` ke `PENDING_INTEGRATION, CANCELLED`
-  - `PENDING_INTEGRATION` ke `MOCK_IN_TRANSIT, CANCELLED`
-  - `MOCK_IN_TRANSIT` ke `MOCK_ARRIVED_AT_ROOM, CANCELLED`
-  - `MOCK_ARRIVED_AT_ROOM` ke daftar kosong (lemparan apa pun → `422`)
+  - `PENDING_INTEGRATION` ke `IN_TRANSIT, CANCELLED`
+  - `IN_TRANSIT` ke `ARRIVED_AT_ROOM, CANCELLED`
+  - `ARRIVED_AT_ROOM` ke daftar kosong (lemparan apa pun → `422`)
 
 ### 4.1 Idempotency
 
@@ -115,7 +115,7 @@ Body:
 - `404`: `requestCode` tidak ditemukan.
 - `409`: `idempotencyKey` dipakai untuk kombinasi lain.
 - `422`: transisi tidak diperbolehkan (termasuk lemparan ke
-  `MOCK_HANDOVER_CONFIRMED`).
+  `HANDOVER_CONFIRMED`).
 - `503`: akun layanan `monitoring_service` belum di-seed.
 - `401`/`503` auth sesuai bagian 2.
 
@@ -132,7 +132,7 @@ Transaksi: update `deliveryRequest.status` + `deliveryEvent`
   "duplicate": false,
   "requestCode": "DELIV-20261014-0001",
   "from": "PENDING_INTEGRATION",
-  "to": "MOCK_IN_TRANSIT",
+  "to": "IN_TRANSIT",
   "idempotencyKey": "nevomock-deliv-0001-step2"
 }
 ```
@@ -142,7 +142,7 @@ Transaksi: update `deliveryRequest.status` + `deliveryEvent`
 Scan QR pasien membuka `/scan/[mrn]` (butuh sesi login). Halaman
 menampilkan identitas pasien, ruang/bed, nomor kompartemen, dan daftar
 obat dari database live. Satu klik tombol konfirmasi mengubah
-`MOCK_ARRIVED_AT_ROOM` menjadi `MOCK_HANDOVER_CONFIRMED` + event
+`ARRIVED_AT_ROOM` menjadi `HANDOVER_CONFIRMED` + event
 `HANDOVER_CONFIRMED` (`{ patientMrn, compartmentNo, method: "QR_SCAN" }`)
 + audit. Robot TIDAK BISA mengklaim serah-terima dengan sendirinya.
 
@@ -152,7 +152,7 @@ Contoh uji:
 curl -s -X POST http://localhost:3000/api/v1/monitoring/delivery-status \
   -H "Content-Type: application/json" \
   -H "x-monitoring-token: $MONITORING_TOKEN" \
-  -d '{"requestCode":"DELIV-20261014-0001","toStatus":"MOCK_IN_TRANSIT","note":"Robot berangkat","idempotencyKey":"nevomock-deliv-0001-step2"}'
+  -d '{"requestCode":"DELIV-20261014-0001","toStatus":"IN_TRANSIT","note":"Robot berangkat","idempotencyKey":"nevomock-deliv-0001-step2"}'
 ```
 
 Ulangi curl yang sama persis: responsnya tetap `200` dengan
@@ -188,7 +188,7 @@ yang sudah disebut.
     "active": true, "dischargedAt": null
   },
   "activeDeliveries": [
-    { "id": "...", "requestCode": "DELIV-...", "status": "MOCK_IN_TRANSIT",
+    { "id": "...", "requestCode": "DELIV-...", "status": "IN_TRANSIT",
       "statusLabel": "[MOCK] Transit", "roomCode": "R301", "roomName": "Ruang 301",
       "prescriptionCode": "RX-...", "requestedAt": "...", "updatedAt": "..." }
   ]
@@ -210,7 +210,7 @@ yang sudah disebut.
   "generatedAt": "2026-10-18T09:00:00.000Z",
   "count": 1,
   "deliveries": [
-    { "id": "...", "requestCode": "DELIV-...", "status": "MOCK_IN_TRANSIT",
+    { "id": "...", "requestCode": "DELIV-...", "status": "IN_TRANSIT",
       "statusLabel": "[MOCK] Transit", "roomCode": "R301", "roomName": "Ruang 301",
       "prescriptionCode": "RX-...",
       "patient": { "mrn": "SYN-MRN-0001", "fullName": "...", "gender": "L",

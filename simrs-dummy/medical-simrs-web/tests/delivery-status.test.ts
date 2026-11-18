@@ -5,6 +5,8 @@ import {
   DELIVERY_STATUS_TONES,
   DELIVERY_TRANSITIONS,
   ACTIVE_DELIVERY_STATUSES,
+  MONITORING_ACTIVE_STATUSES,
+  isMonitoringVisible,
   PRESCRIPTION_STATUS_LABELS,
   deliveryStatusLabel,
   deliveryStatusTone,
@@ -19,16 +21,9 @@ describe("lib/delivery-status", () => {
     }
   });
 
-  it("label status MOCK_ diawali [MOCK]; status nyata tidak", () => {
-    for (const status of Object.values(DeliveryStatus)) {
-      const label = DELIVERY_STATUS_LABELS[status];
-      if (status.startsWith("MOCK_")) {
-        expect(label.startsWith("[MOCK]")).toBe(true);
-      } else {
-        expect(label).not.toContain("[MOCK]");
-        // Label lama "Mock: Transit" tidak boleh nyasar lagi.
-        expect(label).not.toContain("Mock:");
-      }
+  it("label status tidak memuat penanda mock", () => {
+    for (const label of Object.values(DELIVERY_STATUS_LABELS)) {
+      expect(label).not.toMatch(/mock/i);
     }
   });
 
@@ -43,12 +38,12 @@ describe("lib/delivery-status", () => {
     }
   });
 
-  it("MOCK_HANDOVER_CONFIRMED hanya bisa dicapai dari MOCK_ARRIVED_AT_ROOM", () => {
+  it("HANDOVER_CONFIRMED hanya bisa dicapai dari ARRIVED_AT_ROOM", () => {
     for (const [from, targets] of Object.entries(DELIVERY_TRANSITIONS)) {
-      if (from === "MOCK_ARRIVED_AT_ROOM") {
-        expect(targets).toEqual(["MOCK_HANDOVER_CONFIRMED"]);
+      if (from === "ARRIVED_AT_ROOM") {
+        expect(targets).toEqual(["HANDOVER_CONFIRMED"]);
       } else {
-        expect(targets).not.toContain("MOCK_HANDOVER_CONFIRMED");
+        expect(targets).not.toContain("HANDOVER_CONFIRMED");
       }
     }
   });
@@ -58,8 +53,8 @@ describe("lib/delivery-status", () => {
     for (const status of ACTIVE_DELIVERY_STATUSES) {
       expect(known).toContain(status);
     }
-    expect(ACTIVE_DELIVERY_STATUSES).toContain("MOCK_ARRIVED_AT_ROOM");
-    expect(ACTIVE_DELIVERY_STATUSES).not.toContain("MOCK_HANDOVER_CONFIRMED");
+    expect(ACTIVE_DELIVERY_STATUSES).toContain("ARRIVED_AT_ROOM");
+    expect(ACTIVE_DELIVERY_STATUSES).not.toContain("HANDOVER_CONFIRMED");
     expect(ACTIVE_DELIVERY_STATUSES).not.toContain("CANCELLED");
   });
 
@@ -84,5 +79,14 @@ describe("lib/delivery-status", () => {
       DELIVERY_STATUS_TONES.PENDING_INTEGRATION
     );
     expect(prescriptionStatusLabel("DRAFT")).toBe(PRESCRIPTION_STATUS_LABELS.DRAFT);
+  });
+
+  it("monitoring hanya melihat pengantaran yang sudah dikirim ke robot", () => {
+    expect(MONITORING_ACTIVE_STATUSES).not.toContain("DELIVERY_REQUESTED");
+    expect(MONITORING_ACTIVE_STATUSES).toContain("PENDING_INTEGRATION");
+    expect(isMonitoringVisible("DELIVERY_REQUESTED", false)).toBe(false);
+    expect(isMonitoringVisible("CANCELLED", false)).toBe(false); // batal sebelum dikirim
+    expect(isMonitoringVisible("CANCELLED", true)).toBe(true);
+    expect(isMonitoringVisible("IN_TRANSIT", true)).toBe(true);
   });
 });

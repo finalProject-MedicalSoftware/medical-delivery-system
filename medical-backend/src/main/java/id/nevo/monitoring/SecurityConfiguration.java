@@ -51,10 +51,11 @@ public class SecurityConfiguration {
         return http.csrf(csrf -> csrf
                         .csrfTokenRepository(CookieCsrfTokenRepository.withHttpOnlyFalse())
                         .csrfTokenRequestHandler(new CsrfTokenRequestAttributeHandler())
-                        .ignoringRequestMatchers("/webhooks/simrs/**", "/actuator/health"))
+                        .ignoringRequestMatchers("/webhooks/simrs/**", "/actuator/health", "/internal/robot-events"))
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/actuator/health", "/error").permitAll()
                         .requestMatchers(HttpMethod.GET, "/internal/robots/*/eligibility").permitAll()
+                        .requestMatchers(HttpMethod.POST, "/internal/robot-events").permitAll() // rahasia internal diperiksa di controller
                         .requestMatchers("/api/v1/auth/**").permitAll()
                         .requestMatchers("/webhooks/simrs/**").permitAll()
                         .requestMatchers(HttpMethod.POST, "/api/v1/maps/*/activate").hasRole("ADMIN")

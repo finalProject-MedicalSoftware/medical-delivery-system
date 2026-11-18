@@ -69,14 +69,16 @@ export async function POST(req: NextRequest) {
   }
   // Until hardware possession can be proved, only a targeted zero-velocity
   // stop attempt is permitted. Readiness must not block this safety attempt.
-  if (code !== 'TELEOP' || data.linear !== 0 || data.angular !== 0) {
+  // ALLOW_ROBOT_MOTION=true (uji robot fisik yang diawasi) membuka gerak; gateway punya gate yang sama.
+  const allowMotion = process.env.ALLOW_ROBOT_MOTION === 'true';
+  if (!allowMotion && (code !== 'TELEOP' || data.linear !== 0 || data.angular !== 0)) {
     return NextResponse.json({ error: 'DEVICE_AUTH_UNAVAILABLE' }, { status: 409 });
   }
   if (!rosterSnapshot().some(robot => robot.robot_id === data.robot_id)) {
     return NextResponse.json({ error: 'ROBOT_OFFLINE', outcome: 'UNKNOWN' }, { status: 409 });
   }
   // Kontrak: map_id MAP_SELECTED selalu integer (kontrak robot-ws-tifa §5).
-  if (code === 'MAP_SELECTED' && !Number.isInteger(data.map_id)) {
+  if ((code as string) === 'MAP_SELECTED' && !Number.isInteger(data.map_id)) {
     return NextResponse.json({ error: 'MAP_ID_MUST_BE_INTEGER' }, { status: 400 });
   }
   if (!sendDownlink({ code, data })) {

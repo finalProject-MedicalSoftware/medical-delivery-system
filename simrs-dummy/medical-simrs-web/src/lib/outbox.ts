@@ -20,10 +20,12 @@ export type OutboxType =
 
 export const outboxTypeFor = (from: string | null, to: string): OutboxType => {
   if (from === null) return "DELIVERY_CREATED";
+  // Kali pertama monitoring mengetahui pengantaran ini = saat dikirim ke robot.
+  if (from === "DELIVERY_REQUESTED" && to === "PENDING_INTEGRATION") return "DELIVERY_CREATED";
   switch (to) {
-    case "MOCK_ARRIVED_AT_ROOM":
+    case "ARRIVED_AT_ROOM":
       return "DELIVERY_ARRIVED";
-    case "MOCK_HANDOVER_CONFIRMED":
+    case "HANDOVER_CONFIRMED":
       return "HANDOVER_CONFIRMED";
     case "CANCELLED":
       return "DELIVERY_CANCELLED";
@@ -78,16 +80,30 @@ export interface OutboxInput {
   // Khusus DELIVERY_ARRIVED / HANDOVER_CONFIRMED (kontrak §2.3).
   compartmentNo?: number | null;
   patientMrn?: string | null;
+  // Username pelaku (manusia login) atau null untuk sistem/monitoring.
+  actor?: string | null;
 }
 
 /**
  * Panggil TERAKHIR dalam $transaction yang sama dengan perubahan status.
  * Duplikat (race, retry) di-dedupe oleh unique idempotencyKey — abaikan.
  */
+/**
+ * Pengantaran yang belum dikirim ke robot tidak boleh sampai ke monitoring:
+ * pembuatan (null -> DELIVERY_REQUESTED) dan pembatalan sebelum dikirim
+ * (DELIVERY_REQUESTED -> CANCELLED) tidak menerbitkan event.
+ */
+export function shouldPublish(from: string | null, to: string): boolean {
+  if (from === null && to === "DELIVERY_REQUESTED") return false;
+  if (from === "DELIVERY_REQUESTED" && to === "CANCELLED") return false;
+  return true;
+}
+
 export async function enqueueOutbox(
   tx: Prisma.TransactionClient,
   input: OutboxInput
 ): Promise<void> {
+  if (!shouldPublish(input.from, input.to)) return;
   const type = outboxTypeFor(input.from, input.to);
   const idempotencyKey = outboxIdempotencyKey(input.requestCode, input.from, input.to);
 
@@ -99,6 +115,7 @@ export async function enqueueOutbox(
             ? { compartmentNo: input.compartmentNo }
             : {}),
           method: "QR_SCAN",
+          ...(input.actor ? { actor: input.actor } : {}),
         }
       : {
           from: input.from,
@@ -111,6 +128,7 @@ export async function enqueueOutbox(
             ? { compartmentNo: input.compartmentNo }
             : {}),
           source: "simrs",
+          ...(input.actor ? { actor: input.actor } : {}),
         };
 
   const envelope = buildEnvelope({ type, requestCode: input.requestCode, idempotencyKey, data });

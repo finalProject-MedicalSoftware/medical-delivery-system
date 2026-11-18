@@ -53,7 +53,7 @@ Akun demo SIMRS (password semua: `demo12345`): `sysadmin`, `admin_simrs`, `dr_bu
    - Waypoint dummy `DUMMY-WP-<roomCode>` tampil di peta & daftar (kodes ruang dari antrian pengantaran).
    - **Pilih pasien** dari antrian (kotak search nama/MRN; kartu antrian hanya item yang punya `requestCode`). Bisa **centang beberapa pasien sekaligus** → dispatch jadi beberapa misi (lihat §2b).
    - **Pilih tray compartment 0–5** — wajib; tombol dispatch terkunci bila kosong (validasi client), dan backend tetap tegas di server. (NEVO hanya punya 6 kompartemen fisik: 0–5.)
-   - Antrian **tidak menampilkan** item yang sudah `MOCK_ARRIVED_AT_ROOM`, `MOCK_HANDOVER_CONFIRMED`, atau `CANCELLED` — yang tampil hanya yang masih butuh pengantaran.
+   - Antrian **tidak menampilkan** item yang sudah `ARRIVED_AT_ROOM`, `HANDOVER_CONFIRMED`, atau `CANCELLED` — yang tampil hanya yang masih butuh pengantaran.
    - `Request code` terisi otomatis bila masuk dari kartu antrian (`?req=`). Konfirmasi → dispatch → toast sukses, robot mulai bergerak (telemetry via WS).
    - Tombol **Cancel active mission** tersedia selama misi aktif.
    - Nama pasien & ruangan ikut tampil di `/missions` dan `/missions/[id]` (JOIN read-only ke cache SIMRS lewat `requestCode`).
@@ -167,14 +167,14 @@ Self-check otomatis (tanpa Postman): `WS_PORT=8099 npm run check:tifa` di `medic
 ```json
 {
   "requestCode": "REQ-…",
-  "toStatus": "MOCK_IN_TRANSIT",
+  "toStatus": "IN_TRANSIT",
   "note": "Departed from dock",
   "compartmentNo": 3,
   "idempotencyKey": "nevomock-deliv-0001-step1"
 }
 ```
 
-- Transisi sah: `PENDING_INTEGRATION → MOCK_IN_TRANSIT → MOCK_ARRIVED_AT_ROOM`; `compartmentNo` **wajib** saat lapor tiba dan hanya disimpan di payload event (bukan kolom tabel); `MOCK_HANDOVER_CONFIRMED` tidak bisa lewat endpoint ini (hanya scan manusia).
+- Transisi sah: `PENDING_INTEGRATION → IN_TRANSIT → ARRIVED_AT_ROOM`; `compartmentNo` **wajib** saat lapor tiba dan hanya disimpan di payload event (bukan kolom tabel); `HANDOVER_CONFIRMED` tidak bisa lewat endpoint ini (hanya scan manusia).
 - Token salah/hilang → **401** (fail-closed); token digantung dicatat ke audit hanya prefix 4 karakter.
 - Kirim ulang `idempotencyKey` yang sama + `requestCode`/`toStatus` sama → balasan hasil pertama, tidak ada event kedua.
 - Duplikat bersamaan → unik constraint menangkap; salah satu gagal, bukan dobel.
@@ -183,7 +183,7 @@ Self-check otomatis (tanpa Postman): `WS_PORT=8099 npm run check:tifa` di `medic
 
 1. Dari SIMRS, buka pasien → **Gelang (QR)** → QR berisi `{base}/scan/{mrn}?t=<token>` — token saja `?t=`, tidak pernah data pasien di query.
 2. Buka URL hasil QR (atau scan dengan kamera HP), login `perawat_siti`.
-3. Halaman `/scan/{mrn}` menampilkan data pasien `[SINTETIS]` + kompartemen tray (dibaca dari payload event kedatangan) → tombol **Konfirmasi serah-terima** → status `MOCK_ARRIVED_AT_ROOM → MOCK_HANDOVER_CONFIRMED` (jalur QR_SCAN, satu-satunya).
+3. Halaman `/scan/{mrn}` menampilkan data pasien `[SINTETIS]` + kompartemen tray (dibaca dari payload event kedatangan) → tombol **Konfirmasi serah-terima** → status `ARRIVED_AT_ROOM → HANDOVER_CONFIRMED` (jalur QR_SCAN, satu-satunya).
 4. Uji negatif: buka `/scan/{mrn}` **tanpa** `t` → "QR Tidak Valid".
 
 ## 7. Outbox relay (`npm run relay`, di SIMRS)

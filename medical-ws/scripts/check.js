@@ -29,7 +29,7 @@ const env = {
   v: 1, eventId: 'e1', idempotencyKey: 'ik1',
   type: 'DELIVERY_STATUS_CHANGED', occurredAt: '2026-10-22T00:00:00.000Z',
   requestCode: 'DELIV-0001', wardCode: 'A',
-  data: { from: 'PENDING_INTEGRATION', to: 'MOCK_IN_TRANSIT', statusLabel: '[MOCK] Transit' }
+  data: { from: 'PENDING_INTEGRATION', to: 'IN_TRANSIT', statusLabel: '[MOCK] Transit' }
 };
 assert.ok(envelopeMatchesChannel(env, 'all'));
 assert.ok(envelopeMatchesChannel(env, 'ward:A'));

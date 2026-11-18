@@ -62,6 +62,7 @@ export async function createPatient(data: z.infer<typeof patientSchema>, actorId
         notes: parsed.notes,
         diagnosis: parsed.diagnosis,
         isInfectious: parsed.isInfectious,
+        allergies: parsed.allergies,
         isSynthetic: true, // Always enforce synthetic label
       },
     });

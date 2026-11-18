@@ -64,7 +64,7 @@ export async function GET(req: NextRequest) {
     start(controller) {
       const send = (s: string) => controller.enqueue(new TextEncoder().encode(`data: ${s}\n\n`));
       addSubscriber(sseId, channels, send);
-      send(JSON.stringify({ type: 'SSE_INIT', sseId, relayConnected: relayRegistered(), channels: channels.map((c) => c.kind === 'all' ? 'all' : `${c.kind}:${c.code}`) }));
+      send(JSON.stringify({ type: 'SSE_INIT', sseId, relayConnected: relayRegistered(), motionAllowed: process.env.ALLOW_ROBOT_MOTION === 'true', channels: channels.map((c) => c.kind === 'all' ? 'all' : `${c.kind}:${c.code}`) }));
       // Burst awal: roster cache (READY/POSITION/BATTERY terakhir) agar UI
       // tidak menunggu uplink robot berikutnya.
       send(JSON.stringify({ type: 'SSE_ROSTER', robots: rosterSnapshot() }));

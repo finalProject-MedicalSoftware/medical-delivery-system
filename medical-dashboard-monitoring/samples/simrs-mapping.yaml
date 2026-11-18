@@ -16,8 +16,8 @@ statuses:
   delivery:
     DELIVERY_REQUESTED: { label: "Diminta", severity: info }
     PENDING_INTEGRATION: { label: "Pending Integrasi", severity: warning }
-    MOCK_IN_TRANSIT: { label: "Mock Transit", severity: info, simulation: true }
-    MOCK_ARRIVED_AT_ROOM: { label: "Mock Tiba", severity: ok, simulation: true }
+    IN_TRANSIT: { label: "Mock Transit", severity: info, simulation: true }
+    ARRIVED_AT_ROOM: { label: "Mock Tiba", severity: ok, simulation: true }
     CANCELLED: { label: "Dibatalkan", severity: muted }
   prescription:
     DRAFT: { label: "Draft", severity: muted }

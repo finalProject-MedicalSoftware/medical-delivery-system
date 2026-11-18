@@ -192,7 +192,7 @@ async function main() {
           roomCode: c.roomCode,
           requestedById: requesterId,
           notes: "Seed E2E — permintaan pengantaran sintetis",
-          status: "DELIVERY_REQUESTED",
+          status: "PENDING_INTEGRATION", // seed E2E meniru petugas yang sudah menekan "Kirim ke Robot"
         },
         select: { id: true },
       });
@@ -207,6 +207,17 @@ async function main() {
           notes: "Permintaan pengantaran dibuat (seed E2E)",
         },
       });
+      await tx.deliveryEvent.create({
+        data: {
+          deliveryRequestId: delivery.id,
+          eventType: "STATUS_CHANGE",
+          statusBefore: "DELIVERY_REQUESTED",
+          statusAfter: "PENDING_INTEGRATION",
+          actorId: requesterId,
+          isSimulation: false,
+          notes: "Dikirim ke robot (seed E2E)",
+        },
+      });
       await tx.auditLog.create({
         data: {
           entityType: "DELIVERY_REQUEST",
@@ -216,7 +227,7 @@ async function main() {
           details: { requestCode, prescriptionId: rx.id, roomCode: c.roomCode, source: "seed-e2e" },
         },
       });
-      await enqueueOutbox(tx, { requestCode, from: null, to: "DELIVERY_REQUESTED" });
+      await enqueueOutbox(tx, { requestCode, from: "DELIVERY_REQUESTED", to: "PENDING_INTEGRATION" });
     });
 
     out.push({ requestCode, mrn: c.mrn, patientName: c.fullName, roomCode: c.roomCode, rxCode });

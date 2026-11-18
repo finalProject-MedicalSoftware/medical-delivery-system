@@ -17,7 +17,7 @@ import {
 
 export const dynamic = "force-dynamic";
 export const metadata = {
-  title: "Pasien Sintetis - SIMRS Dummy",
+  title: "Pasien - SIMRS",
 };
 
 const PAGE_SIZE = 20;
@@ -90,8 +90,8 @@ export default async function PasienPage({
     <div className="space-y-5">
       <PageHeader
         icon={Users}
-        title="Pasien Sintetis"
-        subtitle={`${total} pasien - Data 100% sintetis/fiktif`}
+        title="Pasien"
+        subtitle={`${total} pasien terdaftar`}
         action={
           canManage ? (
             <Link href="/pasien/baru" id="btn-tambah-pasien" className={btnPrimary}>
@@ -150,12 +150,12 @@ export default async function PasienPage({
           <table className="w-full text-sm">
             <thead className={theadCls}>
               <tr>
-                <th className="px-4 py-3 text-left">MRN</th>
-                <th className="px-4 py-3 text-left">Nama</th>
-                <th className="px-4 py-3 text-left">Ruang</th>
-                <th className="px-4 py-3 text-center">Status</th>
-                <th className="px-4 py-3 text-center">Resep</th>
-                <th className="px-4 py-3" />
+                <th scope="col" className="px-4 py-3 text-left">MRN</th>
+                <th scope="col" className="px-4 py-3 text-left">Nama</th>
+                <th scope="col" className="px-4 py-3 text-left">Ruang</th>
+                <th scope="col" className="px-4 py-3 text-center">Status</th>
+                <th scope="col" className="px-4 py-3 text-center">Resep</th>
+                <th scope="col" className="px-4 py-3" />
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">

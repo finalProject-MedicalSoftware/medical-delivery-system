@@ -1,0 +1,757 @@
+diff --git a/src/main/java/id/nevo/monitoring/ApiErrorSanitizer.java b/src/main/java/id/nevo/monitoring/ApiErrorSanitizer.java
+index b6bb61b..6024221 100644
+--- a/src/main/java/id/nevo/monitoring/ApiErrorSanitizer.java
++++ b/src/main/java/id/nevo/monitoring/ApiErrorSanitizer.java
+@@ -94,7 +94,7 @@ public class ApiErrorSanitizer extends DefaultErrorAttributes {
+             "requestCode dan toStatus kontrak wajib valid",
+             "idempotencyKey tidak sesuai kontrak",
+             "compartmentNo harus integer >= 0",
+-            "compartmentNo hanya boleh saat MOCK_ARRIVED_AT_ROOM",
++            "compartmentNo hanya boleh saat ARRIVED_AT_ROOM",
+             "SIMRS mapping belum tersedia di cache",
+             "SIMRS belum dikonfigurasi; POST ditolak.",
+             "Gagal mengirim status SIMRS",
+diff --git a/src/main/java/id/nevo/monitoring/MissionApi.java b/src/main/java/id/nevo/monitoring/MissionApi.java
+index 8f5ffa9..09f65ba 100644
+--- a/src/main/java/id/nevo/monitoring/MissionApi.java
++++ b/src/main/java/id/nevo/monitoring/MissionApi.java
+@@ -39,6 +39,12 @@ public class MissionApi {
+         this(db, robotService, robotAdapter, simrsService, adminService, null);
+     }
+ 
++    private RealMissionService realMissions;
++
++    /** Hanya ada pada ROBOT_MODE=real; setter agar konstruktor (dipakai tes) tidak berubah. */
++    @Autowired(required = false)
++    void setRealMissionService(RealMissionService realMissions) { this.realMissions = realMissions; }
++
+     @GetMapping("/robots")
+     public List<Map<String, Object>> getRobots() {
+         return robotAdapter.getRobots();
+@@ -73,6 +79,7 @@ public class MissionApi {
+         }
+         UUID commandId = UUID.randomUUID();
+         robotAdapter.executeCommand(commandId, robotId, req.command(), user.getName(), req.params() == null ? Map.of() : req.params());
++        if (realMissions != null && "CMD_CANCEL_MISSION".equals(req.command())) realMissions.cancelActive(robotId, user.getName());
+         return Map.of("commandId", commandId.toString(), "simulated", robotAdapter == robotService);
+     }
+ 
+diff --git a/src/main/java/id/nevo/monitoring/MissionPlanningService.java b/src/main/java/id/nevo/monitoring/MissionPlanningService.java
+index a95aabf..2ddc451 100644
+--- a/src/main/java/id/nevo/monitoring/MissionPlanningService.java
++++ b/src/main/java/id/nevo/monitoring/MissionPlanningService.java
+@@ -16,26 +16,46 @@ public class MissionPlanningService {
+     private final JdbcTemplate db;
+     private final SimrsClientService simrs;
+     private final SimulatedRobotService simulator;
++    private final RealMissionService real;
+ 
+     public MissionPlanningService(JdbcTemplate db, SimrsClientService simrs,
+                                   ObjectProvider<SimulatedRobotService> simulator) {
++        this(db, simrs, simulator, null);
++    }
++
++    @org.springframework.beans.factory.annotation.Autowired
++    public MissionPlanningService(JdbcTemplate db, SimrsClientService simrs,
++                                  ObjectProvider<SimulatedRobotService> simulator,
++                                  ObjectProvider<RealMissionService> real) {
+         this.db = db;
+         this.simrs = simrs;
+         this.simulator = simulator.getIfAvailable();
++        this.real = real == null ? null : real.getIfAvailable();
+     }
+ 
+     public Map<String, Object> dispatch(ManifestRequest request, String userName) {
+-        if (simulator == null) throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "Dispatch manifest hanya tersedia ketika adapter navigasi mendukung lifecycle misi");
++        if (simulator == null && real == null) throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "Dispatch manifest hanya tersedia ketika adapter navigasi mendukung lifecycle misi");
+         if (request == null || request.items() == null || request.items().isEmpty()) throw bad("Manifest tidak boleh kosong");
+-        if (!Objects.equals(request.robotId(), simulator.getRobotState().get("robotId"))) throw bad("Robot target tidak valid");
+-        if (!"IDLE".equals(simulator.getRobotState().get("status"))) throw conflict("Robot belum siap menerima manifest baru");
++        if (simulator != null) {
++            if (!Objects.equals(request.robotId(), simulator.getRobotState().get("robotId"))) throw bad("Robot target tidak valid");
++            if (!"IDLE".equals(simulator.getRobotState().get("status"))) throw conflict("Robot belum siap menerima manifest baru");
++        } else {
++            if (blank(request.robotId())) throw bad("Robot target wajib diisi");
++            real.requireDispatchable(request.robotId());
++        }
+ 
+-        int compartmentCount = simulator.getCompartmentCount();
++        int compartmentCount = simulator != null ? simulator.getCompartmentCount() : real.getCompartmentCount();
+         validateShape(request.items(), compartmentCount);
+         List<PreparedItem> prepared = new ArrayList<>();
+         for (ManifestItem item : request.items()) prepared.add(validateLive(item));
+ 
+         UUID manifestId = UUID.randomUUID();
++        if (simulator == null) {
++            List<RealMissionService.Stop> stops = new ArrayList<>();
++            for (PreparedItem p : prepared) stops.add(new RealMissionService.Stop(p.waypointId(), p.roomCode(), p.bedId(),
++                    p.patientMrn(), p.requestCode(), p.compartmentNo(), p.placementUpdatedAt(), p.source()));
++            return real.dispatchManifest(request.robotId(), stops, userName, manifestId);
++        }
+         List<Map<String, Object>> missions = new ArrayList<>();
+         for (int i = 0; i < prepared.size(); i++) {
+             PreparedItem item = prepared.get(i);
+@@ -63,9 +83,11 @@ public class MissionPlanningService {
+         try { root = simrs.getPatient(item.patientMrn().trim()); }
+         catch (Exception ex) { throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "Data pasien SIMRS tidak dapat diverifikasi"); }
+         JsonNode patient = root.path("patient");
+-        JsonNode infectiousFlag = patient.get("isInfectious");
+-        if (infectiousFlag == null || !infectiousFlag.isBoolean() || !infectiousFlag.asBoolean()) {
+-            throw conflict("Status penyakit menular pasien tidak aktif atau tidak dapat diverifikasi. Muat ulang pasien dan tinjau manifest.");
++        // robotEligible dari SIMRS: ada pengantaran yang sudah dikirim ke robot DAN
++        // (pasien menular ATAU petugas menulis alasan untuk pasien tidak menular).
++        JsonNode eligibleFlag = patient.get("robotEligible");
++        if (eligibleFlag == null || !eligibleFlag.isBoolean() || !eligibleFlag.asBoolean()) {
++            throw conflict("Pasien tidak memiliki pengantaran yang dikirim ke robot, atau alasan/status menularnya tidak dapat diverifikasi. Muat ulang pasien dan tinjau manifest.");
+         }
+         if (!patient.path("active").asBoolean(false)) throw conflict("Pasien tidak memiliki placement rawat inap aktif");
+         String roomCode = patient.path("roomCode").asText("");
+diff --git a/src/main/java/id/nevo/monitoring/SecurityConfiguration.java b/src/main/java/id/nevo/monitoring/SecurityConfiguration.java
+index 2d5a83e..712a3b9 100644
+--- a/src/main/java/id/nevo/monitoring/SecurityConfiguration.java
++++ b/src/main/java/id/nevo/monitoring/SecurityConfiguration.java
+@@ -51,10 +51,11 @@ public class SecurityConfiguration {
+         return http.csrf(csrf -> csrf
+                         .csrfTokenRepository(CookieCsrfTokenRepository.withHttpOnlyFalse())
+                         .csrfTokenRequestHandler(new CsrfTokenRequestAttributeHandler())
+-                        .ignoringRequestMatchers("/webhooks/simrs/**", "/actuator/health"))
++                        .ignoringRequestMatchers("/webhooks/simrs/**", "/actuator/health", "/internal/robot-events"))
+                 .authorizeHttpRequests(auth -> auth
+                         .requestMatchers("/actuator/health", "/error").permitAll()
+                         .requestMatchers(HttpMethod.GET, "/internal/robots/*/eligibility").permitAll()
++                        .requestMatchers(HttpMethod.POST, "/internal/robot-events").permitAll() // rahasia internal diperiksa di controller
+                         .requestMatchers("/api/v1/auth/**").permitAll()
+                         .requestMatchers("/webhooks/simrs/**").permitAll()
+                         .requestMatchers(HttpMethod.POST, "/api/v1/maps/*/activate").hasRole("ADMIN")
+diff --git a/src/main/java/id/nevo/monitoring/SimrsClientService.java b/src/main/java/id/nevo/monitoring/SimrsClientService.java
+index 43056cc..b1d9414 100644
+--- a/src/main/java/id/nevo/monitoring/SimrsClientService.java
++++ b/src/main/java/id/nevo/monitoring/SimrsClientService.java
+@@ -37,7 +37,7 @@ public class SimrsClientService {
+     private static final String PATIENTS = "/api/v1/monitoring/patients";
+     private static final String DELIVERY_STATUS = "/api/v1/monitoring/delivery-status";
+     private static final Set<String> MONITORING_STATUSES = Set.of(
+-            "DELIVERY_REQUESTED", "PENDING_INTEGRATION", "MOCK_IN_TRANSIT", "MOCK_ARRIVED_AT_ROOM", "CANCELLED");
++            "DELIVERY_REQUESTED", "PENDING_INTEGRATION", "IN_TRANSIT", "ARRIVED_AT_ROOM", "CANCELLED");
+ 
+     private final SimrsProperties properties;
+     private final JdbcTemplate db;
+@@ -386,16 +386,18 @@ public class SimrsClientService {
+     }
+     public JsonNode getPatient(String mrn) { return getJson(PATIENT + URLEncoder.encode(mrn, StandardCharsets.UTF_8)); }
+     public JsonNode getPatients(String query, String cursor, int limit) {
+-        StringBuilder path = new StringBuilder(PATIENTS).append("?infectiousOnly=true&limit=").append(Math.max(1, Math.min(limit, 100)));
++        StringBuilder path = new StringBuilder(PATIENTS).append("?deliveryReady=true&limit=").append(Math.max(1, Math.min(limit, 100)));
+         if (query != null && !query.isBlank()) path.append("&query=").append(URLEncoder.encode(query.trim(), StandardCharsets.UTF_8));
+         if (cursor != null && !cursor.isBlank()) path.append("&cursor=").append(URLEncoder.encode(cursor.trim(), StandardCharsets.UTF_8));
+         JsonNode response = getJson(path.toString());
+         JsonNode patients = response.path("patients");
+         if (!patients.isArray()) throw new IllegalStateException("Daftar pasien SIMRS tidak sesuai kontrak");
+         for (JsonNode patient : patients) {
+-            JsonNode flag = patient.get("isInfectious");
++            // Hanya pasien dengan pengantaran yang sudah dikirim ke robot (menular, atau tidak menular
++            // dengan alasan dari petugas). SIMRS yang menentukan; backend memverifikasi bentuknya.
++            JsonNode flag = patient.get("robotEligible");
+             if (flag == null || !flag.isBoolean() || !flag.asBoolean()) {
+-                throw new IllegalStateException("Filter penyakit menular SIMRS tidak dapat diverifikasi");
++                throw new IllegalStateException("Kelayakan pengantaran robot SIMRS tidak dapat diverifikasi");
+             }
+         }
+         return response;
+@@ -470,11 +472,11 @@ public class SimrsClientService {
+     }
+ 
+     private void validateStatusRequest(String requestCode, String toStatus, Integer compartmentNo, String key) {
+-        if ("MOCK_HANDOVER_CONFIRMED".equals(toStatus)) throw new IllegalArgumentException("Konfirmasi serah-terima hanya boleh melalui scan manusia di SIMRS");
++        if ("HANDOVER_CONFIRMED".equals(toStatus)) throw new IllegalArgumentException("Konfirmasi serah-terima hanya boleh melalui scan manusia di SIMRS");
+         if (blank(requestCode) || blank(toStatus) || !MONITORING_STATUSES.contains(toStatus)) throw new IllegalArgumentException("requestCode dan toStatus kontrak wajib valid");
+         if (key != null && !key.matches("^[A-Za-z0-9._:-]{1,64}$")) throw new IllegalArgumentException("idempotencyKey tidak sesuai kontrak");
+         if (compartmentNo != null && compartmentNo < 0) throw new IllegalArgumentException("compartmentNo harus integer >= 0");
+-        if (compartmentNo != null && !"MOCK_ARRIVED_AT_ROOM".equals(toStatus)) throw new IllegalArgumentException("compartmentNo hanya boleh saat MOCK_ARRIVED_AT_ROOM");
++        if (compartmentNo != null && !"ARRIVED_AT_ROOM".equals(toStatus)) throw new IllegalArgumentException("compartmentNo hanya boleh saat ARRIVED_AT_ROOM");
+     }
+ 
+     private JsonNode getJson(String path) {
+diff --git a/src/main/java/id/nevo/monitoring/SimulatedRobotService.java b/src/main/java/id/nevo/monitoring/SimulatedRobotService.java
+index 23af271..96d8e56 100644
+--- a/src/main/java/id/nevo/monitoring/SimulatedRobotService.java
++++ b/src/main/java/id/nevo/monitoring/SimulatedRobotService.java
+@@ -88,14 +88,14 @@ public class SimulatedRobotService implements RobotAdapter {
+         try { return simrsService != null && simrsService.isWriteLive(); } catch (Exception ex) { return false; }
+     }
+ 
+-    /** Dispatch (EXECUTING) -> SIMRS MOCK_IN_TRANSIT; tambah PENDING_INTEGRATION dulu bila SIMRS masih DELIVERY_REQUESTED (draf-D2). */
++    /** Dispatch (EXECUTING) -> SIMRS IN_TRANSIT; tambah PENDING_INTEGRATION dulu bila SIMRS masih DELIVERY_REQUESTED (draf-D2). */
+     private void postSimrsInTransit(UUID missionId, String requestCode, String roomCode) {
+         if (!simrsWriteLive() || requestCode == null || requestCode.isBlank()) return;
+         simrsWriter.submit(() -> {
+             try {
+                 String current = findSimrsStatus(requestCode);
+-                if (current != null && (current.equals("MOCK_IN_TRANSIT") || current.equals("MOCK_ARRIVED_AT_ROOM") || current.equals("CANCELLED"))) {
+-                    log.info("SIMRS delivery {} sudah {}; lewati MOCK_IN_TRANSIT", requestCode, current);
++                if (current != null && (current.equals("IN_TRANSIT") || current.equals("ARRIVED_AT_ROOM") || current.equals("CANCELLED"))) {
++                    log.info("SIMRS delivery {} sudah {}; lewati IN_TRANSIT", requestCode, current);
+                     return;
+                 }
+                 // Cache active-deliveries bisa stale (refresh tiap polling cycle), jadi
+@@ -105,14 +105,14 @@ public class SimulatedRobotService implements RobotAdapter {
+                 if (current == null || current.equals("DELIVERY_REQUESTED")) {
+                     doSimrsPost(missionId, requestCode, "PENDING_INTEGRATION", "[SIMULASI] Integrasi robot NEVO-01 mengambil permintaan pengantaran.", null);
+                 }
+-                doSimrsPost(missionId, requestCode, "MOCK_IN_TRANSIT", "[SIMULASI] Robot NEVO-01 dalam transit menuju ruang " + (roomCode == null ? "sasaran" : roomCode) + ".", null);
++                doSimrsPost(missionId, requestCode, "IN_TRANSIT", "[SIMULASI] Robot NEVO-01 dalam transit menuju ruang " + (roomCode == null ? "sasaran" : roomCode) + ".", null);
+             } catch (Exception ex) {
+-                log.warn("Push status SIMRS (MOCK_IN_TRANSIT) gagal: {}", safeSimrsMessage(ex));
++                log.warn("Push status SIMRS (IN_TRANSIT) gagal: {}", safeSimrsMessage(ex));
+             }
+         });
+     }
+ 
+-    /** Arrival (SUCCEEDED) -> SIMRS MOCK_ARRIVED_AT_ROOM; serah-terima tetap manual lewat scan manusia di SIMRS. */
++    /** Arrival (SUCCEEDED) -> SIMRS ARRIVED_AT_ROOM; serah-terima tetap manual lewat scan manusia di SIMRS. */
+     private void postSimrsArrival(UUID missionId) {
+         if (!simrsWriteLive()) return;
+         simrsWriter.submit(() -> {
+@@ -122,9 +122,9 @@ public class SimulatedRobotService implements RobotAdapter {
+                 String requestCode = (String) mission.get("request_code");
+                 if (requestCode == null || requestCode.isBlank()) return;
+                 String roomCode = (String) mission.get("room_code");
+-                doSimrsPost(missionId, requestCode, "MOCK_ARRIVED_AT_ROOM", "[SIMULASI] Robot NEVO-01 tiba di ruang " + (roomCode == null ? "sasaran" : roomCode) + "; serah-terima ditentukan via scan manusia.", missionCompartment(missionId));
++                doSimrsPost(missionId, requestCode, "ARRIVED_AT_ROOM", "[SIMULASI] Robot NEVO-01 tiba di ruang " + (roomCode == null ? "sasaran" : roomCode) + "; serah-terima ditentukan via scan manusia.", missionCompartment(missionId));
+             } catch (Exception ex) {
+-                log.warn("Push status SIMRS (MOCK_ARRIVED_AT_ROOM) gagal: {}", safeSimrsMessage(ex));
++                log.warn("Push status SIMRS (ARRIVED_AT_ROOM) gagal: {}", safeSimrsMessage(ex));
+             }
+         });
+     }
+diff --git a/src/main/resources/application.yml b/src/main/resources/application.yml
+index 3c5113f..76b0a22 100644
+--- a/src/main/resources/application.yml
++++ b/src/main/resources/application.yml
+@@ -21,6 +21,9 @@ nevo:
+   robot:
+     mode: ${ROBOT_MODE:sim}
+     compartment-count: ${NEVO_COMPARTMENT_COUNT:6}
++    # Pose dock "x,y,yaw" (peta ROS). Kosong = robot tidak diperintah pulang otomatis setelah misi.
++    home-base: ${NEVO_HOME_BASE:}
++    mission-timeout-minutes: ${NEVO_MISSION_TIMEOUT_MINUTES:60}
+   gateway:
+     url: ${GATEWAY_URL:}
+   ws:
+diff --git a/src/test/java/id/nevo/monitoring/MissionPlanningServiceTest.java b/src/test/java/id/nevo/monitoring/MissionPlanningServiceTest.java
+index 354982c..051b0ab 100644
+--- a/src/test/java/id/nevo/monitoring/MissionPlanningServiceTest.java
++++ b/src/test/java/id/nevo/monitoring/MissionPlanningServiceTest.java
+@@ -60,6 +60,17 @@ class MissionPlanningServiceTest {
+                 eq("MRN-1"), eq("BED-1"), any(), eq("MANUAL_SIMRS"), any(), eq(1));
+     }
+ 
++    @Test
++    void rejectsPatientWithoutDeliverySentToRobot() throws Exception {
++        Fixture fixture = fixture();
++        when(fixture.simrs.getPatient("MRN-1")).thenReturn(new ObjectMapper().readTree("""
++                {"patient":{"mrn":"MRN-1","active":true,"robotEligible":false,"roomCode":"ROOM-1","bedId":"BED-1","placementUpdatedAt":"2026-11-06T00:00:00Z"},"activeDeliveries":[]}
++                """));
++        ResponseStatusException ex = assertThrows(ResponseStatusException.class,
++                () -> fixture.service.dispatch(request(item("MRN-1", 0, "2026-11-06T00:00:00Z", null)), "operator"));
++        assertEquals(409, ex.getStatusCode().value());
++    }
++
+     private Fixture fixture() throws Exception {
+         JdbcTemplate db = mock(JdbcTemplate.class);
+         SimrsClientService simrs = mock(SimrsClientService.class);
+@@ -69,9 +80,9 @@ class MissionPlanningServiceTest {
+         when(simulator.getRobotState()).thenReturn(Map.of("robotId", "NEVO-01", "status", "IDLE"));
+         when(simulator.getCompartmentCount()).thenReturn(6);
+         when(simrs.getPatient("MRN-1")).thenReturn(new ObjectMapper().readTree("""
+-                {"patient":{"mrn":"MRN-1","active":true,"roomCode":"ROOM-1","bedId":"BED-1","placementUpdatedAt":"2026-11-06T00:00:00Z"},"activeDeliveries":[]}
++                {"patient":{"mrn":"MRN-1","active":true,"robotEligible":true,"roomCode":"ROOM-1","bedId":"BED-1","placementUpdatedAt":"2026-11-06T00:00:00Z"},"activeDeliveries":[]}
+                 """));
+-        return new Fixture(db, simulator, new MissionPlanningService(db, simrs, provider));
++        return new Fixture(db, simulator, simrs, new MissionPlanningService(db, simrs, provider));
+     }
+ 
+     private MissionPlanningService.ManifestRequest request(MissionPlanningService.ManifestItem item) {
+@@ -82,5 +93,5 @@ class MissionPlanningServiceTest {
+         return new MissionPlanningService.ManifestItem(mrn, "ROOM-1", "BED-1", updatedAt, waypointId, compartment, requestCode);
+     }
+ 
+-    private record Fixture(JdbcTemplate db, SimulatedRobotService simulator, MissionPlanningService service) { }
++    private record Fixture(JdbcTemplate db, SimulatedRobotService simulator, SimrsClientService simrs, MissionPlanningService service) { }
+ }
+diff --git a/src/test/java/id/nevo/monitoring/SimrsClientServiceTest.java b/src/test/java/id/nevo/monitoring/SimrsClientServiceTest.java
+index 0f0df7b..d274012 100644
+--- a/src/test/java/id/nevo/monitoring/SimrsClientServiceTest.java
++++ b/src/test/java/id/nevo/monitoring/SimrsClientServiceTest.java
+@@ -17,11 +17,11 @@ import static org.junit.jupiter.api.Assertions.*;
+ public class SimrsClientServiceTest {
+ 
+     @Test
+-    @DisplayName("Prohibit MOCK_HANDOVER_CONFIRMED from monitoring service")
++    @DisplayName("Prohibit HANDOVER_CONFIRMED from monitoring service")
+     void testProhibitHandoverConfirmed() {
+         SimrsClientService service = new SimrsClientService("https://mock.invalid", "mock-token", true, true, 30);
+         assertThrows(IllegalArgumentException.class, () ->
+-                service.postDeliveryStatus("REQ-123", "MOCK_HANDOVER_CONFIRMED", null, "idemp-1")
++                service.postDeliveryStatus("REQ-123", "HANDOVER_CONFIRMED", null, "idemp-1")
+         );
+     }
+ 
+@@ -29,7 +29,7 @@ public class SimrsClientServiceTest {
+     @DisplayName("Write feature disabled by default returns simulation response")
+     void testWriteFeatureDisabledByDefault() {
+         SimrsClientService service = new SimrsClientService("https://mock.invalid", "", true, false, 30);
+-        Map<String, Object> res = service.postDeliveryStatus("REQ-123", "MOCK_IN_TRANSIT", null, "idemp-1");
++        Map<String, Object> res = service.postDeliveryStatus("REQ-123", "IN_TRANSIT", null, "idemp-1");
+         assertTrue((Boolean) res.get("simulated"));
+         assertTrue((Boolean) res.get("success"));
+     }
+@@ -50,7 +50,7 @@ public class SimrsClientServiceTest {
+         HttpServer server = HttpServer.create(new InetSocketAddress("localhost", 0), 0);
+         server.createContext("/api/v1/monitoring/mapping", e -> respond(e, "application/yaml", "version: 1\nsource: simrs-dummy\nwards:\n  - code: W1\n    name: Ward 1\n    floor: 1\n    rooms:\n      - roomCode: R1\n        name: Room 1\n        beds: []\n" , calls));
+         server.createContext("/api/v1/monitoring/snapshot", e -> respond(e, "application/json", "{\"patients\":[],\"deliveries\":[],\"rooms\":[]}", calls));
+-        server.createContext("/api/v1/monitoring/active-deliveries", e -> respond(e, "application/json", "{\"generatedAt\":\"2026-01-01T00:00:00Z\",\"count\":1,\"deliveries\":[{\"requestCode\":\"D1\",\"status\":\"MOCK_IN_TRANSIT\"}]}", calls));
++        server.createContext("/api/v1/monitoring/active-deliveries", e -> respond(e, "application/json", "{\"generatedAt\":\"2026-01-01T00:00:00Z\",\"count\":1,\"deliveries\":[{\"requestCode\":\"D1\",\"status\":\"IN_TRANSIT\"}]}", calls));
+         server.start();
+         try {
+             SimrsClientService service = new SimrsClientService("http://localhost:" + server.getAddress().getPort(), "token", true, false, 30);
+diff --git a/medical-backend/src/main/java/id/nevo/monitoring/RealMissionService.java b/medical-backend/src/main/java/id/nevo/monitoring/RealMissionService.java
+new file mode 100644
+index 0000000..d937305
+--- /dev/null
++++ b/medical-backend/src/main/java/id/nevo/monitoring/RealMissionService.java
+@@ -0,0 +1,252 @@
++package id.nevo.monitoring;
++
++import org.slf4j.Logger;
++import org.slf4j.LoggerFactory;
++import org.springframework.beans.factory.annotation.Value;
++import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
++import org.springframework.http.HttpStatus;
++import org.springframework.jdbc.core.JdbcTemplate;
++import org.springframework.stereotype.Service;
++import org.springframework.web.server.ResponseStatusException;
++
++import java.time.Instant;
++import java.util.*;
++import java.util.concurrent.ExecutorService;
++import java.util.concurrent.Executors;
++
++/**
++ * Siklus misi pengantaran untuk robot FISIK (ROBOT_MODE=real). Menggantikan SimulatedRobotService
++ * di jalur manifest: satu manifest = satu perintah OP ke robot (tray_tasks berurutan), lalu
++ * status misi digerakkan oleh uplink robot yang diteruskan gateway ke /internal/robot-events:
++ *   ACK OP ENQUEUED -> EXECUTING + SIMRS IN_TRANSIT
++ *   GOAL_COMPLETE n -> misi ke-n SUCCEEDED + SIMRS ARRIVED_AT_ROOM (serah-terima tetap oleh manusia)
++ * Pemetaan: GOAL_COMPLETE.sequence = manifest_sequence (robot menomori tray_tasks dari 1).
++ */
++@Service
++@ConditionalOnExpression("'${nevo.robot.mode:sim}' == 'real'")
++public class RealMissionService {
++    private static final Logger log = LoggerFactory.getLogger(RealMissionService.class);
++    private static final String ACTIVE = "('BACKEND_ACCEPTED','ROBOT_ACKNOWLEDGED','EXECUTING')";
++
++    /** Satu tujuan hasil validasi MissionPlanningService. */
++    public record Stop(UUID waypointId, String roomCode, String bedId, String patientMrn, String requestCode,
++                       Integer compartmentNo, Instant placementUpdatedAt, String source) { }
++
++    private final JdbcTemplate db;
++    private final InternalPublisher publisher;
++    private final SimrsClientService simrs;
++    private final int compartmentCount;
++    private final int missionTimeoutMinutes;
++    private final String homeBase;
++    private final ExecutorService simrsWriter = Executors.newSingleThreadExecutor(r -> {
++        Thread t = new Thread(r, "real-mission-simrs-writer");
++        t.setDaemon(true);
++        return t;
++    });
++
++    public RealMissionService(JdbcTemplate db, InternalPublisher publisher, SimrsClientService simrs,
++                              @Value("${nevo.robot.compartment-count:6}") int compartmentCount,
++                              @Value("${nevo.robot.mission-timeout-minutes:60}") int missionTimeoutMinutes,
++                              @Value("${nevo.robot.home-base:}") String homeBase) {
++        this.db = db;
++        this.publisher = publisher;
++        this.simrs = simrs;
++        this.compartmentCount = compartmentCount;
++        this.missionTimeoutMinutes = missionTimeoutMinutes;
++        this.homeBase = homeBase;
++    }
++
++    public int getCompartmentCount() { return compartmentCount; }
++
++    /** Robot harus terdaftar VERIFIED dan tidak sedang menjalankan misi lain. */
++    public void requireDispatchable(String robotId) {
++        List<String> reg = db.queryForList("SELECT registration_status FROM m_robot WHERE robot_id=?", String.class, robotId);
++        if (reg.isEmpty()) throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Robot tidak terdaftar");
++        if (!"VERIFIED".equals(reg.get(0))) throw new ResponseStatusException(HttpStatus.CONFLICT, "Robot belum terverifikasi untuk operasi fisik");
++        // Misi macet (robot mati/restart) tidak boleh mengunci robot selamanya.
++        db.update("UPDATE t_mission SET status='UNKNOWN', updated_at=now() WHERE robot_id=? AND status IN " + ACTIVE +
++                " AND updated_at < now() - make_interval(mins => ?)", robotId, missionTimeoutMinutes);
++        Integer busy = db.queryForObject("SELECT count(*) FROM t_mission WHERE robot_id=? AND status IN " + ACTIVE, Integer.class, robotId);
++        if (busy != null && busy > 0) throw new ResponseStatusException(HttpStatus.CONFLICT, "Robot masih menjalankan misi sebelumnya");
++    }
++
++    /** Buat misi tiap tujuan lalu kirim SATU perintah OP ke robot lewat gateway. */
++    public Map<String, Object> dispatchManifest(String robotId, List<Stop> stops, String userName, UUID manifestId) {
++        List<Map<String, Object>> missions = new ArrayList<>();
++        List<Map<String, Object>> trayTasks = new ArrayList<>();
++        List<UUID> ids = new ArrayList<>();
++        for (int i = 0; i < stops.size(); i++) {
++            Stop s = stops.get(i);
++            Map<String, Object> wp = db.queryForList("SELECT name, x, y, yaw FROM m_waypoint WHERE id=?", s.waypointId())
++                    .stream().findFirst().orElseThrow(() -> new IllegalArgumentException("Waypoint tidak ditemukan"));
++            UUID missionId = UUID.randomUUID();
++            ids.add(missionId);
++            db.update("INSERT INTO t_mission(id, robot_id, waypoint_id, room_code, created_by, status, request_code, simulated, manifest_id, manifest_sequence, patient_mrn, bed_id, placement_updated_at, mission_source, created_at, updated_at) " +
++                            "VALUES (?, ?, ?, ?, ?, 'SUBMITTED', ?, false, ?, ?, ?, ?, ?, ?, now(), now())",
++                    missionId, robotId, s.waypointId(), s.roomCode(), userName, s.requestCode(), manifestId, i + 1, s.patientMrn(), s.bedId(),
++                    s.placementUpdatedAt() == null ? null : java.sql.Timestamp.from(s.placementUpdatedAt()), s.source());
++            event(missionId, "SUBMITTED", "OPERATOR", "Manifest diserahkan ke backend oleh " + userName);
++            db.update("UPDATE t_mission SET status='BACKEND_ACCEPTED', updated_at=now() WHERE id=?", missionId);
++            event(missionId, "BACKEND_ACCEPTED", "BACKEND", "Manifest divalidasi; menunggu robot fisik " + robotId);
++            if (s.compartmentNo() != null) {
++                db.update("INSERT INTO t_delivery_compartment(id, mission_id, compartment_no, patient_mrn, filled_at) VALUES (?, ?, ?, ?, now())",
++                        UUID.randomUUID(), missionId, s.compartmentNo(), s.patientMrn());
++            }
++            Map<String, Object> dest = new LinkedHashMap<>();
++            dest.put("x", ((Number) wp.get("x")).doubleValue());
++            dest.put("y", ((Number) wp.get("y")).doubleValue());
++            dest.put("yaw", ((Number) wp.get("yaw")).doubleValue());
++            trayTasks.add(Map.of("tray", s.compartmentNo() == null ? 0 : s.compartmentNo(), "dest", dest, "goalId", i + 1));
++            Map<String, Object> m = new LinkedHashMap<>();
++            m.put("missionId", missionId);
++            m.put("robotId", robotId);
++            m.put("targetWaypoint", wp.get("name"));
++            m.put("targetCoordinates", dest);
++            m.put("compartmentNo", s.compartmentNo());
++            m.put("status", "BACKEND_ACCEPTED");
++            m.put("simulated", false);
++            missions.add(m);
++        }
++
++        Map<String, Object> params = new LinkedHashMap<>();
++        params.put("trayTasks", trayTasks);
++        Map<String, Object> home = parseHomeBase(homeBase);
++        if (home != null) params.put("homeBase", home);
++        try {
++            publisher.publishCommandChecked(Map.of(
++                    "commandId", UUID.randomUUID(), "robotId", robotId, "command", "CMD_DISPATCH_OP",
++                    "issuedBy", userName == null ? "" : userName, "params", params));
++        } catch (ResponseStatusException e) {
++            for (UUID id : ids) {
++                db.update("UPDATE t_mission SET status='FAILED', updated_at=now() WHERE id=?", id);
++                event(id, "FAILED", "GATEWAY", "Perintah OP tidak sampai ke robot: " + e.getReason());
++            }
++            throw e;
++        }
++        for (UUID id : ids) event(id, "BACKEND_ACCEPTED", "GATEWAY", "Perintah OP dikirim ke robot " + robotId + " (menunggu ACK)");
++        return Map.of("manifestId", manifestId, "status", "ACCEPTED", "missions", missions);
++    }
++
++    /** Uplink robot (diteruskan gateway). Idempotent: hanya transisi dari status yang sesuai yang diproses. */
++    public void onRobotEvent(String code, Map<String, Object> data) {
++        if (code == null || data == null) return;
++        String robotId = Objects.toString(data.get("robot_id"), "");
++        if (robotId.isBlank()) return;
++        switch (code) {
++            case "ACK" -> {
++                if (!"OP".equals(data.get("command_id"))) return;
++                String status = Objects.toString(data.get("status"), "");
++                if ("ENQUEUED".equals(status)) started(robotId);
++                else if ("REJECTED".equals(status) || "IGNORED".equals(status)) failPending(robotId, "Robot menolak OP (" + status + ")");
++            }
++            case "GOAL_COMPLETE" -> {
++                Object seq = data.get("sequence");
++                if (seq instanceof Number n && n.intValue() >= 1) arrived(robotId, n.intValue());
++            }
++            case "ERROR" -> {
++                String msg = Objects.toString(data.get("error_message"), "");
++                if (msg.startsWith("OP rejected")) failPending(robotId, "Robot menolak OP: " + msg);
++                else note(robotId, "Robot melaporkan error " + data.get("error_code") + ": " + msg);
++            }
++            case "ROBOT_STUCK" -> note(robotId, "Robot tersangkut: " + data.get("reason"));
++            default -> { }
++        }
++    }
++
++    /** Operator membatalkan: semua misi aktif robot jadi CANCELLED dan SIMRS diberi tahu. */
++    public void cancelActive(String robotId, String userName) {
++        for (Map<String, Object> m : activeMissions(robotId, ACTIVE)) {
++            UUID id = (UUID) m.get("id");
++            db.update("UPDATE t_mission SET status='CANCELLED', updated_at=now() WHERE id=?", id);
++            event(id, "CANCELLED", "OPERATOR", "Misi dibatalkan oleh " + userName);
++            broadcast(m, "CANCELLED", "Misi dibatalkan oleh operator");
++            postSimrs(id, (String) m.get("request_code"), "CANCELLED", "Misi pengantaran dibatalkan oleh operator " + userName, null);
++        }
++    }
++
++    private void started(String robotId) {
++        for (Map<String, Object> m : activeMissions(robotId, "('BACKEND_ACCEPTED','ROBOT_ACKNOWLEDGED')")) {
++            UUID id = (UUID) m.get("id");
++            db.update("UPDATE t_mission SET status='ROBOT_ACKNOWLEDGED', updated_at=now() WHERE id=? AND status='BACKEND_ACCEPTED'", id);
++            event(id, "ROBOT_ACKNOWLEDGED", "ROBOT", "Robot " + robotId + " menerima rute");
++            db.update("UPDATE t_mission SET status='EXECUTING', updated_at=now() WHERE id=?", id);
++            event(id, "EXECUTING", "ROBOT", "Robot memulai navigasi");
++            broadcast(m, "EXECUTING", "Robot memulai perjalanan");
++            postSimrs(id, (String) m.get("request_code"), "IN_TRANSIT", "Robot " + robotId + " dalam perjalanan ke ruang " + m.get("room_code"), null);
++        }
++    }
++
++    private void arrived(String robotId, int sequence) {
++        List<Map<String, Object>> rows = db.queryForList(
++                "SELECT m.id, m.request_code, m.room_code, (SELECT dc.compartment_no FROM t_delivery_compartment dc WHERE dc.mission_id=m.id ORDER BY dc.compartment_no LIMIT 1) AS compartment_no " +
++                        "FROM t_mission m WHERE m.robot_id=? AND m.status='EXECUTING' AND m.manifest_sequence=? ORDER BY m.created_at DESC LIMIT 1", robotId, sequence);
++        if (rows.isEmpty()) { log.info("GOAL_COMPLETE seq={} robot={} tanpa misi EXECUTING; diabaikan", sequence, robotId); return; }
++        Map<String, Object> m = rows.get(0);
++        UUID id = (UUID) m.get("id");
++        if (db.update("UPDATE t_mission SET status='SUCCEEDED', updated_at=now() WHERE id=? AND status='EXECUTING'", id) == 0) return;
++        event(id, "SUCCEEDED", "ROBOT", "Robot tiba di tujuan; menunggu serah-terima oleh manusia");
++        broadcast(m, "SUCCEEDED", "Robot berhasil tiba di lokasi tujuan");
++        Integer compartment = m.get("compartment_no") instanceof Number n ? n.intValue() : null;
++        postSimrs(id, (String) m.get("request_code"), "ARRIVED_AT_ROOM", "Robot " + robotId + " tiba di ruang " + m.get("room_code") + "; serah-terima oleh manusia.", compartment);
++    }
++
++    private void failPending(String robotId, String reason) {
++        for (Map<String, Object> m : activeMissions(robotId, "('BACKEND_ACCEPTED','ROBOT_ACKNOWLEDGED')")) {
++            UUID id = (UUID) m.get("id");
++            db.update("UPDATE t_mission SET status='FAILED', updated_at=now() WHERE id=?", id);
++            event(id, "FAILED", "ROBOT", reason);
++            broadcast(m, "FAILED", reason);
++        }
++    }
++
++    private void note(String robotId, String message) {
++        for (Map<String, Object> m : activeMissions(robotId, "('EXECUTING')")) event((UUID) m.get("id"), "EXECUTING", "ROBOT", message);
++    }
++
++    private List<Map<String, Object>> activeMissions(String robotId, String statusList) {
++        return db.queryForList("SELECT id, request_code, room_code FROM t_mission WHERE robot_id=? AND status IN " + statusList + " ORDER BY manifest_sequence NULLS LAST, created_at", robotId);
++    }
++
++    private void event(UUID missionId, String status, String source, String message) {
++        db.update("INSERT INTO h_mission_event(mission_id, status, source, message) VALUES (?, ?::mission_status, ?, ?)", missionId, status, source, message);
++    }
++
++    private void broadcast(Map<String, Object> mission, String status, String message) {
++        String room = (String) mission.get("room_code");
++        String ward = "";
++        if (room != null && !room.isBlank()) {
++            try {
++                List<String> w = db.queryForList("SELECT ward_code FROM m_simrs_room_directory WHERE room_code=?", String.class, room);
++                if (!w.isEmpty() && w.get(0) != null) ward = w.get(0);
++            } catch (Exception ignored) { /* direktori belum tersedia: wardCode kosong => tidak dirutekan */ }
++        }
++        String rc = mission.get("request_code") == null ? "" : mission.get("request_code").toString();
++        publisher.publish("MISSION_EVENT", Map.of("missionId", mission.get("id"), "status", status, "message", message,
++                "simulated", false, "requestCode", rc, "wardCode", ward));
++    }
++
++    private void postSimrs(UUID missionId, String requestCode, String toStatus, String note, Integer compartmentNo) {
++        if (requestCode == null || requestCode.isBlank() || !simrs.isWriteLive()) return;
++        simrsWriter.submit(() -> {
++            try {
++                String key = "m:" + missionId.toString().replace("-", "") + ":" + toStatus;
++                Map<String, Object> r = simrs.postDeliveryStatus(requestCode, toStatus, note, compartmentNo, key);
++                log.info("POST delivery-status {} requestCode={} -> {}", toStatus, requestCode, r.get("httpStatus"));
++            } catch (Exception ex) {
++                log.warn("Push status SIMRS ({}) gagal: {}", toStatus, ex.getClass().getSimpleName());
++            }
++        });
++    }
++
++    /** "x,y,yaw" (meter,meter,radian) -> peta; kosong/rusak -> null (robot tidak diperintah pulang otomatis). */
++    static Map<String, Object> parseHomeBase(String raw) {
++        if (raw == null || raw.isBlank()) return null;
++        String[] p = raw.split(",");
++        if (p.length != 3) return null;
++        try {
++            return Map.of("x", Double.parseDouble(p[0].trim()), "y", Double.parseDouble(p[1].trim()), "yaw", Double.parseDouble(p[2].trim()));
++        } catch (NumberFormatException e) {
++            return null;
++        }
++    }
++}
+diff --git a/medical-backend/src/main/java/id/nevo/monitoring/RobotEventApi.java b/medical-backend/src/main/java/id/nevo/monitoring/RobotEventApi.java
+new file mode 100644
+index 0000000..3b8c216
+--- /dev/null
++++ b/medical-backend/src/main/java/id/nevo/monitoring/RobotEventApi.java
+@@ -0,0 +1,38 @@
++package id.nevo.monitoring;
++
++import org.springframework.beans.factory.ObjectProvider;
++import org.springframework.beans.factory.annotation.Value;
++import org.springframework.http.HttpStatus;
++import org.springframework.web.bind.annotation.*;
++import org.springframework.web.server.ResponseStatusException;
++
++import java.nio.charset.StandardCharsets;
++import java.security.MessageDigest;
++import java.util.Map;
++
++/** Uplink status robot dari gateway medical-ws (rahasia internal, bukan sesi pengguna). */
++@RestController
++@RequestMapping("/internal/robot-events")
++public class RobotEventApi {
++    private final String secret;
++    private final RealMissionService missions;
++
++    public RobotEventApi(@Value("${nevo.internal-publish.secret:}") String secret, ObjectProvider<RealMissionService> missions) {
++        this.secret = secret;
++        this.missions = missions.getIfAvailable();
++    }
++
++    @PostMapping
++    @SuppressWarnings("unchecked")
++    public Map<String, Object> receive(@RequestHeader(value = "X-Internal-Secret", required = false) String supplied,
++                                       @RequestBody Map<String, Object> frame) {
++        if (secret == null || secret.isBlank() || supplied == null ||
++                !MessageDigest.isEqual(secret.getBytes(StandardCharsets.UTF_8), supplied.getBytes(StandardCharsets.UTF_8))) {
++            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED);
++        }
++        if (missions == null) return Map.of("handled", false, "reason", "ROBOT_MODE bukan real");
++        Object data = frame.get("data");
++        missions.onRobotEvent(String.valueOf(frame.get("code")), data instanceof Map<?, ?> m ? (Map<String, Object>) m : null);
++        return Map.of("handled", true);
++    }
++}
+diff --git a/medical-backend/src/test/java/id/nevo/monitoring/RealMissionServiceTest.java b/medical-backend/src/test/java/id/nevo/monitoring/RealMissionServiceTest.java
+new file mode 100644
+index 0000000..e4cc42f
+--- /dev/null
++++ b/medical-backend/src/test/java/id/nevo/monitoring/RealMissionServiceTest.java
+@@ -0,0 +1,132 @@
++package id.nevo.monitoring;
++
++import org.junit.jupiter.api.Test;
++import org.mockito.ArgumentCaptor;
++import org.springframework.http.HttpStatus;
++import org.springframework.jdbc.core.JdbcTemplate;
++import org.springframework.web.server.ResponseStatusException;
++
++import java.util.List;
++import java.util.Map;
++import java.util.UUID;
++
++import static org.junit.jupiter.api.Assertions.*;
++import static org.mockito.ArgumentMatchers.*;
++import static org.mockito.Mockito.*;
++
++class RealMissionServiceTest {
++    private final JdbcTemplate db = mock(JdbcTemplate.class);
++    private final InternalPublisher publisher = mock(InternalPublisher.class);
++    private final SimrsClientService simrs = mock(SimrsClientService.class);
++    private final RealMissionService service = new RealMissionService(db, publisher, simrs, 6, 60, "0.5, -1.0, 1.57");
++    private final UUID missionId = UUID.randomUUID();
++
++    @Test
++    void parsesHomeBaseOrIgnoresBrokenValue() {
++        assertEquals(Map.of("x", 0.5, "y", -1.0, "yaw", 1.57), RealMissionService.parseHomeBase("0.5, -1.0, 1.57"));
++        assertNull(RealMissionService.parseHomeBase(""));
++        assertNull(RealMissionService.parseHomeBase("1,2"));
++        assertNull(RealMissionService.parseHomeBase("a,b,c"));
++    }
++
++    @Test
++    void goalCompleteMarksMissionSucceededAndReportsArrivalWithCompartment() {
++        when(simrs.isWriteLive()).thenReturn(true);
++        when(simrs.postDeliveryStatus(any(), any(), any(), any(), any())).thenReturn(Map.of("httpStatus", 200));
++        when(db.queryForList(contains("manifest_sequence=?"), eq("TFRB5"), eq(2)))
++                .thenReturn(List.of(Map.of("id", missionId, "request_code", "DELIV-1", "room_code", "R-1", "compartment_no", 3)));
++        when(db.update(contains("status='SUCCEEDED'"), eq(missionId))).thenReturn(1);
++
++        service.onRobotEvent("GOAL_COMPLETE", Map.of("robot_id", "TFRB5", "sequence", 2));
++
++        verify(simrs, timeout(2000)).postDeliveryStatus(eq("DELIV-1"), eq("ARRIVED_AT_ROOM"), anyString(), eq(3), contains(":ARRIVED_AT_ROOM"));
++        verify(publisher).publish(eq("MISSION_EVENT"), argThat(m -> m instanceof Map<?, ?> x && "SUCCEEDED".equals(x.get("status"))));
++    }
++
++    @Test
++    void goalCompleteWithoutExecutingMissionIsIgnored() {
++        when(db.queryForList(contains("manifest_sequence=?"), eq("TFRB5"), eq(1))).thenReturn(List.of());
++        service.onRobotEvent("GOAL_COMPLETE", Map.of("robot_id", "TFRB5", "sequence", 1));
++        verify(simrs, never()).postDeliveryStatus(any(), any(), any(), any(), any());
++        verify(db, never()).update(contains("SUCCEEDED"), any(Object[].class));
++    }
++
++    @Test
++    void homeGoalCompleteIsIgnored() {
++        service.onRobotEvent("GOAL_COMPLETE", Map.of("robot_id", "TFRB5", "sequence", -1));
++        verifyNoInteractions(simrs);
++        verify(db, never()).queryForList(anyString(), any(Object[].class));
++    }
++
++    @Test
++    void opEnqueuedAckStartsPendingMissionsAndReportsInTransit() {
++        when(simrs.isWriteLive()).thenReturn(true);
++        when(simrs.postDeliveryStatus(any(), any(), any(), any(), any())).thenReturn(Map.of("httpStatus", 200));
++        when(db.queryForList(contains("status IN ('BACKEND_ACCEPTED','ROBOT_ACKNOWLEDGED')"), eq("TFRB5")))
++                .thenReturn(List.of(Map.of("id", missionId, "request_code", "DELIV-9", "room_code", "R-2")));
++
++        service.onRobotEvent("ACK", Map.of("robot_id", "TFRB5", "command_id", "OP", "status", "ENQUEUED"));
++
++        verify(db).update(contains("status='EXECUTING'"), eq(missionId));
++        verify(simrs, timeout(2000)).postDeliveryStatus(eq("DELIV-9"), eq("IN_TRANSIT"), anyString(), isNull(), anyString());
++    }
++
++    @Test
++    void ackForOtherCommandsDoesNothing() {
++        service.onRobotEvent("ACK", Map.of("robot_id", "TFRB5", "command_id", "INTERRUPT", "status", "ACCEPTED"));
++        verifyNoInteractions(simrs);
++        verify(db, never()).update(anyString(), any(Object[].class));
++    }
++
++    @Test
++    void dispatchSendsOneOpCommandWithOrderedTrayTasksAndHomeBase() {
++        UUID wp = UUID.randomUUID();
++        when(db.queryForList(contains("FROM m_waypoint"), eq(wp))).thenReturn(List.of(Map.of("name", "Bed A", "x", 1.5, "y", 2.0, "yaw", 0.0)));
++        var stops = List.of(
++                new RealMissionService.Stop(wp, "R-1", "BED-1", "MRN-1", "DELIV-1", 0, null, "SIMRS_REQUEST"),
++                new RealMissionService.Stop(wp, "R-1", "BED-2", "MRN-2", "DELIV-2", 1, null, "SIMRS_REQUEST"));
++
++        Map<String, Object> result = service.dispatchManifest("TFRB5", stops, "op", UUID.randomUUID());
++
++        assertEquals("ACCEPTED", result.get("status"));
++        ArgumentCaptor<Object> cmd = ArgumentCaptor.forClass(Object.class);
++        verify(publisher).publishCommandChecked(cmd.capture());
++        @SuppressWarnings("unchecked") Map<String, Object> c = (Map<String, Object>) cmd.getValue();
++        assertEquals("CMD_DISPATCH_OP", c.get("command"));
++        assertEquals("TFRB5", c.get("robotId"));
++        @SuppressWarnings("unchecked") Map<String, Object> params = (Map<String, Object>) c.get("params");
++        assertEquals(2, ((List<?>) params.get("trayTasks")).size());
++        assertEquals(Map.of("x", 0.5, "y", -1.0, "yaw", 1.57), params.get("homeBase"));
++    }
++
++    @Test
++    void gatewayRejectionFailsAllMissionsAndPropagates() {
++        UUID wp = UUID.randomUUID();
++        when(db.queryForList(contains("FROM m_waypoint"), eq(wp))).thenReturn(List.of(Map.of("name", "Bed A", "x", 1.0, "y", 1.0, "yaw", 0.0)));
++        doThrow(new ResponseStatusException(HttpStatus.CONFLICT, "Gateway menolak command")).when(publisher).publishCommandChecked(any());
++        var stops = List.of(new RealMissionService.Stop(wp, "R-1", "BED-1", "MRN-1", null, 0, null, "MANUAL_SIMRS"));
++
++        assertThrows(ResponseStatusException.class, () -> service.dispatchManifest("TFRB5", stops, "op", UUID.randomUUID()));
++        verify(db).update(contains("status='FAILED'"), any(UUID.class));
++    }
++
++    @Test
++    void unverifiedRobotCannotBeDispatched() {
++        when(db.queryForList(contains("registration_status"), eq(String.class), eq("TFRB5"))).thenReturn(List.of("DRAFT"));
++        ResponseStatusException ex = assertThrows(ResponseStatusException.class, () -> service.requireDispatchable("TFRB5"));
++        assertEquals(409, ex.getStatusCode().value());
++    }
++
++    @Test
++    void cancelMarksActiveMissionsCancelledAndNotifiesSimrs() {
++        when(simrs.isWriteLive()).thenReturn(true);
++        when(simrs.postDeliveryStatus(any(), any(), any(), any(), any())).thenReturn(Map.of("httpStatus", 200));
++        when(db.queryForList(contains("status IN ('BACKEND_ACCEPTED','ROBOT_ACKNOWLEDGED','EXECUTING')"), eq("TFRB5")))
++                .thenReturn(List.of(Map.of("id", missionId, "request_code", "DELIV-3", "room_code", "R-1")));
++
++        service.cancelActive("TFRB5", "operator");
++
++        verify(db).update(contains("status='CANCELLED'"), eq(missionId));
++        verify(simrs, timeout(2000)).postDeliveryStatus(eq("DELIV-3"), eq("CANCELLED"), anyString(), isNull(), anyString());
++    }
++}

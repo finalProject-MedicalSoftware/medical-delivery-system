@@ -191,7 +191,7 @@ curl -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8083/healthz           # 
 ```
 
 Lalu buka dashboard, login ADMIN, ON-kan relay di `/settings`, ajukan pengantaran di SIMRS, ikuti status
-sampai `MOCK_ARRIVED_AT_ROOM`, dan tutup lewat scan QR `/scan/{mrn}`.
+sampai `ARRIVED_AT_ROOM`, dan tutup lewat scan QR `/scan/{mrn}`.
 
 ## Uji robot fisik (downlink, ROBOT_MODE=real)
 

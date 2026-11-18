@@ -475,7 +475,7 @@
                         ],
                         "body": {
                             "mode": "raw",
-                            "raw": "{\"requestCode\":\"REQ-…\",\"toStatus\":\"MOCK_IN_TRANSIT\",\"note\":\"Departed from dock\",\"compartmentNo\":3,\"idempotencyKey\":\"nevomock-deliv-0001-step1\"}"
+                            "raw": "{\"requestCode\":\"REQ-…\",\"toStatus\":\"IN_TRANSIT\",\"note\":\"Departed from dock\",\"compartmentNo\":3,\"idempotencyKey\":\"nevomock-deliv-0001-step1\"}"
                         },
                         "url": "{{simrs}}/api/v1/monitoring/delivery-status"
                     }

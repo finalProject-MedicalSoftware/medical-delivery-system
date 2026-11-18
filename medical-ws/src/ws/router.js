@@ -6,6 +6,10 @@ const kafkaProducer = require('../kafka/producer');
 const { TOPICS } = require('../kafka/config');
 const { generateMessageId } = require('../utils/uuid');
 const registry = require('./registry-client');
+const backendEvents = require('./backend-events');
+const { uiFrame, commandFrames } = require('../core/robot-frames');
+
+const teleopCfg = () => ({ maxLinear: config.TELEOP_MAX_LINEAR, maxAngular: config.TELEOP_MAX_ANGULAR });
 
 function send(socket, payload) {
   if (socket.readyState !== socket.OPEN) return false;
@@ -99,6 +103,7 @@ async function handleUplink(socket, msg) {
   };
   await kafkaProducer.produce(TOPICS.SIMRS_ROBOT_EVENTS, enriched, robotId);
   broadcastToUis(enriched, robotId);
+  backendEvents.forward(enriched);
 }
 
 /** Relay uplink robot ke sesi UI: sesi SI-UI menerima SEMUA (by identity),
@@ -169,15 +174,20 @@ async function handleUIDownlink(socket, msg) {
   }
   const target = resolveTarget(msg);
   if (!target) return send(socket, { code: 'ERROR', data: { error: 'ROBOT_ID_REQUIRED' } });
-  if (!isTargetedStop(msg.code, msg.data)) {
+  if (!config.ALLOW_ROBOT_MOTION && !isTargetedStop(msg.code, msg.data)) {
     return send(socket, { code: 'ERROR', data: { error: 'DEVICE_AUTH_UNAVAILABLE' } });
   }
   const eligible = await registry.lookup(target);
   if (!eligible.ok) return send(socket, { code: 'ERROR', data: { error: eligible.reason } });
   const sock = sessionManager.getRobot(target);
   if (!sock) return send(socket, { code: 'ERROR', data: { error: 'ROBOT_OFFLINE', robot_id: target } });
-  const delivered = send(sock, { code: msg.code, data: { ...msg.data, robot_id: target } });
-  send(socket, { code: 'STOP_DELIVERY', data: { robot_id: target, outcome: delivered ? 'SENT_UNCONFIRMED' : 'UNKNOWN' } });
+  const frame = uiFrame(msg.code, { ...msg.data, robot_id: target }, teleopCfg());
+  if (!frame) return send(socket, { code: 'ERROR', data: { error: 'INVALID_PARAMS', robot_id: target } });
+  const delivered = send(sock, frame);
+  send(socket, {
+    code: isTargetedStop(msg.code, msg.data) ? 'STOP_DELIVERY' : 'DOWNLINK_SENT',
+    data: { robot_id: target, sent: msg.code, outcome: delivered ? 'SENT_UNCONFIRMED' : 'UNKNOWN' }
+  });
 }
 
 /**
@@ -190,23 +200,22 @@ async function deliverRobotCommand(envelope) {
   const data = envelope.data || {};
   const robotId = data.robotId || data.robot_id;
   if (typeof robotId !== 'string' || !robotId.trim()) return { accepted: false, reason: 'ROBOT_ID_REQUIRED' };
-  if (!new Set(['CMD_CANCEL_MISSION','CMD_RETURN_TO_DOCK','CMD_TELEOP_DRIVE','CMD_SET_SPEED']).has(data.command)) {
-    return { accepted: false, reason: 'CODE_NOT_ALLOWED' };
-  }
+  // Terjemahkan ke frame TIFA yang dimengerti robot (src/core/robot-frames.js).
+  const built = commandFrames(data.command, data.params, robotId, data.commandId, teleopCfg());
+  if (built.error) return { accepted: false, reason: built.error };
   // Administrative eligibility is checked even though hardware possession cannot yet be proved.
   const eligible = await registry.lookup(robotId);
   if (!eligible.ok) return { accepted: false, reason: eligible.reason };
-  if (data.command !== 'CMD_TELEOP_DRIVE' ||
-      !data.params || data.params.linear !== 0 || data.params.angular !== 0) {
+  // Tanpa ALLOW_ROBOT_MOTION hanya "stop nol" yang boleh (identitas fisik belum terautentikasi).
+  if (!config.ALLOW_ROBOT_MOTION &&
+      (data.command !== 'CMD_TELEOP_DRIVE' || !data.params || data.params.linear !== 0 || data.params.angular !== 0)) {
     return { accepted: false, reason: 'DEVICE_AUTH_UNAVAILABLE' };
   }
   const socket = sessionManager.getRobot(robotId);
   if (socket) {
-    const frame = {
-      code: data.command,
-      data: { ...(data.params || {}), robot_id: robotId, command_id: data.commandId }
-    };
-    const sent = send(socket, frame);
+    let sent = send(socket, built.frames[0]);
+    // Frame berikutnya (mis. INTERRUPT lalu INTERRUPT_CONFIRM) diberi jeda agar robot sempat berpindah mode.
+    built.frames.slice(1).forEach((f, i) => setTimeout(() => send(socket, f), 400 * (i + 1)));
     return { accepted: sent, reason: sent ? 'SENT_UNCONFIRMED' : 'ROBOT_OFFLINE' };
   }
   logger.warn(`[Router] downlink ditolak, robot tidak terhubung: ${robotId}`);

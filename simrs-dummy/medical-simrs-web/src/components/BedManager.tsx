@@ -55,7 +55,7 @@ export default function BedManager({
     <div className="space-y-2">
       <div className="flex flex-wrap gap-1">
         {beds.length === 0 && (
-          <span className="text-[11px] text-slate-400">Belum ada bed</span>
+          <span className="text-xs text-slate-400">Belum ada bed</span>
         )}
         {beds.map((bed) => (
           <span
@@ -67,7 +67,7 @@ export default function BedManager({
                   ? "Dihuni (tanpa tautan pasien)"
                   : "Kosong"
             }
-            className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] font-semibold ${
+            className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-xs font-semibold ${
               bed.isOccupied || bed.occupantName
                 ? "bg-rose-100 text-rose-700"
                 : "bg-emerald-100 text-emerald-800"
@@ -135,8 +135,8 @@ export default function BedManager({
         </button>
       </div>
 
-      {isPending && <p className="text-[11px] text-slate-400">Memproses…</p>}
-      {error && <p className="text-[11px] text-rose-600">{error}</p>}
+      {isPending && <p className="text-xs text-slate-400">Memproses…</p>}
+      {error && <p className="text-xs text-rose-600">{error}</p>}
     </div>
   );
 }

@@ -10,6 +10,7 @@ export const patientSchema = z.object({
   notes: z.string().optional().nullable(),
   diagnosis: z.string().max(200, "Diagnosis maksimal 200 karakter").optional().nullable(),
   isInfectious: z.boolean().default(false),
+  allergies: z.array(z.string().max(60, "Nama alergi maksimal 60 karakter")).max(20, "Maksimal 20 alergi").default([]),
 });
 
 export const roomSchema = z.object({
@@ -36,6 +37,8 @@ export const medicineSchema = z.object({
   unit: z.string().min(1, "Satuan obat wajib diisi"),
   category: z.string().min(1, "Kategori obat wajib diisi"),
   stock: z.number().int().nonnegative("Stok tidak boleh negatif").default(0),
+  minStock: z.number().int().nonnegative("Ambang stok tidak boleh negatif").default(20),
+  handling: z.enum(["NONE", "COLD_CHAIN", "CONTROLLED", "HIGH_ALERT"]).default("NONE"),
 });
 
 export const prescriptionItemSchema = z.object({
@@ -55,6 +58,7 @@ export const createPrescriptionSchema = z
       .array(z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, "Format jam harus HH:mm"))
       .max(6, "Maksimal 6 jadwal minum")
       .default([]),
+    priority: z.enum(["ROUTINE", "URGENT", "STAT"]).default("ROUTINE"),
     repeatMode: z.enum(["DAILY", "INTERVAL"]).default("DAILY"),
     intervalDays: z.coerce
       .number()
@@ -85,6 +89,7 @@ export const verifyPrescriptionSchema = z.object({
 );
 
 export const createDeliveryRequestSchema = z.object({
+  robotReason: z.string().max(300, "Alasan maksimal 300 karakter").optional().nullable(),
   prescriptionId: z.string().min(1, "Resep wajib dipilih"),
   roomCode: z.string().min(1, "Kode ruang tujuan wajib diisi"),
   notes: z.string().optional().nullable(),

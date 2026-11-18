@@ -23,16 +23,20 @@ const IDEMPOTENCY_KEY_ERROR =
   "idempotencyKey harus string 1-64 karakter dari [A-Za-z0-9._:-]";
 
 // Transisi yang boleh dilempar monitoring = tabel utama di
-// lib/delivery-status MINUS edge ke MOCK_HANDOVER_CONFIRMED (serah-terima
+// lib/delivery-status MINUS edge ke HANDOVER_CONFIRMED (serah-terima
 // hanya dari halaman scan /scan/[mrn] oleh manusia yang login).
-// MOCK_ARRIVED_AT_ROOM jadi punya daftar kosong -> lemparan apapun = 422.
-const MONITORING_TRANSITIONS: Partial<Record<DeliveryStatus, DeliveryStatus[]>> =
-  Object.fromEntries(
+// ARRIVED_AT_ROOM jadi punya daftar kosong -> lemparan apapun = 422.
+const MONITORING_TRANSITIONS: Partial<Record<DeliveryStatus, DeliveryStatus[]>> = {
+  ...Object.fromEntries(
     Object.entries(DELIVERY_TRANSITIONS).map(([from, tos]) => [
       from,
-      (tos ?? []).filter((to) => to !== "MOCK_HANDOVER_CONFIRMED"),
+      (tos ?? []).filter((to) => to !== "HANDOVER_CONFIRMED"),
     ])
-  ) as Partial<Record<DeliveryStatus, DeliveryStatus[]>>;
+  ) as Partial<Record<DeliveryStatus, DeliveryStatus[]>>,
+  // "Kirim ke Robot" adalah keputusan petugas SIMRS; monitoring tidak boleh memulai/membatalkan
+  // pengantaran yang belum dikirim.
+  DELIVERY_REQUESTED: [],
+};
 
 function duplicateResponse(
   requestCode: string,
@@ -61,7 +65,7 @@ export async function POST(req: NextRequest) {
 
   const {
     requestCode,
-    toStatus,
+    toStatus: toStatusRaw,
     note,
     compartmentNo,
     idempotencyKey: idempotencyKeyRaw,
@@ -72,6 +76,9 @@ export async function POST(req: NextRequest) {
     compartmentNo?: unknown;
     idempotencyKey?: unknown;
   };
+
+  // Terima nama lama (MOCK_*) selama masa transisi konsumen; yang dipakai dan dikirim balik nama baru.
+  const toStatus = typeof toStatusRaw === "string" ? toStatusRaw.replace(/^MOCK_/, "") : toStatusRaw;
 
   if (typeof requestCode !== "string" || !requestCode) {
     return Response.json({ error: "requestCode wajib diisi" }, { status: 400 });
@@ -167,7 +174,6 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const isSimulation = to.startsWith("MOCK_");
   try {
     await prisma.$transaction(async (tx) => {
       await tx.deliveryRequest.update({
@@ -183,13 +189,12 @@ export async function POST(req: NextRequest) {
           statusAfter: to,
           idempotencyKey,
           actorId: null,
-          isSimulation,
+          isSimulation: false,
           notes: typeof note === "string" && note ? note : "Status dilempar dari monitoring",
           payload: {
             source: "monitoring",
-            ...(isSimulation ? { simulationLabel: "[MOCK]" } : {}),
             // Hanya disimpan saat lapor tiba; halaman scan membacanya dari sini.
-            ...(to === "MOCK_ARRIVED_AT_ROOM" && compartment !== null
+            ...(to === "ARRIVED_AT_ROOM" && compartment !== null
               ? { compartmentNo: compartment }
               : {}),
           },

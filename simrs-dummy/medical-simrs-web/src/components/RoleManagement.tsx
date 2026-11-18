@@ -53,7 +53,7 @@ export default function RoleManagement({
         {currentRoles.map((r) => (
           <span
             key={r}
-            className="inline-flex items-center gap-1 rounded bg-teal-100 py-0.5 pl-1.5 pr-1 font-mono text-[11px] font-medium text-teal-800"
+            className="inline-flex items-center gap-1 rounded bg-teal-100 py-0.5 pl-1.5 pr-1 font-mono text-xs font-medium text-teal-800"
           >
             {r}
             <button
@@ -99,8 +99,8 @@ export default function RoleManagement({
         </div>
       )}
 
-      {isPending && <p className="text-[11px] text-slate-400">Memproses…</p>}
-      {error && <p className="text-[11px] text-rose-600">{error}</p>}
+      {isPending && <p className="text-xs text-slate-400">Memproses…</p>}
+      {error && <p className="text-xs text-rose-600">{error}</p>}
     </div>
   );
 }

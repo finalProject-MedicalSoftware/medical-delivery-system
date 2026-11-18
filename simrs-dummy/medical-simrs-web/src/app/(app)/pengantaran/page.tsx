@@ -1,7 +1,7 @@
 import prisma from "@/lib/prisma";
 import { getCurrentUser } from "@/lib/auth";
 import Link from "next/link";
-import { Truck, Plus, Info } from "lucide-react";
+import { Truck, Plus } from "lucide-react";
 import { DeliveryStatus } from "@prisma/client";
 import { DELIVERY_STATUS_LABELS as STATUS_LABELS } from "@/lib/delivery-status";
 import {
@@ -69,7 +69,7 @@ export default async function PengantaranPage({
         icon={Truck}
         iconCls="text-teal-700"
         title="Permintaan Pengantaran"
-        subtitle="Status MOCK adalah simulasi - bukan pergerakan robot nyata"
+        subtitle="Pantau permintaan pengantaran obat dan statusnya"
         action={
           canCreate ? (
             <Link href="/pengantaran/baru" id="btn-ajukan-pengantaran" className={btnPrimary}>
@@ -79,14 +79,6 @@ export default async function PengantaranPage({
           ) : undefined
         }
       />
-
-      <div className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
-        <Info className="mt-0.5 h-4 w-4 shrink-0" />
-        <p>
-          Status bertanda <strong>[MOCK]</strong> adalah simulasi di aplikasi ini.
-          Pergerakan robot nyata dikontrol oleh Web Monitoring, bukan dari sini.
-        </p>
-      </div>
 
       {/* Status filter chips */}
       <div className="flex flex-wrap gap-2">
@@ -122,14 +114,14 @@ export default async function PengantaranPage({
           <table className="w-full text-sm">
             <thead className={theadCls}>
               <tr>
-                <th className="px-4 py-3 text-left">Kode</th>
-                <th className="px-4 py-3 text-left">Resep</th>
-                <th className="px-4 py-3 text-left">Ruang Tujuan</th>
-                <th className="px-4 py-3 text-left">Bed</th>
-                <th className="px-4 py-3 text-left">Pemohon</th>
-                <th className="px-4 py-3 text-center">Status</th>
-                <th className="px-4 py-3 text-left">Waktu</th>
-                <th className="px-4 py-3" />
+                <th scope="col" className="px-4 py-3 text-left">Kode</th>
+                <th scope="col" className="px-4 py-3 text-left">Resep</th>
+                <th scope="col" className="px-4 py-3 text-left">Ruang Tujuan</th>
+                <th scope="col" className="px-4 py-3 text-left">Bed</th>
+                <th scope="col" className="px-4 py-3 text-left">Pemohon</th>
+                <th scope="col" className="px-4 py-3 text-center">Status</th>
+                <th scope="col" className="px-4 py-3 text-left">Waktu</th>
+                <th scope="col" className="px-4 py-3" />
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">

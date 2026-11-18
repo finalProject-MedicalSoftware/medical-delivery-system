@@ -26,6 +26,7 @@ export async function createDeliveryRequestAction(
     prescriptionId: formData.get("prescriptionId") as string,
     roomCode: formData.get("roomCode") as string,
     notes: (formData.get("notes") as string) || null,
+    robotReason: ((formData.get("robotReason") as string) || "").trim() || null,
   };
 
   const parsed = createDeliveryRequestSchema.safeParse(raw);
@@ -46,11 +47,12 @@ export async function createDeliveryRequestAction(
     };
   }
 
-  // Gate: hanya pasien menular
-  if (!rx.patient.isInfectious) {
+  // Pengantaran robot utamanya untuk pasien menular. Pasien tidak menular
+  // tetap boleh, tetapi petugas wajib menulis alasannya (tercatat + dikirim ke robot/monitoring).
+  if (!rx.patient.isInfectious && (parsed.data.robotReason?.length ?? 0) < 5) {
     return {
       ok: false,
-      error: `Pengantaran hanya untuk pasien menular. Pasien ${rx.patient.fullName} (${rx.patient.mrn}) bukan pasien menular.`,
+      error: `Pasien ${rx.patient.fullName} (${rx.patient.mrn}) tidak menular. Tulis alasan pengantaran dengan robot (min. 5 karakter).`,
     };
   }
 
@@ -82,6 +84,7 @@ export async function createDeliveryRequestAction(
         roomCode: parsed.data.roomCode,
         requestedById: actor.userId,
         notes: parsed.data.notes,
+        robotReason: rx.patient.isInfectious ? null : parsed.data.robotReason,
         status: "DELIVERY_REQUESTED",
       },
     });
@@ -105,16 +108,17 @@ export async function createDeliveryRequestAction(
         entityId: delivery.id,
         action: "CREATE_DELIVERY",
         actorId: actor.userId,
-        details: { requestCode, prescriptionId: parsed.data.prescriptionId, roomCode: parsed.data.roomCode },
+        details: {
+          requestCode,
+          prescriptionId: parsed.data.prescriptionId,
+          roomCode: parsed.data.roomCode,
+          infectious: rx.patient.isInfectious,
+          robotReason: rx.patient.isInfectious ? null : parsed.data.robotReason,
+        },
       },
     });
 
-    // Outbox F2: event awal dikirim relay ke Web Monitoring (kontrak §2.2).
-    await enqueueOutbox(tx, {
-      requestCode,
-      from: null,
-      to: "DELIVERY_REQUESTED",
-    });
+    // Tidak ada event outbox di sini: monitoring baru tahu saat "Kirim ke Robot".
   });
 
   revalidatePath("/pengantaran");
@@ -155,9 +159,8 @@ export async function advanceDeliveryStatusAction(
         statusBefore: delivery.status,
         statusAfter: newStatus,
         actorId: actor.userId,
-        isSimulation: newStatus.startsWith("MOCK_"),
+        isSimulation: false,
         notes: notes ?? null,
-        payload: newStatus.startsWith("MOCK_") ? { simulationLabel: "[DEMO/MOCK]" } : undefined,
       },
     });
 
@@ -175,12 +178,13 @@ export async function advanceDeliveryStatusAction(
     // ponytail: compartmentNo tidak ikut di sini karena DeliveryRequest tidak
     // menyimpannya (hanya di payload event arrival, ditulis route monitoring) —
     // bila nanti SIMRS juga bisa mengumumkan kedatangan, resolve dari
-    // DeliveryEvent terakhir berstatus MOCK_ARRIVED_AT_ROOM seperti resolveHandover.
+    // DeliveryEvent terakhir berstatus ARRIVED_AT_ROOM seperti resolveHandover.
     await enqueueOutbox(tx, {
       requestCode: delivery.requestCode,
       from: delivery.status,
       to: newStatus,
       note: notes ?? null,
+      actor: actor.username,
     });
   });
 

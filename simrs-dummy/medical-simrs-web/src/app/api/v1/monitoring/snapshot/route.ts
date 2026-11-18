@@ -1,5 +1,7 @@
 import { NextRequest } from "next/server";
 import { checkMonitoringToken } from "@/lib/monitoring";
+import { MONITORING_VISIBLE_WHERE } from "@/lib/delivery-status";
+import { ITEMS_SELECT, mapItems } from "@/lib/delivery-items";
 
 /**
  * DRAF mock - SIMRS → Monitoring.
@@ -43,11 +45,12 @@ export async function GET(req: NextRequest) {
         bedId: true,
         diagnosis: true,
         isInfectious: true,
+        allergies: true,
         updatedAt: true,
       },
     }),
     prisma.deliveryRequest.findMany({
-      where: { updatedAt: { gt: since } },
+      where: { updatedAt: { gt: since }, AND: [MONITORING_VISIBLE_WHERE] },
       orderBy: { updatedAt: "asc" },
       take: limit,
       select: {
@@ -61,6 +64,8 @@ export async function GET(req: NextRequest) {
         prescription: {
           select: {
             code: true,
+            priority: true,
+            ...ITEMS_SELECT,
             patient: { select: { mrn: true, fullName: true } },
           },
         },
@@ -90,6 +95,14 @@ export async function GET(req: NextRequest) {
     },
     patients,
     rooms,
-    deliveries,
+    deliveries: deliveries.map(({ prescription, ...d }) => ({
+      ...d,
+      prescription: {
+        code: prescription.code,
+        priority: prescription.priority,
+        patient: prescription.patient,
+        items: mapItems(prescription.items),
+      },
+    })),
   });
 }

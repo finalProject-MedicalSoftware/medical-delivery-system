@@ -7,7 +7,7 @@ import prisma from "@/lib/prisma";
  *
  * Pemetaan kompartemen dimiliki sisi monitoring/robot: robot mengirim
  * `compartmentNo` saat melaporkan tiba, dan nilai itu tersimpan di payload
- * event MOCK_ARRIVED_AT_ROOM. SIMRS tidak menyimpan kolom kompartemen.
+ * event ARRIVED_AT_ROOM. SIMRS tidak menyimpan kolom kompartemen.
  */
 
 export interface HandoverItem {
@@ -81,7 +81,7 @@ export async function resolveHandover(mrn: string): Promise<HandoverInfo | null>
         },
       },
       events: {
-        where: { statusAfter: "MOCK_ARRIVED_AT_ROOM" },
+        where: { statusAfter: "ARRIVED_AT_ROOM" },
         orderBy: { createdAt: "desc" },
         take: 1,
         select: { payload: true },
@@ -89,7 +89,7 @@ export async function resolveHandover(mrn: string): Promise<HandoverInfo | null>
     },
   });
 
-  const active = deliveries.find((d) => d.status === "MOCK_ARRIVED_AT_ROOM") ?? deliveries[0] ?? null;
+  const active = deliveries.find((d) => d.status === "ARRIVED_AT_ROOM") ?? deliveries[0] ?? null;
 
   return {
     patient: {

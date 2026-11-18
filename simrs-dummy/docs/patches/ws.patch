@@ -1,0 +1,499 @@
+diff --git a/package.json b/package.json
+index d7fea56..14caeaf 100644
+--- a/package.json
++++ b/package.json
+@@ -8,7 +8,9 @@
+     "dev": "nodemon src/ws/server.js",
+     "check": "node scripts/check.js",
+     "check:tifa": "node scripts/tifa-selfcheck.js",
+-    "test": "node scripts/check.js",
++    "check:motion": "node scripts/motion-e2e.js",
++    "fake-robot": "node scripts/fake-robot.js",
++    "test": "node scripts/check.js && node scripts/frames-check.js",
+     "audit": "npm audit --omit=dev"
+   },
+   "engines": {
+diff --git a/scripts/check.js b/scripts/check.js
+index c784402..5938ebf 100644
+--- a/scripts/check.js
++++ b/scripts/check.js
+@@ -29,7 +29,7 @@ const env = {
+   v: 1, eventId: 'e1', idempotencyKey: 'ik1',
+   type: 'DELIVERY_STATUS_CHANGED', occurredAt: '2026-10-22T00:00:00.000Z',
+   requestCode: 'DELIV-0001', wardCode: 'A',
+-  data: { from: 'PENDING_INTEGRATION', to: 'MOCK_IN_TRANSIT', statusLabel: '[MOCK] Transit' }
++  data: { from: 'PENDING_INTEGRATION', to: 'IN_TRANSIT', statusLabel: '[MOCK] Transit' }
+ };
+ assert.ok(envelopeMatchesChannel(env, 'all'));
+ assert.ok(envelopeMatchesChannel(env, 'ward:A'));
+diff --git a/src/config/env.js b/src/config/env.js
+index db8c907..2f99d26 100644
+--- a/src/config/env.js
++++ b/src/config/env.js
+@@ -9,6 +9,15 @@ module.exports = {
+   // Secret bridge HTTP backend -> WS (POST /internal/publish). Kosong = endpoint ditolak (401).
+   INTERNAL_PUBLISH_SECRET: process.env.INTERNAL_PUBLISH_SECRET || '',
+   REGISTRY_BACKEND_URL: process.env.REGISTRY_BACKEND_URL || '',
++  // Izinkan gerak fisik robot (teleop, misi OP/MOVE, kembali ke dock). false = hanya "stop nol"
++  // (identitas fisik robot belum terautentikasi). Nyalakan HANYA saat uji dengan robot yang diawasi.
++  ALLOW_ROBOT_MOTION: process.env.ALLOW_ROBOT_MOTION === 'true',
++  // Batas kecepatan teleop: UI mengirim -1..1, dikalikan batas ini (m/s dan rad/s).
++  TELEOP_MAX_LINEAR: parseFloat(process.env.TELEOP_MAX_LINEAR || '0.3'),
++  TELEOP_MAX_ANGULAR: parseFloat(process.env.TELEOP_MAX_ANGULAR || '0.6'),
++  // Tujuan uplink status misi (GOAL_COMPLETE dll). Default: REGISTRY_BACKEND_URL + /internal/robot-events.
++  BACKEND_EVENTS_URL: process.env.BACKEND_EVENTS_URL ||
++    (process.env.REGISTRY_BACKEND_URL ? process.env.REGISTRY_BACKEND_URL.replace(/\/+$/, '') + '/internal/robot-events' : ''),
+   INTERNAL_PUBLISH_MAX_BYTES: parseInt(process.env.INTERNAL_PUBLISH_MAX_BYTES || '65536', 10),
+   // Fase bridge HTTP: tanpa broker Kafka. Set true setelah broker hidup.
+   KAFKA_ENABLED: process.env.KAFKA_ENABLED === 'true',
+diff --git a/src/ws/router.js b/src/ws/router.js
+index 55c722d..c74e705 100644
+--- a/src/ws/router.js
++++ b/src/ws/router.js
+@@ -6,6 +6,10 @@ const kafkaProducer = require('../kafka/producer');
+ const { TOPICS } = require('../kafka/config');
+ const { generateMessageId } = require('../utils/uuid');
+ const registry = require('./registry-client');
++const backendEvents = require('./backend-events');
++const { uiFrame, commandFrames } = require('../core/robot-frames');
++
++const teleopCfg = () => ({ maxLinear: config.TELEOP_MAX_LINEAR, maxAngular: config.TELEOP_MAX_ANGULAR });
+ 
+ function send(socket, payload) {
+   if (socket.readyState !== socket.OPEN) return false;
+@@ -99,6 +103,7 @@ async function handleUplink(socket, msg) {
+   };
+   await kafkaProducer.produce(TOPICS.SIMRS_ROBOT_EVENTS, enriched, robotId);
+   broadcastToUis(enriched, robotId);
++  backendEvents.forward(enriched);
+ }
+ 
+ /** Relay uplink robot ke sesi UI: sesi SI-UI menerima SEMUA (by identity),
+@@ -169,15 +174,20 @@ async function handleUIDownlink(socket, msg) {
+   }
+   const target = resolveTarget(msg);
+   if (!target) return send(socket, { code: 'ERROR', data: { error: 'ROBOT_ID_REQUIRED' } });
+-  if (!isTargetedStop(msg.code, msg.data)) {
++  if (!config.ALLOW_ROBOT_MOTION && !isTargetedStop(msg.code, msg.data)) {
+     return send(socket, { code: 'ERROR', data: { error: 'DEVICE_AUTH_UNAVAILABLE' } });
+   }
+   const eligible = await registry.lookup(target);
+   if (!eligible.ok) return send(socket, { code: 'ERROR', data: { error: eligible.reason } });
+   const sock = sessionManager.getRobot(target);
+   if (!sock) return send(socket, { code: 'ERROR', data: { error: 'ROBOT_OFFLINE', robot_id: target } });
+-  const delivered = send(sock, { code: msg.code, data: { ...msg.data, robot_id: target } });
+-  send(socket, { code: 'STOP_DELIVERY', data: { robot_id: target, outcome: delivered ? 'SENT_UNCONFIRMED' : 'UNKNOWN' } });
++  const frame = uiFrame(msg.code, { ...msg.data, robot_id: target }, teleopCfg());
++  if (!frame) return send(socket, { code: 'ERROR', data: { error: 'INVALID_PARAMS', robot_id: target } });
++  const delivered = send(sock, frame);
++  send(socket, {
++    code: isTargetedStop(msg.code, msg.data) ? 'STOP_DELIVERY' : 'DOWNLINK_SENT',
++    data: { robot_id: target, sent: msg.code, outcome: delivered ? 'SENT_UNCONFIRMED' : 'UNKNOWN' }
++  });
+ }
+ 
+ /**
+@@ -190,23 +200,22 @@ async function deliverRobotCommand(envelope) {
+   const data = envelope.data || {};
+   const robotId = data.robotId || data.robot_id;
+   if (typeof robotId !== 'string' || !robotId.trim()) return { accepted: false, reason: 'ROBOT_ID_REQUIRED' };
+-  if (!new Set(['CMD_CANCEL_MISSION','CMD_RETURN_TO_DOCK','CMD_TELEOP_DRIVE','CMD_SET_SPEED']).has(data.command)) {
+-    return { accepted: false, reason: 'CODE_NOT_ALLOWED' };
+-  }
++  // Terjemahkan ke frame TIFA yang dimengerti robot (src/core/robot-frames.js).
++  const built = commandFrames(data.command, data.params, robotId, data.commandId, teleopCfg());
++  if (built.error) return { accepted: false, reason: built.error };
+   // Administrative eligibility is checked even though hardware possession cannot yet be proved.
+   const eligible = await registry.lookup(robotId);
+   if (!eligible.ok) return { accepted: false, reason: eligible.reason };
+-  if (data.command !== 'CMD_TELEOP_DRIVE' ||
+-      !data.params || data.params.linear !== 0 || data.params.angular !== 0) {
++  // Tanpa ALLOW_ROBOT_MOTION hanya "stop nol" yang boleh (identitas fisik belum terautentikasi).
++  if (!config.ALLOW_ROBOT_MOTION &&
++      (data.command !== 'CMD_TELEOP_DRIVE' || !data.params || data.params.linear !== 0 || data.params.angular !== 0)) {
+     return { accepted: false, reason: 'DEVICE_AUTH_UNAVAILABLE' };
+   }
+   const socket = sessionManager.getRobot(robotId);
+   if (socket) {
+-    const frame = {
+-      code: data.command,
+-      data: { ...(data.params || {}), robot_id: robotId, command_id: data.commandId }
+-    };
+-    const sent = send(socket, frame);
++    let sent = send(socket, built.frames[0]);
++    // Frame berikutnya (mis. INTERRUPT lalu INTERRUPT_CONFIRM) diberi jeda agar robot sempat berpindah mode.
++    built.frames.slice(1).forEach((f, i) => setTimeout(() => send(socket, f), 400 * (i + 1)));
+     return { accepted: sent, reason: sent ? 'SENT_UNCONFIRMED' : 'ROBOT_OFFLINE' };
+   }
+   logger.warn(`[Router] downlink ditolak, robot tidak terhubung: ${robotId}`);
+diff --git a/medical-ws/scripts/fake-robot.js b/medical-ws/scripts/fake-robot.js
+new file mode 100644
+index 0000000..7aa09ad
+--- /dev/null
++++ b/medical-ws/scripts/fake-robot.js
+@@ -0,0 +1,58 @@
++/**
++ * Robot palsu untuk uji rantai penuh TANPA robot fisik (node scripts/fake-robot.js).
++ * Meniru perilaku robot_api_node: SI ROBOT -> READY, balas OP dengan ACK ENQUEUED,
++ * "berjalan" ke tiap tray_task lalu GOAL_COMPLETE, menunggu PICKUP_CONFIRM (atau auto), TELEOP/INTERRUPT dicetak.
++ *
++ * Env: WS_URL (ws://127.0.0.1:8083/ws/v1/deliveries)  ROBOT_ID (TFRB5)  UI_ID (TFUI5)
++ *      TRAVEL_MS (6000)  AUTO_PICKUP_MS (8000; 0 = tunggu PICKUP_CONFIRM sungguhan)
++ * Jangan jalankan bersamaan dengan robot fisik ber-ID sama (DUPLICATE_ROBOT_ID).
++ */
++const WebSocket = require('ws');
++
++const URL_ = process.env.WS_URL || 'ws://127.0.0.1:8083/ws/v1/deliveries';
++const ROBOT = process.env.ROBOT_ID || 'TFRB5';
++const UI = process.env.UI_ID || 'TFUI5';
++const TRAVEL_MS = Number(process.env.TRAVEL_MS || 6000);
++const AUTO_PICKUP_MS = Number(process.env.AUTO_PICKUP_MS ?? 8000);
++
++const ws = new WebSocket(URL_);
++const out = (code, data) => { const f = { code, data: { robot_id: ROBOT, ui_id: UI, ...data } }; ws.send(JSON.stringify(f)); console.log('->', JSON.stringify(f)); };
++let mode = 'IDLE', pose = { x: 0, y: 0, yaw: 0 }, queue = [], current = null;
++
++function next() {
++  current = queue.shift();
++  if (!current) { mode = 'IDLE'; return; }
++  mode = 'MOVING';
++  const seq = current.seq;
++  console.log(`[robot] menuju tray_task ${seq} ${JSON.stringify(current.dest)} (${TRAVEL_MS} ms)`);
++  setTimeout(() => {
++    pose = { ...current.dest };
++    out('GOAL_COMPLETE', { sequence: seq });
++    mode = 'PAUSED'; // menunggu PICKUP_CONFIRM manusia
++    if (AUTO_PICKUP_MS > 0) setTimeout(() => pickup(seq), AUTO_PICKUP_MS);
++  }, TRAVEL_MS);
++}
++function pickup(seq) {
++  if (mode !== 'PAUSED') return;
++  console.log(`[robot] PICKUP_CONFIRM seq=${seq}`);
++  next();
++}
++
++ws.on('open', () => { ws.send(JSON.stringify({ code: 'SI', data: { type: 'ROBOT', robot_id: ROBOT } })); console.log(`[robot] SI ${ROBOT} -> ${URL_}`); });
++ws.on('message', (raw) => {
++  let m; try { m = JSON.parse(raw.toString()); } catch { return; }
++  console.log('<-', JSON.stringify(m));
++  if (m.code === 'ACK_SOFT') { out('READY', { mode: 'NAV', ready: true }); return; }
++  if (m.code === 'OP') {
++    if (mode !== 'IDLE') return out('ERROR', { error_code: 'MOTOR_FAIL', error_message: 'OP rejected: robot not IDLE', severity: 'MEDIUM' });
++    queue = (m.data.tray_tasks || []).map((t, i) => ({ seq: i + 1, dest: t.dest }));
++    out('ACK', { command_id: 'OP', status: 'ENQUEUED' });
++    next();
++  } else if (m.code === 'PICKUP_CONFIRM') pickup(m.data.sequence);
++  else if (m.code === 'INTERRUPT') { mode = 'INTERRUPTED'; queue = []; out('ACK', { command_id: 'INTERRUPT', status: 'ACCEPTED' }); }
++  else if (m.code === 'INTERRUPT_CONFIRM') { mode = 'IDLE'; }
++  else if (m.code === 'MOVE') { mode = 'IDLE'; pose = { ...m.data.dest }; }
++});
++setInterval(() => { if (ws.readyState === WebSocket.OPEN) out('POSITION', { ...pose, mode }); }, 2000);
++ws.on('close', () => { console.log('[robot] koneksi ditutup'); process.exit(0); });
++ws.on('error', (e) => { console.error('[robot] error:', e.message); process.exit(1); });
+diff --git a/medical-ws/scripts/frames-check.js b/medical-ws/scripts/frames-check.js
+new file mode 100644
+index 0000000..5925e59
+--- /dev/null
++++ b/medical-ws/scripts/frames-check.js
+@@ -0,0 +1,48 @@
++/** Self-check terjemahan frame robot (node scripts/frames-check.js). */
++const assert = require('assert');
++const { teleopVectors, uiFrame, commandFrames, BACKEND_EVENT_CODES } = require('../src/core/robot-frames');
++
++const cfg = { maxLinear: 0.3, maxAngular: 0.6 };
++
++// teleop: angka ternormalisasi -> vektor Twist berskala; dipotong ke batas
++assert.deepStrictEqual(teleopVectors(1, -1, cfg), { linear: { x: 0.3, y: 0, z: 0 }, angular: { x: 0, y: 0, z: -0.6 } });
++assert.deepStrictEqual(teleopVectors(5, 0, cfg).linear.x, 0.3);
++assert.deepStrictEqual(teleopVectors(0, 0, cfg), { linear: { x: 0, y: 0, z: 0 }, angular: { x: 0, y: 0, z: 0 } });
++assert.strictEqual(teleopVectors('1', 0, cfg), null);
++assert.strictEqual(teleopVectors(NaN, 0, cfg), null);
++// objek vektor diterima tetapi dipotong
++assert.strictEqual(teleopVectors({ x: 9 }, { z: 9 }, cfg).linear.x, 0.3);
++assert.strictEqual(teleopVectors({ x: 9 }, { z: 9 }, cfg).angular.z, 0.6);
++
++// uiFrame: hanya TELEOP dikonversi; data lain (robot_id) dipertahankan
++const t = uiFrame('TELEOP', { robot_id: 'TFRB5', linear: 1, angular: 0 }, cfg);
++assert.strictEqual(t.data.robot_id, 'TFRB5');
++assert.strictEqual(t.data.linear.x, 0.3);
++assert.strictEqual(uiFrame('TELEOP', { linear: 'x', angular: 0 }, cfg), null);
++assert.deepStrictEqual(uiFrame('MODE', { mode: 'IDLE' }, cfg), { code: 'MODE', data: { mode: 'IDLE' } });
++
++// commandFrames
++const dest = { x: 1.5, y: -2, yaw: 1.57 };
++const op = commandFrames('CMD_DISPATCH_OP', { mapId: 3, trayTasks: [{ tray: 0, dest, goalId: 7 }, { tray: 1, dest }], homeBase: { x: 0, y: 0, yaw: 0 } }, 'TFRB5', 'c1', cfg);
++assert.strictEqual(op.frames[0].code, 'OP');
++assert.strictEqual(op.frames[0].data.tray_tasks.length, 2);
++assert.strictEqual(op.frames[0].data.tray_tasks[0].goal_id, 7);
++assert.strictEqual(op.frames[0].data.map_id, '3');
++assert.deepStrictEqual(op.frames[0].data.home_base, { x: 0, y: 0, yaw: 0 });
++assert.strictEqual(op.frames[0].data.robot_id, 'TFRB5');
++assert.strictEqual(commandFrames('CMD_DISPATCH_OP', { trayTasks: [] }, 'TFRB5', 'c', cfg).error, 'INVALID_PARAMS');
++assert.strictEqual(commandFrames('CMD_DISPATCH_OP', { trayTasks: [{ tray: 0, dest: { x: 1, y: 1, yaw: NaN } }] }, 'TFRB5', 'c', cfg).error, 'INVALID_PARAMS');
++assert.strictEqual(commandFrames('CMD_DISPATCH_OP', { trayTasks: [{ tray: 0, dest: { x: 5000, y: 1, yaw: 0 } }] }, 'TFRB5', 'c', cfg).error, 'INVALID_PARAMS');
++
++const dock = commandFrames('CMD_RETURN_TO_DOCK', { dest }, 'TFRB5', 'c2', cfg);
++assert.deepStrictEqual([dock.frames[0].code, dock.frames[0].data.type, dock.frames[0].data.sequence], ['MOVE', 'HOMEBASE', -1]);
++assert.strictEqual(commandFrames('CMD_RETURN_TO_DOCK', {}, 'TFRB5', 'c', cfg).error, 'INVALID_PARAMS');
++
++assert.deepStrictEqual(commandFrames('CMD_CANCEL_MISSION', {}, 'TFRB5', 'c3', cfg).frames.map((f) => f.code), ['INTERRUPT', 'INTERRUPT_CONFIRM']);
++assert.strictEqual(commandFrames('CMD_PICKUP_CONFIRM', { sequence: 2 }, 'TFRB5', 'c4', cfg).frames[0].data.sequence, 2);
++assert.strictEqual(commandFrames('CMD_PICKUP_CONFIRM', {}, 'TFRB5', 'c', cfg).error, 'INVALID_PARAMS');
++assert.strictEqual(commandFrames('CMD_SET_SPEED', { speed: 1 }, 'TFRB5', 'c', cfg).error, 'CODE_NOT_ALLOWED');
++assert.strictEqual(commandFrames('CMD_UNKNOWN', {}, 'TFRB5', 'c', cfg).error, 'CODE_NOT_ALLOWED');
++
++assert.ok(BACKEND_EVENT_CODES.has('GOAL_COMPLETE') && !BACKEND_EVENT_CODES.has('POSITION'));
++console.log('frames-check OK');
+diff --git a/medical-ws/scripts/motion-e2e.js b/medical-ws/scripts/motion-e2e.js
+new file mode 100644
+index 0000000..b6a7edd
+--- /dev/null
++++ b/medical-ws/scripts/motion-e2e.js
+@@ -0,0 +1,113 @@
++/**
++ * E2E tanpa Docker/robot (node scripts/motion-e2e.js): gateway nyata + stub registry/backend + robot palsu TFRB5.
++ * Memeriksa: SI robot, teleop angka -> vektor Twist, perintah misi OP dari backend, uplink GOAL_COMPLETE
++ * diteruskan ke backend, dan gate DEVICE_AUTH_UNAVAILABLE saat ALLOW_ROBOT_MOTION=false.
++ */
++const assert = require('assert');
++const http = require('http');
++const { spawn } = require('child_process');
++const WebSocket = require('ws');
++
++const SECRET = 'e2e-secret', UI_TOKEN = 'e2e-ui-token', ROBOT = 'TFRB5';
++const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
++const listen = (handler) => new Promise((res) => { const s = http.createServer(handler); s.listen(0, '127.0.0.1', () => res(s)); });
++
++async function run(allowMotion) {
++  const events = [];
++  const registry = await listen((req, res) => {
++    if (req.url === `/internal/robots/${ROBOT}/eligibility` && req.headers['x-internal-secret'] === SECRET) {
++      res.setHeader('Content-Type', 'application/json');
++      return res.end(JSON.stringify({ robotId: ROBOT, registrationStatus: 'VERIFIED', eligible: true }));
++    }
++    if (req.url === '/internal/robot-events' && req.method === 'POST' && req.headers['x-internal-secret'] === SECRET) {
++      let b = ''; req.on('data', (c) => (b += c)); req.on('end', () => { events.push(JSON.parse(b)); res.end('{}'); });
++      return;
++    }
++    res.statusCode = 404; res.end();
++  });
++  const regUrl = `http://127.0.0.1:${registry.address().port}`;
++  const port = 18000 + Math.floor(Math.random() * 1000);
++  const gw = spawn(process.execPath, ['src/ws/server.js'], {
++    cwd: __dirname + '/..',
++    env: { ...process.env, WS_PORT: String(port), WS_AUTH_TOKEN: UI_TOKEN, INTERNAL_PUBLISH_SECRET: SECRET,
++      REGISTRY_BACKEND_URL: regUrl, KAFKA_ENABLED: 'false', LOG_LEVEL: 'error', ALLOW_ROBOT_MOTION: String(allowMotion),
++      TELEOP_MAX_LINEAR: '0.3', TELEOP_MAX_ANGULAR: '0.6' },
++    stdio: 'ignore',
++  });
++  try {
++    await sleep(800);
++    const url = `ws://127.0.0.1:${port}/ws/v1/deliveries`;
++    const robotFrames = [], uiFrames = [];
++    const robot = new WebSocket(url);
++    robot.on('message', (m) => robotFrames.push(JSON.parse(m)));
++    await new Promise((r) => robot.on('open', r));
++    robot.send(JSON.stringify({ code: 'SI', data: { type: 'ROBOT', robot_id: ROBOT } }));
++    const ui = new WebSocket(url);
++    ui.on('message', (m) => uiFrames.push(JSON.parse(m)));
++    await new Promise((r) => ui.on('open', r));
++    ui.send(JSON.stringify({ code: 'SI', data: { type: 'UI', ui_id: 'TFUI-E2E', token: UI_TOKEN } }));
++    await sleep(600);
++    assert.ok(robotFrames.some((f) => f.code === 'ACK_SOFT'), 'robot harus menerima ACK_SOFT');
++
++    // 1) teleop dari UI (angka -1..1)
++    ui.send(JSON.stringify({ code: 'TELEOP', data: { robot_id: ROBOT, linear: 1, angular: -1 } }));
++    await sleep(400);
++    const teleop = robotFrames.find((f) => f.code === 'TELEOP');
++    if (allowMotion) {
++      assert.ok(teleop, 'TELEOP harus sampai ke robot');
++      assert.strictEqual(teleop.data.linear.x, 0.3);
++      assert.strictEqual(teleop.data.angular.z, -0.6);
++    } else {
++      assert.ok(!teleop, 'gerak harus ditolak tanpa ALLOW_ROBOT_MOTION');
++      assert.ok(uiFrames.some((f) => f.data && f.data.error === 'DEVICE_AUTH_UNAVAILABLE'));
++    }
++
++    // 2) stop nol selalu boleh dan berbentuk vektor nol
++    robotFrames.length = 0;
++    ui.send(JSON.stringify({ code: 'TELEOP', data: { robot_id: ROBOT, linear: 0, angular: 0 } }));
++    await sleep(300);
++    const stop = robotFrames.find((f) => f.code === 'TELEOP');
++    assert.ok(stop && stop.data.linear.x === 0 && stop.data.angular.z === 0, 'stop nol harus sampai');
++
++    // 3) perintah misi dari backend (bridge HTTP)
++    robotFrames.length = 0;
++    const publish = (data) => fetch(`http://127.0.0.1:${port}/internal/publish`, {
++      method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Internal-Secret': SECRET },
++      body: JSON.stringify({ v: 1, eventId: require('crypto').randomUUID(), type: 'ROBOT_COMMAND', occurredAt: new Date().toISOString(),
++        requestCode: '', wardCode: '', data }),
++    });
++    const op = await publish({ commandId: 'c-op', robotId: ROBOT, command: 'CMD_DISPATCH_OP', params: {
++      trayTasks: [{ tray: 0, dest: { x: 1, y: 2, yaw: 0 }, goalId: 1 }, { tray: 1, dest: { x: 3, y: 4, yaw: 1.57 }, goalId: 2 }], homeBase: { x: 0, y: 0, yaw: 0 } } });
++    await sleep(400);
++    if (allowMotion) {
++      assert.strictEqual(op.status, 202);
++      const opFrame = robotFrames.find((f) => f.code === 'OP');
++      assert.ok(opFrame, 'OP harus sampai ke robot');
++      assert.strictEqual(opFrame.data.tray_tasks.length, 2);
++      assert.deepStrictEqual(opFrame.data.home_base, { x: 0, y: 0, yaw: 0 });
++    } else {
++      assert.strictEqual(op.status, 409, 'misi harus ditolak tanpa ALLOW_ROBOT_MOTION');
++    }
++
++    // 4) uplink robot -> diteruskan ke backend
++    robot.send(JSON.stringify({ code: 'ACK', data: { robot_id: ROBOT, ui_id: 'TFUI5', command_id: 'OP', status: 'ENQUEUED' } }));
++    robot.send(JSON.stringify({ code: 'GOAL_COMPLETE', data: { robot_id: ROBOT, ui_id: 'TFUI5', sequence: 1 } }));
++    robot.send(JSON.stringify({ code: 'POSITION', data: { robot_id: ROBOT, x: 1, y: 2, yaw: 0 } }));
++    await sleep(600);
++    const codes = events.map((e) => e.code);
++    assert.ok(codes.includes('ACK') && codes.includes('GOAL_COMPLETE'), 'ACK dan GOAL_COMPLETE harus diteruskan ke backend');
++    assert.ok(!codes.includes('POSITION'), 'POSITION tidak boleh membanjiri backend');
++    assert.strictEqual(events.find((e) => e.code === 'GOAL_COMPLETE').data.sequence, 1);
++    robot.close(); ui.close();
++  } finally {
++    gw.kill();
++    registry.close();
++  }
++}
++
++(async () => {
++  await run(true);
++  console.log('motion-e2e (ALLOW_ROBOT_MOTION=true) OK');
++  await run(false);
++  console.log('motion-e2e (ALLOW_ROBOT_MOTION=false) OK');
++})().catch((e) => { console.error('motion-e2e GAGAL:', e.message); process.exit(1); });
+diff --git a/medical-ws/src/core/robot-frames.js b/medical-ws/src/core/robot-frames.js
+new file mode 100644
+index 0000000..38a1e20
+--- /dev/null
++++ b/medical-ws/src/core/robot-frames.js
+@@ -0,0 +1,99 @@
++/**
++ * Terjemahan perintah NEVO -> frame TIFA yang dimengerti robot (robot_api_node.cpp):
++ *   TELEOP  data.linear.{x,y,z} + data.angular.{x,y,z}   (m/s, rad/s)
++ *   MOVE    data.{type, sequence, dest{x,y,yaw}, home_base}
++ *   OP      data.{type:'OP', tray_tasks[{tray,dest,goal_id}], home_base}
++ *   PICKUP_CONFIRM data.sequence, INTERRUPT, INTERRUPT_CONFIRM
++ * Fungsi murni (tanpa socket) supaya mudah diuji: scripts/frames-check.js.
++ */
++
++const MAX_TRAYS = 10;
++const num = (v) => typeof v === 'number' && Number.isFinite(v);
++const clamp = (v, m) => Math.max(-m, Math.min(m, v));
++
++function pose(p) {
++  if (!p || !num(p.x) || !num(p.y) || !num(p.yaw) ||
++      Math.abs(p.x) > 1000 || Math.abs(p.y) > 1000 || Math.abs(p.yaw) > 7) return null;
++  return { x: p.x, y: p.y, yaw: p.yaw };
++}
++
++/**
++ * UI mengirim kecepatan ternormalisasi (angka -1..1). Robot membaca vektor Twist.
++ * Angka dikali batas kecepatan; objek vektor diterima juga tetapi dipotong ke batas.
++ * Hasil `null` bila bentuknya tidak valid.
++ */
++function teleopVectors(linear, angular, cfg) {
++  const L = cfg.maxLinear, A = cfg.maxAngular;
++  if (num(linear) && num(angular)) {
++    return {
++      linear: { x: clamp(linear, 1) * L, y: 0, z: 0 },
++      angular: { x: 0, y: 0, z: clamp(angular, 1) * A },
++    };
++  }
++  if (linear && angular && typeof linear === 'object' && typeof angular === 'object') {
++    const get = (o, k) => (num(o[k]) ? o[k] : 0);
++    return {
++      linear: { x: clamp(get(linear, 'x'), L), y: clamp(get(linear, 'y'), L), z: 0 },
++      angular: { x: 0, y: 0, z: clamp(get(angular, 'z'), A) },
++    };
++  }
++  return null;
++}
++
++/** Frame UI->robot langsung (BFF /api/ws/command). TELEOP dikonversi; kode lain dilewatkan. */
++function uiFrame(code, data, cfg) {
++  if (code !== 'TELEOP') return { code, data };
++  const v = teleopVectors(data.linear, data.angular, cfg);
++  if (!v) return null;
++  return { code, data: { ...data, ...v } };
++}
++
++/**
++ * Perintah backend (ROBOT_COMMAND.data.command + params) -> daftar frame berurutan.
++ * Mengembalikan {error} bila tidak dikenal/ params tidak valid.
++ */
++function commandFrames(command, params, robotId, commandId, cfg) {
++  const p = params || {};
++  const base = { robot_id: robotId, command_id: commandId };
++  switch (command) {
++    case 'CMD_TELEOP_DRIVE': {
++      const v = teleopVectors(p.linear, p.angular, cfg);
++      return v ? { frames: [{ code: 'TELEOP', data: { ...base, ...v } }] } : { error: 'INVALID_PARAMS' };
++    }
++    case 'CMD_RETURN_TO_DOCK': {
++      const dest = pose(p.dest);
++      if (!dest) return { error: 'INVALID_PARAMS' };
++      return { frames: [{ code: 'MOVE', data: { ...base, type: 'HOMEBASE', sequence: -1, dest, home_base: dest } }] };
++    }
++    case 'CMD_CANCEL_MISSION':
++      return { frames: [
++        { code: 'INTERRUPT', data: { ...base } },
++        { code: 'INTERRUPT_CONFIRM', data: { ...base } },
++      ] };
++    case 'CMD_DISPATCH_OP': {
++      const tasks = Array.isArray(p.trayTasks) ? p.trayTasks : [];
++      if (tasks.length < 1 || tasks.length > MAX_TRAYS) return { error: 'INVALID_PARAMS' };
++      const trayTasks = [];
++      for (const t of tasks) {
++        const dest = pose(t && t.dest);
++        if (!dest || !Number.isInteger(t.tray) || t.tray < 0) return { error: 'INVALID_PARAMS' };
++        trayTasks.push({ tray: t.tray, dest, ...(Number.isInteger(t.goalId) ? { goal_id: t.goalId } : {}) });
++      }
++      const home = pose(p.homeBase);
++      return { frames: [{ code: 'OP', data: {
++        ...base, type: 'OP', ...(p.mapId != null ? { map_id: String(p.mapId) } : {}),
++        tray_tasks: trayTasks, ...(home ? { home_base: home } : {}),
++      } }] };
++    }
++    case 'CMD_PICKUP_CONFIRM':
++      if (!Number.isInteger(p.sequence)) return { error: 'INVALID_PARAMS' };
++      return { frames: [{ code: 'PICKUP_CONFIRM', data: { ...base, sequence: p.sequence } }] };
++    default:
++      return { error: 'CODE_NOT_ALLOWED' };
++  }
++}
++
++/** Uplink robot yang diteruskan ke backend (status misi). */
++const BACKEND_EVENT_CODES = new Set(['GOAL_COMPLETE', 'ACK', 'ERROR', 'ROBOT_STUCK', 'READY']);
++
++module.exports = { teleopVectors, uiFrame, commandFrames, BACKEND_EVENT_CODES };
+diff --git a/medical-ws/src/ws/backend-events.js b/medical-ws/src/ws/backend-events.js
+new file mode 100644
+index 0000000..ac4c19c
+--- /dev/null
++++ b/medical-ws/src/ws/backend-events.js
+@@ -0,0 +1,23 @@
++const config = require('../config/env');
++const logger = require('../utils/logger');
++const { BACKEND_EVENT_CODES } = require('../core/robot-frames');
++
++/**
++ * Teruskan uplink robot yang relevan untuk status misi (GOAL_COMPLETE, ACK, ERROR, ...)
++ * ke backend (POST /internal/robot-events). Best-effort: gagal hanya dicatat,
++ * tidak pernah memblokir relay ke UI/Kafka.
++ */
++function forward(frame) {
++  if (!config.BACKEND_EVENTS_URL || !config.INTERNAL_PUBLISH_SECRET) return;
++  if (!frame || !BACKEND_EVENT_CODES.has(frame.code)) return;
++  fetch(config.BACKEND_EVENTS_URL, {
++    method: 'POST',
++    headers: { 'Content-Type': 'application/json', 'X-Internal-Secret': config.INTERNAL_PUBLISH_SECRET },
++    body: JSON.stringify(frame),
++    signal: AbortSignal.timeout(3000),
++  }).then((res) => {
++    if (!res.ok) logger.warn('[BackendEvents] ditolak backend:', res.status, frame.code);
++  }).catch((err) => logger.warn('[BackendEvents] gagal kirim:', frame.code, err.message));
++}
++
++module.exports = { forward };

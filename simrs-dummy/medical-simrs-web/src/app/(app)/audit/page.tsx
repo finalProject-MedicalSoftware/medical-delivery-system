@@ -54,6 +54,7 @@ export default async function AuditPage({
         iconCls="text-teal-700"
         title="Audit Trail"
         subtitle={`${total} entri · Hanya append - tidak dapat diedit/dihapus`}
+        action={<a href={`/api/audit${entityType ? `?entityType=${encodeURIComponent(entityType)}` : ""}`} className={btnSecondary}>Unduh CSV</a>}
       />
 
       {/* Entity type filter */}
@@ -88,11 +89,11 @@ export default async function AuditPage({
         <table className="w-full text-xs">
           <thead className={theadCls}>
             <tr>
-              <th className="px-4 py-3 text-left">Waktu</th>
-              <th className="px-4 py-3 text-left">Aktor</th>
-              <th className="px-4 py-3 text-left">Tipe Entitas</th>
-              <th className="px-4 py-3 text-left">Aksi</th>
-              <th className="px-4 py-3 text-left">Detail</th>
+              <th scope="col" className="px-4 py-3 text-left">Waktu</th>
+              <th scope="col" className="px-4 py-3 text-left">Aktor</th>
+              <th scope="col" className="px-4 py-3 text-left">Tipe Entitas</th>
+              <th scope="col" className="px-4 py-3 text-left">Aksi</th>
+              <th scope="col" className="px-4 py-3 text-left">Detail</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">

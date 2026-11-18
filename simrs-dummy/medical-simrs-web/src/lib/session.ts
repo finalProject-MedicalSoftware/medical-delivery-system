@@ -1,9 +1,15 @@
 import { SignJWT, jwtVerify } from "jose";
 import { cookies } from "next/headers";
 
-const SECRET_KEY = new TextEncoder().encode(
-  process.env.AUTH_SECRET || process.env.NEXTAUTH_SECRET || "simrs_dummy_local_secret_key_development_only_2026"
-);
+// Fallback dev hanya di luar production; di production secret wajib ada.
+// Dicek saat dipakai (bukan saat impor) supaya `next build` tanpa secret tetap lolos.
+function secretKey(): Uint8Array {
+  const raw = process.env.AUTH_SECRET || process.env.NEXTAUTH_SECRET;
+  if (!raw && process.env.NODE_ENV === "production") {
+    throw new Error("AUTH_SECRET wajib diset di production");
+  }
+  return new TextEncoder().encode(raw || "simrs_dummy_local_secret_key_development_only_2026");
+}
 
 const SESSION_COOKIE_NAME = "simrs_session";
 const SESSION_DURATION = 24 * 60 * 60; // 24 hours in seconds
@@ -31,7 +37,7 @@ export async function encryptSession(payload: SessionPayload): Promise<string> {
     .setProtectedHeader({ alg: "HS256" })
     .setIssuedAt()
     .setExpirationTime(`${SESSION_DURATION}s`)
-    .sign(SECRET_KEY);
+    .sign(secretKey());
 }
 
 /**
@@ -39,7 +45,7 @@ export async function encryptSession(payload: SessionPayload): Promise<string> {
  */
 export async function decryptSession(token: string): Promise<SessionPayload | null> {
   try {
-    const { payload } = await jwtVerify(token, SECRET_KEY, {
+    const { payload } = await jwtVerify(token, secretKey(), {
       algorithms: ["HS256"],
     });
     return payload as unknown as SessionPayload;

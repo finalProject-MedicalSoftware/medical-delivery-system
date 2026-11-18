@@ -69,7 +69,7 @@ export default function ActionButton({
       >
         {children}
       </button>
-      {error && <span className="text-[11px] text-rose-600">{error}</span>}
+      {error && <span className="text-xs text-rose-600">{error}</span>}
     </span>
   );
 }

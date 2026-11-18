@@ -14,10 +14,11 @@ import {
   ClipboardList,
   Settings,
   LogOut,
-  AlertTriangle,
-  ShieldCheck,
-  ChevronRight,
+  Menu,
+  BarChart3,
+  Radio,
 } from "lucide-react";
+import LiveRefresh from "@/components/LiveRefresh";
 import SimrsLogo from "@/components/SimrsLogo";
 
 interface NavItem {
@@ -44,7 +45,7 @@ const NAV_SECTIONS: NavSection[] = [
     items: [
       {
         href: "/pasien",
-        label: "Pasien Sintetis",
+        label: "Pasien",
         icon: Users,
         permissions: ["prescription:read", "prescription:create"],
       },
@@ -75,8 +76,20 @@ const NAV_SECTIONS: NavSection[] = [
     ],
   },
   {
-    title: "Admin",
+    title: "Pengelolaan",
     items: [
+      {
+        href: "/laporan",
+        label: "Laporan",
+        icon: BarChart3,
+        permissions: ["delivery:read"],
+      },
+      {
+        href: "/integrasi",
+        label: "Integrasi",
+        icon: Radio,
+        roles: ["SYSTEM_ADMIN", "SIMRS_ADMIN"],
+      },
       {
         href: "/audit",
         label: "Audit Trail",
@@ -114,17 +127,18 @@ function canAccess(user: UserAuthContext, item: NavItem): boolean {
   return false;
 }
 
-function getRoleBadgeColor(role: string): string {
-  const colors: Record<string, string> = {
-    SYSTEM_ADMIN: "bg-rose-500/15 text-rose-300",
-    SIMRS_ADMIN: "bg-sky-500/15 text-sky-300",
-    DOCTOR: "bg-teal-500/15 text-teal-300",
-    PHARMACIST: "bg-emerald-500/15 text-emerald-300",
-    PHARMACY_STAFF: "bg-emerald-500/10 text-emerald-300 ring-1 ring-emerald-500/30",
-    NURSE: "bg-amber-500/15 text-amber-300",
-    WARD_ADMIN: "bg-slate-500/15 text-slate-300",
-  };
-  return colors[role] ?? "bg-white/10 text-slate-300";
+const ROLE_LABEL: Record<string, string> = {
+  SYSTEM_ADMIN: "Admin Sistem",
+  SIMRS_ADMIN: "Admin SIMRS",
+  DOCTOR: "Dokter",
+  PHARMACIST: "Apoteker",
+  PHARMACY_STAFF: "Staf Farmasi",
+  NURSE: "Perawat",
+  WARD_ADMIN: "Admin Bangsal",
+};
+
+function initials(name: string): string {
+  return name.replace(/^(dr\.?|apt\.?|ns\.?)\s+/i, "").split(/\s+/).slice(0, 2).map((w) => w[0]?.toUpperCase() ?? "").join("");
 }
 
 export default function AppShell({
@@ -135,109 +149,97 @@ export default function AppShell({
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
+  const sections = NAV_SECTIONS.map((s) => ({ ...s, items: s.items.filter((i) => canAccess(user, i)) })).filter((s) => s.items.length);
+  const isActive = (href: string) => pathname === href || (href !== "/dashboard" && pathname.startsWith(href));
+
+  const nav = (
+    <nav className="flex-1 overflow-y-auto px-3 py-4" aria-label="Navigasi utama">
+      {sections.map((section) => (
+        <div key={section.title} className="mb-5">
+          <p className="mb-1 px-2.5 text-xs font-medium text-slate-500">{section.title}</p>
+          <ul className="space-y-0.5">
+            {section.items.map((item) => (
+              <li key={item.href}>
+                <Link
+                  href={item.href}
+                  aria-current={isActive(item.href) ? "page" : undefined}
+                  className={`flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm font-medium transition-colors ${
+                    isActive(item.href)
+                      ? "bg-teal-50 text-teal-800"
+                      : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"
+                  }`}
+                >
+                  <item.icon className="h-4 w-4 shrink-0" />
+                  {item.label}
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ))}
+    </nav>
+  );
+
+  const account = (
+    <div className="border-t border-slate-200 p-3">
+      <div className="flex items-center gap-2.5 px-1.5 py-1.5">
+        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-teal-700 text-xs font-semibold text-white">
+          {initials(user.fullName)}
+        </span>
+        <div className="min-w-0">
+          <p className="truncate text-sm font-semibold text-slate-900">{user.fullName}</p>
+          <p className="truncate text-xs text-slate-500">
+            {user.roles.map((r) => ROLE_LABEL[r] ?? r).join(" · ")}
+          </p>
+        </div>
+      </div>
+      <form action={logoutAction}>
+        <button
+          type="submit"
+          id="logout-btn"
+          className="mt-1 flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-sm text-slate-600 transition-colors hover:bg-slate-100 hover:text-slate-900"
+        >
+          <LogOut className="h-4 w-4" />
+          Keluar
+        </button>
+      </form>
+    </div>
+  );
 
   return (
     <div className="flex min-h-screen bg-page text-txt-main">
-      {/* Sidebar gelap (gaya tifa-web) */}
-      <aside className="hidden w-60 shrink-0 flex-col bg-sidebar md:flex">
-        {/* Logo */}
-        <div className="border-b border-white/10 px-4 py-4">
+      <LiveRefresh />
+      <aside className="sticky top-0 hidden h-screen w-60 shrink-0 flex-col border-r border-slate-200 bg-sidebar md:flex">
+        <div className="px-4 py-4">
           <SimrsLogo
-            tileClassName="h-8 w-8 rounded-lg bg-accent"
+            tileClassName="h-8 w-8 rounded-lg"
             iconClassName="h-4 w-4"
-            titleClassName="text-white"
-            subtitleClassName="text-slate-400"
+            title="SIMRS"
+            subtitle="Farmasi & Pengantaran Obat"
           />
         </div>
-
-        {/* Nav per seksi */}
-        <nav className="flex-1 overflow-y-auto px-2 py-3">
-          {NAV_SECTIONS.map((section) => {
-            const items = section.items.filter((item) => canAccess(user, item));
-            if (!items.length) return null;
-            return (
-              <div key={section.title} className="mb-3">
-                <p className="mb-1.5 px-3 text-[10px] font-semibold uppercase tracking-wider text-slate-500">
-                  {section.title}
-                </p>
-                <ul className="space-y-0.5">
-                  {items.map((item) => {
-                    const isActive =
-                      pathname === item.href ||
-                      (item.href !== "/dashboard" && pathname.startsWith(item.href));
-                    return (
-                      <li key={item.href}>
-                        <Link
-                          href={item.href}
-                          className={`group flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
-                            isActive
-                              ? "bg-accent text-white"
-                              : "text-slate-400 hover:bg-white/5 hover:text-white"
-                          }`}
-                        >
-                          <item.icon className="h-4 w-4 shrink-0" />
-                          <span className="flex-1">{item.label}</span>
-                          {isActive && (
-                            <ChevronRight className="h-3 w-3 opacity-70" />
-                          )}
-                        </Link>
-                      </li>
-                    );
-                  })}
-                </ul>
-              </div>
-            );
-          })}
-        </nav>
-
-        {/* User info + logout */}
-        <div className="border-t border-white/10 p-3">
-          <div className="mb-2 rounded-lg bg-white/5 px-3 py-2.5">
-            <div className="mb-1.5 flex items-center gap-1.5">
-              <ShieldCheck className="h-3.5 w-3.5 shrink-0 text-txt-accent" />
-              <p className="truncate text-xs font-semibold text-white">
-                {user.fullName}
-              </p>
-            </div>
-            <p className="mb-1.5 font-mono text-[10px] text-slate-400">{user.username}</p>
-            <div className="flex flex-wrap gap-1">
-              {user.roles.map((r) => (
-                <span
-                  key={r}
-                  className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${getRoleBadgeColor(r)}`}
-                >
-                  {r}
-                </span>
-              ))}
-            </div>
-          </div>
-          <form action={logoutAction}>
-            <button
-              type="submit"
-              id="logout-btn"
-              className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-slate-400 transition hover:bg-rose-500/10 hover:text-rose-300"
-            >
-              <LogOut className="h-4 w-4" />
-              Keluar
-            </button>
-          </form>
-        </div>
+        {nav}
+        {account}
       </aside>
 
-      {/* Main content */}
       <div className="flex min-w-0 flex-1 flex-col">
-        {/* Synthetic data banner */}
-        <div className="border-b border-amber-200 bg-amber-50 px-4 py-1.5 text-center text-xs text-amber-800">
-          <div className="flex items-center justify-center gap-1.5">
-            <AlertTriangle className="h-3 w-3 shrink-0" />
-            <span>
-              <strong>PROTOTIPE AKADEMIK</strong> - Data 100% SINTETIS/FIKTIF. Bukan sistem klinis produksi.
-            </span>
-          </div>
-        </div>
+        {/* Bar atas ponsel/tablet: menu disclosure tanpa JS tambahan */}
+        <header className="sticky top-0 z-20 border-b border-slate-200 bg-white md:hidden">
+          <details className="group">
+            <summary className="flex cursor-pointer list-none items-center justify-between px-4 py-3">
+              <SimrsLogo tileClassName="h-7 w-7 rounded-md" iconClassName="h-3.5 w-3.5" title="SIMRS" showSubtitle={false} />
+              <Menu className="h-5 w-5 text-slate-600" aria-label="Menu" />
+            </summary>
+            <div className="max-h-[80vh] overflow-y-auto border-t border-slate-200 bg-white">
+              {nav}
+              {account}
+            </div>
+          </details>
+        </header>
 
-        <main className="flex-1 overflow-auto p-4 sm:p-6">
-          {children}
+        <main className="flex-1 p-4 sm:p-6 lg:p-8">
+          <div className="mx-auto max-w-6xl">{children}</div>
+          <p className="mx-auto mt-10 max-w-6xl text-xs text-slate-400">Data demo. Bukan sistem klinis produksi.</p>
         </main>
       </div>
     </div>

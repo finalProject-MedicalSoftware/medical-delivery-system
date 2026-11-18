@@ -252,6 +252,7 @@ async function main() {
       gender: "P",
       roomCode: "R-MELATI-102",
       notes: "Pasien sintetis demo ruang Melati 102",
+      allergies: ["Amoxicillin"],
       isSynthetic: true,
     },
     {
@@ -310,6 +311,8 @@ async function main() {
     { code: "MED-CTM-004", name: "Chlorpheniramine 4mg Tablet", unit: "tablet", category: "Antihistamin", stock: 300 },
     { code: "MED-OMP-020", name: "Omeprazole 20mg Kapsul", unit: "kapsul", category: "Antasida & PPI", stock: 150 },
     { code: "MED-IV-NS500", name: "Cairan Infus Normal Saline 0.9% 500ml", unit: "botol", category: "Cairan Intravena", stock: 80 },
+    { code: "MED-INS-100", name: "Insulin Rapid-Acting 100 IU/ml Vial", unit: "vial", category: "Antidiabetik", stock: 40, minStock: 10, handling: "COLD_CHAIN" as const },
+    { code: "MED-MOR-010", name: "Morfin 10mg/ml Ampul", unit: "ampul", category: "Analgesik Opioid", stock: 12, minStock: 10, handling: "CONTROLLED" as const },
   ];
 
   const createdMedicines: Record<string, string> = {};

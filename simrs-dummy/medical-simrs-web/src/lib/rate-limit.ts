@@ -46,3 +46,13 @@ export function checkRateLimit(
 export function resetRateLimits(): void {
   buckets.clear();
 }
+
+/**
+ * IP klien untuk kunci throttle. X-Forwarded-For hanya dipercaya bila
+ * TRUST_PROXY=true (di belakang reverse proxy); kalau tidak, header itu
+ * bisa dipalsukan klien untuk menghindari limit.
+ */
+export function clientIpFrom(headers: Headers): string | undefined {
+  if (process.env.TRUST_PROXY !== "true") return undefined;
+  return headers.get("x-forwarded-for")?.split(",")[0]?.trim() || undefined;
+}

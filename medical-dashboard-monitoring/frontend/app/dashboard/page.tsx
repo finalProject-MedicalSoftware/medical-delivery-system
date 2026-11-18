@@ -62,7 +62,8 @@ export default function DashboardPage() {
           {deliveries.length === 0 ? <EmptyState icon={BedDouble} title={dict.simrs.deliveryEmpty} /> : deliveries.map(del => <article key={del.requestCode} className="delivery-card">
             <div className="flex items-center gap-3"><BedDouble size={25} className="txt-sec shrink-0" /><div className="min-w-0 flex-1"><h3 className="font-bold">{del.roomName || del.roomCode}</h3><p className="txt-sec text-sm break-all">{del.requestCode}</p></div><Link href={`/missions/create${del.patientMrn || del.patient?.mrn ? `?mrn=${encodeURIComponent(del.patientMrn || del.patient.mrn)}` : ''}`} aria-label={t.newMission + ' ' + del.requestCode} className="bg-accent text-white rounded-full p-2"><ArrowRight size={20} /></Link></div>
             <div className="text-xs txt-sec mt-3 space-y-1"><p>{t.patient}: {del.patientName ?? del.patient?.fullName ?? '—'} ({del.patientMrn ?? del.mrn ?? del.patient?.mrn ?? '—'})</p><p>{t.medicine}: {del.medicineName ?? del.medicine ?? del.prescription?.medicineName ?? '—'}</p></div>
-            {del.isInfectious && <p className="mt-3 p-2 bg-error/10 text-error rounded-lg text-sm flex gap-2"><ShieldAlert size={16} />{t.infectious} — APD</p>}
+            {(del.isInfectious ?? del.patient?.isInfectious) && <p className="mt-3 p-2 bg-error/10 text-error rounded-lg text-sm flex gap-2"><ShieldAlert size={16} />{t.infectious} — APD</p>}
+            {!(del.isInfectious ?? del.patient?.isInfectious) && del.robotReason && <p className="mt-3 p-2 bg-accent/10 rounded-lg text-sm">{language === 'id' ? 'Alasan robot' : 'Robot reason'}: {del.robotReason}</p>}
             <span className="status-pill status-info inline-block mt-3">{del.status}</span>
           </article>)}
           <Link href="/simrs" className="text-sm text-accent inline-flex items-center gap-2 mt-5">{t.viewAll}<ArrowRight size={14} /></Link>

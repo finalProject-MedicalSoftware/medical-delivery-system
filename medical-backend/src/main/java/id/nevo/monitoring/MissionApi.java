@@ -39,6 +39,12 @@ public class MissionApi {
         this(db, robotService, robotAdapter, simrsService, adminService, null);
     }
 
+    private RealMissionService realMissions;
+
+    /** Hanya ada pada ROBOT_MODE=real; setter agar konstruktor (dipakai tes) tidak berubah. */
+    @Autowired(required = false)
+    void setRealMissionService(RealMissionService realMissions) { this.realMissions = realMissions; }
+
     @GetMapping("/robots")
     public List<Map<String, Object>> getRobots() {
         return robotAdapter.getRobots();
@@ -73,6 +79,7 @@ public class MissionApi {
         }
         UUID commandId = UUID.randomUUID();
         robotAdapter.executeCommand(commandId, robotId, req.command(), user.getName(), req.params() == null ? Map.of() : req.params());
+        if (realMissions != null && "CMD_CANCEL_MISSION".equals(req.command())) realMissions.cancelActive(robotId, user.getName());
         return Map.of("commandId", commandId.toString(), "simulated", robotAdapter == robotService);
     }
 

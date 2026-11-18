@@ -49,6 +49,7 @@ export default function RobotsPage() {
 
   const [roster, setRoster] = useState<RosterEntry[]>([]);
   const [connected, setConnected] = useState(false);
+  const [motionAllowed, setMotionAllowed] = useState(false); // dari server: ALLOW_ROBOT_MOTION (uji robot fisik yang diawasi)
   const [streamError, setStreamError] = useState('');
   const [actionError, setActionError] = useState('');
   const [targetId, setTargetId] = useState('');
@@ -69,7 +70,7 @@ export default function RobotsPage() {
     es.onmessage = (ev) => {
       let item: any;
       try { item = JSON.parse(ev.data); } catch { return; }
-      if (item?.type === 'SSE_INIT') { setConnected(item.relayConnected === true); setStreamError(''); }
+      if (item?.type === 'SSE_INIT') { setConnected(item.relayConnected === true); setMotionAllowed(item.motionAllowed === true); setStreamError(''); }
       else if (item?.type === 'SSE_RELAY') { setConnected(item.connected === true); setRoster(item.robots || []); }
       else if (item?.type === 'SSE_ROSTER') setRoster(item.robots || []);
       else if (item?.code && item.data?.robot_id) setRoster((cur) => applyFrame(cur, item));
@@ -108,10 +109,10 @@ export default function RobotsPage() {
 
   // Manual movement needs affirmative relay, target, role and robot mode evidence.
   // An absent/unknown mode is intentionally treated as unsafe.
-  const hardwareAuthenticated = false; // Gateway has no device credential contract yet.
-  const canMove = hardwareAuthenticated && connected && !!target && ['ADMIN', 'FARMASI', 'OPERATOR'].includes(user?.role?.toUpperCase() || '') &&
-    ['READY', 'IDLE'].includes((target.status || '').toUpperCase()) &&
-    ['MANUAL', 'TELEOP'].includes((target.mode || '').toUpperCase());
+  // Gateway belum punya kredensial perangkat, jadi gerak hanya dibuka eksplisit lewat ALLOW_ROBOT_MOTION
+  // (uji robot fisik yang diawasi). Robot sendiri menerima TELEOP tanpa syarat mode, jadi bukti
+  // status/mode tidak diminta saat dibuka.
+  const canMove = motionAllowed && connected && !!target && ['ADMIN', 'FARMASI', 'OPERATOR'].includes(user?.role?.toUpperCase() || '');
   const gate = useRef({ canMove, targetId, connected });
   gate.current = { canMove, targetId, connected };
 

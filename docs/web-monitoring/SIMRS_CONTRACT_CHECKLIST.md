@@ -11,4 +11,4 @@ Sumber aktual kontrak: `../../api-contracts/` (`web-monitoring-integration.md`, 
 | POST `/api/v1/monitoring/delivery-status` | state machine, idempotency regex, 400/404/409/422/503; handover manusia | Validasi client, header/token, write gate | Unit invalid input; publik write off |
 | WebSocket/Kafka | DRAF, trigger belum lengkap | Tidak diimplementasikan sebagai SIMRS | BLOCKED sesuai dokumen |
 
-Catatan: `MOCK_HANDOVER_CONFIRMED` tidak termasuk status monitoring yang dapat dikirim. `compartmentNo` hanya valid pada `MOCK_ARRIVED_AT_ROOM`. Status dicocokkan dengan kode, bukan label.
+Catatan: `HANDOVER_CONFIRMED` tidak termasuk status monitoring yang dapat dikirim. `compartmentNo` hanya valid pada `ARRIVED_AT_ROOM`. Status dicocokkan dengan kode, bukan label.

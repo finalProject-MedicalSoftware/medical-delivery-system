@@ -9,6 +9,7 @@ import { bedDisplayName } from "@/lib/bed-info";
 import Select from "@/components/Select";
 import Link from "next/link";
 import { ArrowLeft, Plus, Trash2, FileText, AlertTriangle, Biohazard, Clock } from "lucide-react";
+import { findAllergyConflicts, HANDLING_LABELS, PRIORITY_LABELS } from "@/lib/clinical";
 import { inputCls, labelCls, cardCls, btnPrimary, btnSecondary } from "@/components/ui";
 
 interface Patient {
@@ -18,6 +19,7 @@ interface Patient {
   roomCode: string | null;
   diagnosis: string | null;
   isInfectious: boolean;
+  allergies: string[];
   bed: { bedNumber: string } | null;
 }
 interface Medicine {
@@ -26,6 +28,7 @@ interface Medicine {
   code: string;
   unit: string;
   stock: number;
+  handling: string;
 }
 interface PrescriptionItem {
   medicineId: string;
@@ -51,6 +54,11 @@ export default function CreatePrescriptionForm({
   const [items, setItems] = useState<PrescriptionItem[]>([
     { medicineId: "", quantity: 1, instructions: "" },
   ]);
+  const [allergyAck, setAllergyAck] = useState(false);
+  const conflicts = findAllergyConflicts(
+    selectedPatient?.allergies ?? [],
+    items.map((i) => medicines.find((m) => m.id === i.medicineId)).filter((m): m is Medicine => !!m)
+  );
   const confirm = useConfirm();
   const formRef = useRef<HTMLFormElement>(null);
 
@@ -83,6 +91,10 @@ export default function CreatePrescriptionForm({
   }
 
   async function handleConfirmSubmit() {
+    if (conflicts.length > 0 && !allergyAck) {
+      setError("Ada peringatan alergi. Centang pernyataan risiko untuk melanjutkan.");
+      return;
+    }
     const ok = await confirm({
       title: "Ajukan resep?",
       message: `Resep dengan ${items.length} item obat akan diajukan ke farmasi.`,
@@ -110,7 +122,7 @@ export default function CreatePrescriptionForm({
         </Link>
         <h1 className="flex items-center gap-2 text-xl font-bold text-slate-900">
           <FileText className="h-5 w-5 text-teal-700" />
-          Buat Resep Simulasi
+          Buat Resep
         </h1>
       </div>
 
@@ -121,7 +133,26 @@ export default function CreatePrescriptionForm({
         </div>
       )}
 
+      {conflicts.length > 0 && (
+        <div role="alert" className="rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900">
+          <p className="flex items-center gap-2 font-semibold">
+            <AlertTriangle className="h-4 w-4" />
+            Peringatan alergi
+          </p>
+          <ul className="mt-1 list-disc pl-6">
+            {conflicts.map((c) => (
+              <li key={c.medicine}>{c.medicine} - pasien alergi {c.allergy}</li>
+            ))}
+          </ul>
+          <label className="mt-3 flex items-center gap-2">
+            <input type="checkbox" checked={allergyAck} onChange={(e) => setAllergyAck(e.target.checked)} className="h-4 w-4 accent-amber-700" />
+            Saya sudah menilai risiko dan tetap meresepkan.
+          </label>
+        </div>
+      )}
+
       <form ref={formRef} onSubmit={(e) => e.preventDefault()} className="space-y-5">
+        <input type="hidden" name="allergyAck" value={allergyAck ? "1" : "0"} />
         <input type="hidden" id="items-json" name="items" value={JSON.stringify(items)} />
 
         {/* Patient selection */}
@@ -130,11 +161,11 @@ export default function CreatePrescriptionForm({
           <div className="grid gap-4 md:grid-cols-2">
             <div>
               <label htmlFor="patientId" className={labelCls}>
-                Pasien Sintetis <span className="text-rose-500">*</span>
+                Pasien <span className="text-rose-500">*</span>
               </label>
               <Select
                 name="patientId"
-                ariaLabel="Pasien sintetis"
+                ariaLabel="Pasien"
                 placeholder="- Pilih Pasien -"
                 value={patientId}
                 onChange={setPatientId}
@@ -160,6 +191,12 @@ export default function CreatePrescriptionForm({
                   {selectedPatient.diagnosis && (
                     <p className="mt-0.5">Diagnosis: {selectedPatient.diagnosis}</p>
                   )}
+                  {selectedPatient.allergies.length > 0 && (
+                    <p className="mt-1 flex items-center gap-1 font-semibold text-amber-800">
+                      <AlertTriangle className="h-3.5 w-3.5" />
+                      Alergi: {selectedPatient.allergies.join(", ")}
+                    </p>
+                  )}
                   {selectedPatient.isInfectious && (
                     <p className="mt-1 flex items-center gap-1 font-semibold text-rose-700">
                       <Biohazard className="h-3.5 w-3.5" />
@@ -170,6 +207,14 @@ export default function CreatePrescriptionForm({
               )}
             </div>
             <div>
+              <label htmlFor="priority" className={labelCls}>Prioritas</label>
+              <select id="priority" name="priority" defaultValue="ROUTINE" className={inputCls}>
+                {Object.entries(PRIORITY_LABELS).map(([v, l]) => (
+                  <option key={v} value={v}>{l}</option>
+                ))}
+              </select>
+            </div>
+            <div className="md:col-span-2">
               <label htmlFor="notes" className={labelCls}>
                 Catatan (opsional)
               </label>
@@ -228,7 +273,7 @@ export default function CreatePrescriptionForm({
                       onChange={(v) => updateItem(idx, "medicineId", v)}
                       options={medicines.map((m) => ({
                         value: m.id,
-                        label: `${m.name} (${m.unit}) - stok: ${m.stock}`,
+                        label: `${m.name} (${m.unit}) - stok: ${m.stock}${m.handling !== "NONE" ? ` · ${HANDLING_LABELS[m.handling as keyof typeof HANDLING_LABELS]}` : ""}`,
                       }))}
                     />
                   </div>

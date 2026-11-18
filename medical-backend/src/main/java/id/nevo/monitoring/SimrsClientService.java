@@ -37,7 +37,7 @@ public class SimrsClientService {
     private static final String PATIENTS = "/api/v1/monitoring/patients";
     private static final String DELIVERY_STATUS = "/api/v1/monitoring/delivery-status";
     private static final Set<String> MONITORING_STATUSES = Set.of(
-            "DELIVERY_REQUESTED", "PENDING_INTEGRATION", "MOCK_IN_TRANSIT", "MOCK_ARRIVED_AT_ROOM", "CANCELLED");
+            "DELIVERY_REQUESTED", "PENDING_INTEGRATION", "IN_TRANSIT", "ARRIVED_AT_ROOM", "CANCELLED");
 
     private final SimrsProperties properties;
     private final JdbcTemplate db;
@@ -386,16 +386,18 @@ public class SimrsClientService {
     }
     public JsonNode getPatient(String mrn) { return getJson(PATIENT + URLEncoder.encode(mrn, StandardCharsets.UTF_8)); }
     public JsonNode getPatients(String query, String cursor, int limit) {
-        StringBuilder path = new StringBuilder(PATIENTS).append("?infectiousOnly=true&limit=").append(Math.max(1, Math.min(limit, 100)));
+        StringBuilder path = new StringBuilder(PATIENTS).append("?deliveryReady=true&limit=").append(Math.max(1, Math.min(limit, 100)));
         if (query != null && !query.isBlank()) path.append("&query=").append(URLEncoder.encode(query.trim(), StandardCharsets.UTF_8));
         if (cursor != null && !cursor.isBlank()) path.append("&cursor=").append(URLEncoder.encode(cursor.trim(), StandardCharsets.UTF_8));
         JsonNode response = getJson(path.toString());
         JsonNode patients = response.path("patients");
         if (!patients.isArray()) throw new IllegalStateException("Daftar pasien SIMRS tidak sesuai kontrak");
         for (JsonNode patient : patients) {
-            JsonNode flag = patient.get("isInfectious");
+            // Hanya pasien dengan pengantaran yang sudah dikirim ke robot (menular, atau tidak menular
+            // dengan alasan dari petugas). SIMRS yang menentukan; backend memverifikasi bentuknya.
+            JsonNode flag = patient.get("robotEligible");
             if (flag == null || !flag.isBoolean() || !flag.asBoolean()) {
-                throw new IllegalStateException("Filter penyakit menular SIMRS tidak dapat diverifikasi");
+                throw new IllegalStateException("Kelayakan pengantaran robot SIMRS tidak dapat diverifikasi");
             }
         }
         return response;
@@ -470,11 +472,11 @@ public class SimrsClientService {
     }
 
     private void validateStatusRequest(String requestCode, String toStatus, Integer compartmentNo, String key) {
-        if ("MOCK_HANDOVER_CONFIRMED".equals(toStatus)) throw new IllegalArgumentException("Konfirmasi serah-terima hanya boleh melalui scan manusia di SIMRS");
+        if ("HANDOVER_CONFIRMED".equals(toStatus)) throw new IllegalArgumentException("Konfirmasi serah-terima hanya boleh melalui scan manusia di SIMRS");
         if (blank(requestCode) || blank(toStatus) || !MONITORING_STATUSES.contains(toStatus)) throw new IllegalArgumentException("requestCode dan toStatus kontrak wajib valid");
         if (key != null && !key.matches("^[A-Za-z0-9._:-]{1,64}$")) throw new IllegalArgumentException("idempotencyKey tidak sesuai kontrak");
         if (compartmentNo != null && compartmentNo < 0) throw new IllegalArgumentException("compartmentNo harus integer >= 0");
-        if (compartmentNo != null && !"MOCK_ARRIVED_AT_ROOM".equals(toStatus)) throw new IllegalArgumentException("compartmentNo hanya boleh saat MOCK_ARRIVED_AT_ROOM");
+        if (compartmentNo != null && !"ARRIVED_AT_ROOM".equals(toStatus)) throw new IllegalArgumentException("compartmentNo hanya boleh saat ARRIVED_AT_ROOM");
     }
 
     private JsonNode getJson(String path) {

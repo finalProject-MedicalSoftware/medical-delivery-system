@@ -129,7 +129,7 @@ export default function RoomForm({
                 className={`${inputCls} font-mono ${isEdit ? "bg-slate-100 text-slate-500" : ""}`}
               />
               {isEdit && (
-                <p className="mt-1 text-[11px] text-slate-500">
+                <p className="mt-1 text-xs text-slate-500">
                   Kode stabil dan tidak dapat diubah setelah dibuat.
                 </p>
               )}
