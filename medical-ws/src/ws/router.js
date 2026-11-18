@@ -149,8 +149,11 @@ const DOWNLINK_CODES = new Set([
   'MAPPING_START', 'MAPPING_STOP', 'MAPPING_SAVE', 'MAPPING_FLAG',
   'MAP_SELECTED', 'MAP_DATA',
   'INTERRUPT', 'INTERRUPT_CONFIRM', 'INTERRUPT_CANCEL',
-  'PICKUP_CONFIRM'
+  'PICKUP_CONFIRM',
+  // HMI tablet -> robot (bukan gerak): selesai menjelaskan obat, status video call
+  'PRESENT_DONE', 'CALL_STATE'
 ]);
+const NON_MOTION_CODES = new Set(['PRESENT_DONE', 'CALL_STATE']);
 
 function resolveTarget(msg) {
   const d = msg.data;
@@ -174,7 +177,7 @@ async function handleUIDownlink(socket, msg) {
   }
   const target = resolveTarget(msg);
   if (!target) return send(socket, { code: 'ERROR', data: { error: 'ROBOT_ID_REQUIRED' } });
-  if (!config.ALLOW_ROBOT_MOTION && !isTargetedStop(msg.code, msg.data)) {
+  if (!config.ALLOW_ROBOT_MOTION && !NON_MOTION_CODES.has(msg.code) && !isTargetedStop(msg.code, msg.data)) {
     return send(socket, { code: 'ERROR', data: { error: 'DEVICE_AUTH_UNAVAILABLE' } });
   }
   const eligible = await registry.lookup(target);
