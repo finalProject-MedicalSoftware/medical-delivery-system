@@ -5,6 +5,7 @@ import { requirePermission } from "@/lib/auth";
 import { PERMISSION_CODES } from "@/lib/rbac";
 import { createPrescriptionSchema, verifyPrescriptionSchema } from "@/lib/validations";
 import { findAllergyConflicts } from "@/lib/clinical";
+import { buildInstructions } from "@/lib/dosage";
 import { revalidatePath } from "next/cache";
 import { PrescriptionStatus } from "@prisma/client";
 
@@ -77,7 +78,17 @@ export async function createPrescriptionAction(
           create: parsed.data.items.map((item) => ({
             medicineId: item.medicineId,
             quantity: item.quantity,
-            instructions: item.instructions,
+            doseAmount: item.doseAmount,
+            doseUnit: item.doseUnit.trim(),
+            timesPerDay: item.timesPerDay,
+            mealTiming: item.mealTiming,
+            durationDays: item.durationDays ?? null,
+            adminRoute: item.adminRoute,
+            doseNote: item.doseNote?.trim() || null,
+            instructions: buildInstructions({
+              amount: item.doseAmount, unit: item.doseUnit.trim(), timesPerDay: item.timesPerDay, mealTiming: item.mealTiming,
+              durationDays: item.durationDays ?? null, route: item.adminRoute, note: item.doseNote ?? null,
+            }),
           })),
         },
       },

@@ -45,4 +45,5 @@ assert.strictEqual(commandFrames('CMD_SET_SPEED', { speed: 1 }, 'TFRB5', 'c', cf
 assert.strictEqual(commandFrames('CMD_UNKNOWN', {}, 'TFRB5', 'c', cfg).error, 'CODE_NOT_ALLOWED');
 
 assert.ok(BACKEND_EVENT_CODES.has('GOAL_COMPLETE') && !BACKEND_EVENT_CODES.has('POSITION'));
+assert.ok(BACKEND_EVENT_CODES.has('PICKUP_CONFIRM') && BACKEND_EVENT_CODES.has('PHASE'), 'uplink serah-terima harus diteruskan');
 console.log('frames-check OK');

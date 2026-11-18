@@ -94,6 +94,6 @@ function commandFrames(command, params, robotId, commandId, cfg) {
 }
 
 /** Uplink robot yang diteruskan ke backend (status misi). */
-const BACKEND_EVENT_CODES = new Set(['GOAL_COMPLETE', 'ACK', 'ERROR', 'ROBOT_STUCK', 'READY']);
+const BACKEND_EVENT_CODES = new Set(['GOAL_COMPLETE', 'ACK', 'ERROR', 'ROBOT_STUCK', 'READY', 'PICKUP_CONFIRM', 'PHASE']);
 
 module.exports = { teleopVectors, uiFrame, commandFrames, BACKEND_EVENT_CODES };

@@ -54,6 +54,20 @@ export default async function PengantaranDetailPage({
         <StatusBadge status={delivery.status} />
       </div>
 
+      {delivery.status === "NOT_COLLECTED" && (
+        <div role="alert" className="rounded-xl border border-rose-300 bg-rose-50 p-4 text-sm text-rose-900">
+          <p className="font-semibold">Obat tidak diambil pasien</p>
+          <p className="mt-1">
+            Robot tiba tetapi obat tidak diambil sampai batas waktu, lalu membawanya kembali. Resep dapat diajukan ulang untuk pengantaran baru.
+          </p>
+          <p className="mt-1 text-rose-800">
+            {delivery.notCollectedAckAt
+              ? `Sudah ditindaklanjuti oleh ${delivery.notCollectedAckBy} pada ${new Date(delivery.notCollectedAckAt).toLocaleString("id-ID")}.`
+              : "Belum ditindaklanjuti. Tandai dari dashboard setelah obat diambil dari robot."}
+          </p>
+        </div>
+      )}
+
       <div className="grid gap-4 md:grid-cols-2">
         {/* Delivery info */}
         <div className={cardCls}>

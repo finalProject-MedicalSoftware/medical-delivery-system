@@ -20,6 +20,7 @@ export const DELIVERY_STATUS_LABELS: Record<DeliveryStatus, string> = {
   IN_TRANSIT: "Dalam Perjalanan",
   ARRIVED_AT_ROOM: "Tiba di Ruangan",
   HANDOVER_CONFIRMED: "Serah Terima Selesai",
+  NOT_COLLECTED: "Obat Tidak Diambil",
   CANCELLED: "Dibatalkan",
 };
 
@@ -29,6 +30,7 @@ export const DELIVERY_STATUS_TONES: Record<DeliveryStatus, string> = {
   IN_TRANSIT: "sky",
   ARRIVED_AT_ROOM: "emerald",
   HANDOVER_CONFIRMED: "teal",
+  NOT_COLLECTED: "rose",
   CANCELLED: "slate",
 };
 
@@ -53,7 +55,8 @@ export const DELIVERY_TRANSITIONS: Partial<Record<DeliveryStatus, DeliveryStatus
   PENDING_INTEGRATION: ["IN_TRANSIT", "CANCELLED"],
   IN_TRANSIT: ["ARRIVED_AT_ROOM", "CANCELLED"],
   // Serah-terima hanya dari scan QR, bukan tombol UI / lemparan monitoring.
-  ARRIVED_AT_ROOM: ["HANDOVER_CONFIRMED"],
+  // NOT_COLLECTED boleh dilaporkan robot/backend (timeout pengambilan); terminal.
+  ARRIVED_AT_ROOM: ["HANDOVER_CONFIRMED", "NOT_COLLECTED"],
 };
 
 /** Status pengantaran yang masih berjalan (untuk read API monitoring). */
@@ -83,6 +86,7 @@ export const MONITORING_VISIBLE_WHERE = {
           "IN_TRANSIT",
           "ARRIVED_AT_ROOM",
           "HANDOVER_CONFIRMED",
+          "NOT_COLLECTED",
         ] as DeliveryStatus[],
       },
     },

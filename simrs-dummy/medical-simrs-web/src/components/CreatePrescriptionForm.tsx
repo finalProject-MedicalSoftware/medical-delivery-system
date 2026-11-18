@@ -10,6 +10,7 @@ import Select from "@/components/Select";
 import Link from "next/link";
 import { ArrowLeft, Plus, Trash2, FileText, AlertTriangle, Biohazard, Clock } from "lucide-react";
 import { findAllergyConflicts, HANDLING_LABELS, PRIORITY_LABELS } from "@/lib/clinical";
+import { buildInstructions, MEAL_TIMING_LABELS, ROUTE_LABELS, validateDose, type MealTiming, type Route } from "@/lib/dosage";
 import { inputCls, labelCls, cardCls, btnPrimary, btnSecondary } from "@/components/ui";
 
 interface Patient {
@@ -32,9 +33,20 @@ interface Medicine {
 }
 interface PrescriptionItem {
   medicineId: string;
-  quantity: number;
-  instructions: string;
+  quantity: number; // jumlah total yang diserahkan
+  doseAmount: number; // per sekali pakai
+  doseUnit: string; // kosong = satuan obat
+  timesPerDay: number;
+  mealTiming: MealTiming;
+  durationDays: number | null;
+  adminRoute: Route;
+  doseNote: string;
 }
+
+const newItem = (): PrescriptionItem => ({
+  medicineId: "", quantity: 1, doseAmount: 1, doseUnit: "", timesPerDay: 3,
+  mealTiming: "AFTER_MEAL", durationDays: null, adminRoute: "ORAL", doseNote: "",
+});
 
 export default function CreatePrescriptionForm({
   patients,
@@ -51,9 +63,7 @@ export default function CreatePrescriptionForm({
   const selectedPatient = patients.find((p) => p.id === patientId);
   const router = useRouter();
   const toast = useToast();
-  const [items, setItems] = useState<PrescriptionItem[]>([
-    { medicineId: "", quantity: 1, instructions: "" },
-  ]);
+  const [items, setItems] = useState<PrescriptionItem[]>([newItem()]);
   const [allergyAck, setAllergyAck] = useState(false);
   const conflicts = findAllergyConflicts(
     selectedPatient?.allergies ?? [],
@@ -79,18 +89,28 @@ export default function CreatePrescriptionForm({
   }
 
   function addItem() {
-    setItems((prev) => [...prev, { medicineId: "", quantity: 1, instructions: "" }]);
+    setItems((prev) => [...prev, newItem()]);
   }
 
   function removeItem(idx: number) {
     setItems((prev) => prev.filter((_, i) => i !== idx));
   }
 
-  function updateItem(idx: number, field: keyof PrescriptionItem, value: string | number) {
+  function updateItem<K extends keyof PrescriptionItem>(idx: number, field: K, value: PrescriptionItem[K]) {
     setItems((prev) => prev.map((it, i) => (i === idx ? { ...it, [field]: value } : it)));
   }
 
+  const doseOf = (it: PrescriptionItem) => ({
+    amount: it.doseAmount, unit: it.doseUnit.trim() || medicines.find((m) => m.id === it.medicineId)?.unit || "",
+    timesPerDay: it.timesPerDay, mealTiming: it.mealTiming, durationDays: it.durationDays,
+    route: it.adminRoute, note: it.doseNote || null,
+  });
+
   async function handleConfirmSubmit() {
+    for (const [i, it] of items.entries()) {
+      const bad = !it.medicineId ? "Pilih obat" : validateDose(doseOf(it));
+      if (bad) { setError(`Obat #${i + 1}: ${bad}`); return; }
+    }
     if (conflicts.length > 0 && !allergyAck) {
       setError("Ada peringatan alergi. Centang pernyataan risiko untuk melanjutkan.");
       return;
@@ -153,7 +173,7 @@ export default function CreatePrescriptionForm({
 
       <form ref={formRef} onSubmit={(e) => e.preventDefault()} className="space-y-5">
         <input type="hidden" name="allergyAck" value={allergyAck ? "1" : "0"} />
-        <input type="hidden" id="items-json" name="items" value={JSON.stringify(items)} />
+        <input type="hidden" id="items-json" name="items" value={JSON.stringify(items.map((it) => ({ ...it, doseUnit: doseOf(it).unit, doseNote: it.doseNote || null })))} />
 
         {/* Patient selection */}
         <div className={cardCls}>
@@ -290,20 +310,53 @@ export default function CreatePrescriptionForm({
                       className={inputCls}
                     />
                   </div>
-                  <div>
-                    <label className="mb-1 block text-xs text-slate-500">
-                      Aturan Pakai <span className="text-rose-500">*</span>
-                    </label>
-                    <input
-                      type="text"
-                      required
-                      placeholder="3x1 tablet sesudah makan"
-                      value={item.instructions}
-                      onChange={(e) => updateItem(idx, "instructions", e.target.value)}
-                      className={inputCls}
-                    />
-                  </div>
                 </div>
+
+                <fieldset className="mt-4 rounded-lg border border-slate-200 bg-white p-3">
+                  <legend className="px-1 text-xs font-semibold text-slate-600">Aturan pakai</legend>
+                  <div className="grid gap-3 md:grid-cols-4">
+                    <div>
+                      <label className="mb-1 block text-xs text-slate-500">Jumlah per dosis</label>
+                      <input type="number" min={0.25} step={0.25} value={item.doseAmount}
+                        onChange={(e) => updateItem(idx, "doseAmount", parseFloat(e.target.value))} className={inputCls} />
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-xs text-slate-500">Satuan</label>
+                      <input type="text" value={item.doseUnit} placeholder={medicines.find((m) => m.id === item.medicineId)?.unit ?? "tablet"}
+                        onChange={(e) => updateItem(idx, "doseUnit", e.target.value)} className={inputCls} />
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-xs text-slate-500">Kali sehari</label>
+                      <input type="number" min={1} max={6} value={item.timesPerDay}
+                        onChange={(e) => updateItem(idx, "timesPerDay", parseInt(e.target.value))} className={inputCls} />
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-xs text-slate-500">Lama (hari, opsional)</label>
+                      <input type="number" min={1} max={90} value={item.durationDays ?? ""}
+                        onChange={(e) => updateItem(idx, "durationDays", e.target.value === "" ? null : parseInt(e.target.value))} className={inputCls} />
+                    </div>
+                    <div className="md:col-span-2">
+                      <label className="mb-1 block text-xs text-slate-500">Waktu terhadap makan</label>
+                      <select value={item.mealTiming} onChange={(e) => updateItem(idx, "mealTiming", e.target.value as MealTiming)} className={inputCls}>
+                        {Object.entries(MEAL_TIMING_LABELS).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+                      </select>
+                    </div>
+                    <div className="md:col-span-2">
+                      <label className="mb-1 block text-xs text-slate-500">Cara pemakaian</label>
+                      <select value={item.adminRoute} onChange={(e) => updateItem(idx, "adminRoute", e.target.value as Route)} className={inputCls}>
+                        {Object.entries(ROUTE_LABELS).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+                      </select>
+                    </div>
+                    <div className="md:col-span-4">
+                      <label className="mb-1 block text-xs text-slate-500">Catatan (opsional)</label>
+                      <input type="text" maxLength={150} value={item.doseNote} placeholder="cth: bila demam"
+                        onChange={(e) => updateItem(idx, "doseNote", e.target.value)} className={inputCls} />
+                    </div>
+                  </div>
+                  <p className="mt-3 rounded-md bg-slate-50 px-3 py-2 text-sm text-slate-700" aria-live="polite">
+                    {validateDose(doseOf(item)) ? "Lengkapi aturan pakai." : buildInstructions(doseOf(item))}
+                  </p>
+                </fieldset>
               </div>
             ))}
           </div>

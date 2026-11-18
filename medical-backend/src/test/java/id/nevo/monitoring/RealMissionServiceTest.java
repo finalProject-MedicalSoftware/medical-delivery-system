@@ -129,4 +129,26 @@ class RealMissionServiceTest {
         verify(db).update(contains("status='CANCELLED'"), eq(missionId));
         verify(simrs, timeout(2000)).postDeliveryStatus(eq("DELIV-3"), eq("CANCELLED"), anyString(), isNull(), anyString());
     }
+
+    @Test
+    void pickupNotCollectedReportsNotCollectedToSimrs() {
+        when(simrs.isWriteLive()).thenReturn(true);
+        when(simrs.postDeliveryStatus(any(), any(), any(), any(), any())).thenReturn(Map.of("httpStatus", 200));
+        when(db.queryForList(contains("m.status='SUCCEEDED' AND m.manifest_sequence=?"), eq("TFRB5"), eq(1)))
+                .thenReturn(List.of(Map.of("id", missionId, "request_code", "DELIV-5", "room_code", "R-1")));
+
+        service.onRobotEvent("PICKUP_CONFIRM", Map.of("robot_id", "TFRB5", "sequence", 1, "method", "TIMEOUT", "collected", false));
+
+        verify(simrs, timeout(2000)).postDeliveryStatus(eq("DELIV-5"), eq("NOT_COLLECTED"), anyString(), isNull(), contains(":NOT_COLLECTED"));
+    }
+
+    @Test
+    void pickupCollectedDoesNotTouchSimrs() {
+        when(db.queryForList(contains("m.status='SUCCEEDED' AND m.manifest_sequence=?"), eq("TFRB5"), eq(1)))
+                .thenReturn(List.of(Map.of("id", missionId, "request_code", "DELIV-5", "room_code", "R-1")));
+
+        service.onRobotEvent("PICKUP_CONFIRM", Map.of("robot_id", "TFRB5", "sequence", 1, "method", "CAMERA", "collected", true));
+
+        verifyNoInteractions(simrs);
+    }
 }

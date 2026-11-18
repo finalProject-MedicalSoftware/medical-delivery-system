@@ -49,6 +49,13 @@ Array kosong bila resep tak punya item. Backend: `SimrsClientService` sudah memb
 
 Saran perilaku robot/HMI: tampilkan `STAT`/`URGENT` lebih dulu di antrean; `COLD_CHAIN`/`CONTROLLED` wajib ditandai pada panduan serah-terima; tampilkan `allergies` saat verifikasi identitas pasien. Keputusan klinis tetap di SIMRS/manusia.
 
+### 1c. Aturan pakai terstruktur `items[].dose` — BARU (aditif)
+```json
+"dose": { "amount": 0.5, "unit": "tablet", "timesPerDay": 3, "mealTiming": "AFTER_MEAL",
+          "durationDays": 5, "route": "CHEW", "note": "bila demam" }
+```
+`mealTiming`: `ANYTIME` | `BEFORE_MEAL` | `AFTER_MEAL` | `WITH_MEAL`. `route`: `ORAL` | `CHEW` | `DISSOLVE` | `DROPS` | `TOPICAL` | `INHALE` | `INJECTION`. `amount` boleh pecahan (0,25 / 0,5 / 0,75 / 1,5 ...). `durationDays` dan `note` boleh `null`. `dose` bernilai **`null` pada resep lama** (sebelum perubahan ini): konsumen wajib jatuh kembali ke teks `instructions`. `instructions` tetap ada dan kini dibuat otomatis dari field terstruktur (contoh: "Minum 1 tablet, 3 kali sehari, sesudah makan, selama 5 hari.").
+
 ### 2. `actor` pada event outbox/webhook — BARU (opsional)
 `data.actor` = username petugas yang melakukan transisi (manusia yang login). Tidak ada untuk transisi yang dilempar monitoring (`delivery-status`). Envelope tetap `v:1`; konsumen yang tidak mengenalnya mengabaikan.
 
@@ -60,6 +67,9 @@ Saran perilaku robot/HMI: tampilkan `STAT`/`URGENT` lebih dulu di antrean; `COLD
 
 ## Pasien yang "dipanggil" monitoring
 `GET /api/v1/monitoring/patients?deliveryReady=true` hanya mengembalikan pasien yang punya pengantaran yang **sudah dikirim ke robot**. Tiap pasien membawa `robotEligible` (ada pengantaran terkirim DAN (menular ATAU petugas menulis alasan)), `robotReason`, dan `activeDeliveries[{requestCode,status}]`. `GET /monitoring/patient/{mrn}` membawa `robotEligible`/`robotReason` pada objek `patient`. Backend (`getPatients`, `MissionPlanningService`) dan dashboard (`/missions/create`) memakai `robotEligible`, bukan `isInfectious`, sebagai syarat pembuatan misi. Parameter lama `infectiousOnly` tetap ada.
+
+## Status baru `NOT_COLLECTED` (obat tidak diambil)
+Dilaporkan backend/robot saat `ARRIVED_AT_ROOM` dan pasien tidak mengambil obat sampai batas waktu (robot membawa obat kembali). `POST /monitoring/delivery-status` `{toStatus:"NOT_COLLECTED"}` hanya sah dari `ARRIVED_AT_ROOM`; status **terminal** (tidak ada transisi keluar, tidak termasuk "aktif", tetap terlihat monitoring). SIMRS menampilkan peringatan di dashboard ("Obat tidak diambil pasien") sampai perawat menekan **Sudah ditindaklanjuti**; resep dapat diajukan ulang untuk pengantaran baru. Alur backend: robot `PICKUP_CONFIRM {sequence, method:"TIMEOUT", collected:false}` → gateway → `POST /internal/robot-events` → SIMRS `NOT_COLLECTED` (idempotencyKey `m:<missionId>:NOT_COLLECTED`).
 
 ## Perilaku SIMRS yang berdampak pada konsumen
 - Pasien **tidak bisa dipindah ruang** saat punya pengantaran aktif (status DELIVERY_REQUESTED/PENDING_INTEGRATION/IN_TRANSIT/ARRIVED_AT_ROOM). Tujuan pengantaran karenanya tidak berubah di tengah jalan; pindah ruang baru diizinkan setelah serah-terima atau pembatalan.

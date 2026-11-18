@@ -29,3 +29,8 @@ Gateway: gate `ALLOW_ROBOT_MOTION`, konversi frame TIFA (`src/core/robot-frames.
 - `mvn test`: 7 tes lama gagal **sebelum** perubahan ini (`RobotCommandP1Test`, `RobotRegistryRestP4Test`, `MissionPlanningServiceTest` fixture); fixture yang terakhir sudah diperbaiki di patch, sisanya tidak disentuh.
 - Backend: `medicineName` pada antrean kini terisi dari `items[]` (kontrak aditif sebelumnya).
 - Deploy serentak SIMRS + backend + dashboard karena rename status.
+
+## 6. Tambahan 2026-11-18 (belum di branch rekan; ada di hub)
+- Gateway: `PICKUP_CONFIRM` dan `PHASE` ikut diteruskan ke `/internal/robot-events` (`BACKEND_EVENT_CODES`).
+- Backend `RealMissionService`: `PICKUP_CONFIRM {collected:false}` → SIMRS `NOT_COLLECTED` (+2 tes). Detail kontrak: `KONTRAK-DATA-SIMRS-KE-WEB.md`.
+- SIMRS: `items[].dose` terstruktur; status `NOT_COLLECTED`.

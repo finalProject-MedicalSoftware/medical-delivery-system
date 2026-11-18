@@ -20,6 +20,7 @@ const DELIVERY_SEVERITIES: Record<DeliveryStatus, string> = {
   IN_TRANSIT: "info",
   ARRIVED_AT_ROOM: "ok",
   HANDOVER_CONFIRMED: "ok",
+  NOT_COLLECTED: "bad",
   CANCELLED: "muted",
 };
 

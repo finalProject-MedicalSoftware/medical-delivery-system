@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { validateDose } from "@/lib/dosage";
 
 export const patientSchema = z.object({
   mrn: z.string().min(3, "MRN wajib diisi minimal 3 karakter"),
@@ -44,7 +45,20 @@ export const medicineSchema = z.object({
 export const prescriptionItemSchema = z.object({
   medicineId: z.string().min(1, "Obat wajib dipilih"),
   quantity: z.number().int().positive("Kuantitas minimal 1"),
-  instructions: z.string().min(3, "Instruksi aturan pakai wajib diisi"),
+  // Aturan pakai terstruktur; teks `instructions` dibuat server dari field ini (lib/dosage.ts).
+  doseAmount: z.number(),
+  doseUnit: z.string(),
+  timesPerDay: z.number(),
+  mealTiming: z.enum(["ANYTIME", "BEFORE_MEAL", "AFTER_MEAL", "WITH_MEAL"]).default("ANYTIME"),
+  durationDays: z.number().nullable().optional(),
+  adminRoute: z.enum(["ORAL", "CHEW", "DISSOLVE", "DROPS", "TOPICAL", "INHALE", "INJECTION"]).default("ORAL"),
+  doseNote: z.string().nullable().optional(),
+}).superRefine((item, ctx) => {
+  const err = validateDose({
+    amount: item.doseAmount, unit: item.doseUnit, timesPerDay: item.timesPerDay, mealTiming: item.mealTiming,
+    durationDays: item.durationDays ?? null, route: item.adminRoute, note: item.doseNote ?? null,
+  });
+  if (err) ctx.addIssue({ code: "custom", message: err });
 });
 
 // Jadwal minum (kontrak web-monitoring-integration.md §1.2): "HH:mm",

@@ -255,6 +255,23 @@ model Prescription {
   @@map("t_prescription")
 }
 
+enum MealTiming {
+  ANYTIME
+  BEFORE_MEAL
+  AFTER_MEAL
+  WITH_MEAL
+}
+
+enum AdminRoute {
+  ORAL
+  CHEW
+  DISSOLVE
+  DROPS
+  TOPICAL
+  INHALE
+  INJECTION
+}
+
 model PrescriptionItem {
   id             String       @id @default(cuid())
   prescriptionId String       @map("prescription_id")
@@ -262,7 +279,15 @@ model PrescriptionItem {
   medicineId     String       @map("medicine_id")
   medicine       Medicine     @relation(fields: [medicineId], references: [id])
   quantity       Int
-  instructions   String       // e.g. "3x1 tablet sesudah makan"
+  instructions   String       // teks turunan dari field terstruktur (lib/dosage.ts), tetap ada untuk konsumen lama
+  // Aturan pakai terstruktur (dibaca HMI robot). Null pada resep lama sebelum perubahan ini.
+  doseAmount     Float?       @map("dose_amount") // jumlah per sekali pakai (boleh 0,5)
+  doseUnit       String?      @map("dose_unit")
+  timesPerDay    Int?         @map("times_per_day")
+  mealTiming     MealTiming   @default(ANYTIME) @map("meal_timing")
+  durationDays   Int?         @map("duration_days")
+  adminRoute     AdminRoute   @default(ORAL) @map("admin_route")
+  doseNote       String?      @map("dose_note")
   createdAt      DateTime     @default(now()) @map("created_at")
 
   @@map("t_prescription_item")
@@ -278,6 +303,7 @@ enum DeliveryStatus {
   IN_TRANSIT
   ARRIVED_AT_ROOM
   HANDOVER_CONFIRMED
+  NOT_COLLECTED // robot tiba tapi obat tidak diambil (timeout); terminal, perawat diberi tahu
   CANCELLED
 }
 
@@ -292,6 +318,8 @@ model DeliveryRequest {
   requestedBy    User           @relation("UserDeliveryRequests", fields: [requestedById], references: [id])
   status         DeliveryStatus @default(DELIVERY_REQUESTED)
   notes          String?
+  notCollectedAckAt DateTime?   @map("not_collected_ack_at") // perawat sudah menindaklanjuti NOT_COLLECTED
+  notCollectedAckBy String?     @map("not_collected_ack_by")
   robotReason    String?        @map("robot_reason") // Alasan pengantaran robot untuk pasien tidak menular
   requestedAt    DateTime       @default(now()) @map("requested_at")
   updatedAt      DateTime       @updatedAt @map("updated_at")

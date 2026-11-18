@@ -149,6 +149,11 @@ public class RealMissionService {
                 else note(robotId, "Robot melaporkan error " + data.get("error_code") + ": " + msg);
             }
             case "ROBOT_STUCK" -> note(robotId, "Robot tersangkut: " + data.get("reason"));
+            case "PICKUP_CONFIRM" -> {
+                Object seq = data.get("sequence");
+                if (seq instanceof Number n) pickup(robotId, n.intValue(), !Boolean.FALSE.equals(data.get("collected")),
+                        Objects.toString(data.get("method"), "UNKNOWN"));
+            }
             default -> { }
         }
     }
@@ -188,6 +193,23 @@ public class RealMissionService {
         broadcast(m, "SUCCEEDED", "Robot berhasil tiba di lokasi tujuan");
         Integer compartment = m.get("compartment_no") instanceof Number n ? n.intValue() : null;
         postSimrs(id, (String) m.get("request_code"), "ARRIVED_AT_ROOM", "Robot " + robotId + " tiba di ruang " + m.get("room_code") + "; serah-terima oleh manusia.", compartment);
+    }
+
+    /** Hasil pengambilan di tujuan: collected=false (timeout, obat masih di kompartemen) -> SIMRS NOT_COLLECTED. */
+    private void pickup(String robotId, int sequence, boolean collected, String method) {
+        List<Map<String, Object>> rows = db.queryForList(
+                "SELECT m.id, m.request_code, m.room_code FROM t_mission m WHERE m.robot_id=? AND m.status='SUCCEEDED' AND m.manifest_sequence=? ORDER BY m.updated_at DESC LIMIT 1",
+                robotId, sequence);
+        if (rows.isEmpty()) { log.info("PICKUP_CONFIRM seq={} robot={} tanpa misi SUCCEEDED; diabaikan", sequence, robotId); return; }
+        Map<String, Object> m = rows.get(0);
+        UUID id = (UUID) m.get("id");
+        if (collected) {
+            event(id, "SUCCEEDED", "ROBOT", "Obat diambil (" + method + ")");
+            return;
+        }
+        event(id, "SUCCEEDED", "ROBOT", "Obat TIDAK diambil sampai batas waktu (" + method + "); robot membawa obat kembali");
+        broadcast(m, "SUCCEEDED", "Obat tidak diambil; perawat diberi tahu");
+        postSimrs(id, (String) m.get("request_code"), "NOT_COLLECTED", "Obat tidak diambil di ruang " + m.get("room_code") + "; robot membawa obat kembali.", null);
     }
 
     private void failPending(String robotId, String reason) {

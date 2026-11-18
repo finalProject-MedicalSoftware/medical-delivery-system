@@ -343,12 +343,16 @@ async function main() {
           {
             medicineId: createdMedicines["MED-PCM-500"],
             quantity: 10,
-            instructions: "3x1 tablet sesudah makan bila demam/nyeri",
+            doseAmount: 1, doseUnit: "tablet", timesPerDay: 3, mealTiming: "AFTER_MEAL" as const, durationDays: 4, adminRoute: "ORAL" as const,
+            doseNote: "bila demam/nyeri",
+            instructions: "Minum 1 tablet, 3 kali sehari, sesudah makan, selama 4 hari. Catatan: bila demam/nyeri",
           },
           {
             medicineId: createdMedicines["MED-OMP-020"],
             quantity: 10,
-            instructions: "1x1 kapsul 30 menit sebelum sarapan",
+            doseAmount: 1, doseUnit: "kapsul", timesPerDay: 1, mealTiming: "BEFORE_MEAL" as const, durationDays: 10, adminRoute: "ORAL" as const,
+            doseNote: "30 menit sebelum sarapan",
+            instructions: "Minum 1 kapsul, 1 kali sehari, sebelum makan, selama 10 hari. Catatan: 30 menit sebelum sarapan",
           },
         ],
       },

@@ -3,6 +3,8 @@ import { getCurrentUser } from "@/lib/auth";
 import { FileText, Truck, Users } from "lucide-react";
 import Link from "next/link";
 import { isLowStock } from "@/lib/clinical";
+import ActionButton from "@/components/ActionButton";
+import { acknowledgeNotCollectedAction } from "@/app/actions/delivery";
 import { StatusBadge, PageHeader, btnPrimary, btnSecondary, cardCls } from "@/components/ui";
 
 export const dynamic = "force-dynamic";
@@ -14,6 +16,7 @@ async function getDashboardData() {
     recentPrescriptions,
     recentDeliveries,
     activeMedicines,
+    notCollected,
   ] = await Promise.all([
     prisma.prescription.groupBy({ by: ["status"], _count: true }),
     prisma.deliveryRequest.groupBy({ by: ["status"], _count: true }),
@@ -34,9 +37,19 @@ async function getDashboardData() {
       },
     }),
     prisma.medicine.findMany({ where: { isActive: true }, select: { id: true, name: true, stock: true, minStock: true, unit: true }, orderBy: { name: "asc" } }),
+    prisma.deliveryRequest.findMany({
+      where: { status: "NOT_COLLECTED", notCollectedAckAt: null },
+      orderBy: { updatedAt: "desc" },
+      take: 10,
+      select: {
+        id: true, requestCode: true, roomCode: true, updatedAt: true,
+        prescription: { select: { patient: { select: { fullName: true, mrn: true } } } },
+      },
+    }),
   ]);
 
   return {
+    notCollected,
     lowStock: activeMedicines.filter((m) => isLowStock(m.stock, m.minStock)),
     prescriptionsByStatus,
     deliveriesByStatus,
@@ -109,6 +122,33 @@ export default async function DashboardPage() {
           ))}
         </div>
       </section>
+
+      {data.notCollected.length > 0 && (
+        <section role="alert" className="rounded-xl border border-rose-300 bg-rose-50 p-5" aria-labelledby="h-nc">
+          <h2 id="h-nc" className="text-base font-semibold text-rose-900">Obat tidak diambil pasien ({data.notCollected.length})</h2>
+          <p className="mt-1 text-sm text-rose-900">Robot membawa obat kembali. Ambil obat dari robot, lalu tandai sudah ditindaklanjuti.</p>
+          <ul className="mt-3 divide-y divide-rose-200">
+            {data.notCollected.map((d) => (
+              <li key={d.id} className="flex flex-wrap items-center justify-between gap-3 py-2 text-sm text-rose-950">
+                <span>
+                  <Link href={`/pengantaran/${d.id}`} className="font-mono font-semibold underline">{d.requestCode}</Link>
+                  {" · "}{d.prescription.patient.fullName} · ruang {d.roomCode} · {new Date(d.updatedAt).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" })}
+                </span>
+                {can("delivery:create") && (
+                  <ActionButton
+                    action={acknowledgeNotCollectedAction.bind(null, d.id)}
+                    ariaLabel={`Tandai ${d.requestCode} sudah ditindaklanjuti`}
+                    successMessage="Ditandai sudah ditindaklanjuti"
+                    className="rounded-md border border-rose-400 bg-white px-3 py-1 text-xs font-medium text-rose-900 hover:bg-rose-100"
+                  >
+                    Sudah ditindaklanjuti
+                  </ActionButton>
+                )}
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       {data.lowStock.length > 0 && can("prescription:prepare") && (
         <section role="status" className="rounded-xl border border-amber-300 bg-amber-50 p-5" aria-labelledby="h-stok">

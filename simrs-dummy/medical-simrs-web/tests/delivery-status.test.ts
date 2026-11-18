@@ -41,7 +41,8 @@ describe("lib/delivery-status", () => {
   it("HANDOVER_CONFIRMED hanya bisa dicapai dari ARRIVED_AT_ROOM", () => {
     for (const [from, targets] of Object.entries(DELIVERY_TRANSITIONS)) {
       if (from === "ARRIVED_AT_ROOM") {
-        expect(targets).toEqual(["HANDOVER_CONFIRMED"]);
+        // dari tiba: serah terima (manusia, QR) atau obat tidak diambil (timeout robot)
+        expect(targets).toEqual(["HANDOVER_CONFIRMED", "NOT_COLLECTED"]);
       } else {
         expect(targets).not.toContain("HANDOVER_CONFIRMED");
       }
@@ -88,5 +89,21 @@ describe("lib/delivery-status", () => {
     expect(isMonitoringVisible("CANCELLED", false)).toBe(false); // batal sebelum dikirim
     expect(isMonitoringVisible("CANCELLED", true)).toBe(true);
     expect(isMonitoringVisible("IN_TRANSIT", true)).toBe(true);
+  });
+});
+
+describe("NOT_COLLECTED (obat tidak diambil)", () => {
+  it("terminal: tidak aktif, bukan sumber transisi, tetap terlihat monitoring", () => {
+    expect(ACTIVE_DELIVERY_STATUSES).not.toContain("NOT_COLLECTED");
+    expect(DELIVERY_TRANSITIONS.NOT_COLLECTED).toBeUndefined();
+    expect(isMonitoringVisible("NOT_COLLECTED", true)).toBe(true);
+  });
+  it("hanya dicapai dari ARRIVED_AT_ROOM", () => {
+    for (const [from, targets] of Object.entries(DELIVERY_TRANSITIONS)) {
+      expect((targets ?? []).includes("NOT_COLLECTED")).toBe(from === "ARRIVED_AT_ROOM");
+    }
+  });
+  it("berlabel operasional", () => {
+    expect(DELIVERY_STATUS_LABELS.NOT_COLLECTED).toBe("Obat Tidak Diambil");
   });
 });

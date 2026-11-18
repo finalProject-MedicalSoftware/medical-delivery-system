@@ -193,3 +193,27 @@ export async function advanceDeliveryStatusAction(
   revalidatePath("/dashboard");
   return { success: true };
 }
+
+/** Perawat menandai tindak lanjut obat yang tidak diambil (obat sudah diambil kembali dari robot). */
+export async function acknowledgeNotCollectedAction(
+  deliveryId: string
+): Promise<{ success: boolean; error?: string }> {
+  const actor = await requirePermission(PERMISSION_CODES.DELIVERY_CREATE);
+  const res = await prisma.deliveryRequest.updateMany({
+    where: { id: deliveryId, status: "NOT_COLLECTED", notCollectedAckAt: null },
+    data: { notCollectedAckAt: new Date(), notCollectedAckBy: actor.username },
+  });
+  if (res.count === 0) return { success: false, error: "Pengantaran tidak ditemukan atau sudah ditindaklanjuti" };
+  await prisma.auditLog.create({
+    data: {
+      entityType: "DELIVERY_REQUEST",
+      entityId: deliveryId,
+      action: "ACK_NOT_COLLECTED",
+      actorId: actor.userId,
+      details: { by: actor.username },
+    },
+  });
+  revalidatePath("/dashboard");
+  revalidatePath(`/pengantaran/${deliveryId}`);
+  return { success: true };
+}
