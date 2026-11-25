@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { decryptSession } from "@/lib/session";
 
 // Routes that do NOT require authentication
-const PUBLIC_ROUTES = ["/", "/login"];
+// /jadwal: halaman jadwal obat keluarga; akses dikunci token bertanda tangan (schedule-token.ts), bukan sesi.
+const PUBLIC_ROUTES = ["/", "/login", "/jadwal"];
 
 export async function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;

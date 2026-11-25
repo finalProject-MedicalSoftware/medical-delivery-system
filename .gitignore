@@ -48,3 +48,5 @@ task_plan.md
 inirobot/
 ini-ss-tifa/
 programTIFA/
+# HMI = repo git sendiri (finalProject-MedicalSoftware/medical-hmi)
+medical-hmi/

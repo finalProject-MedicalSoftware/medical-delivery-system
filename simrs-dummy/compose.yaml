@@ -32,11 +32,17 @@ services:
       NEXTAUTH_SECRET: ${NEXTAUTH_SECRET:?Set NEXTAUTH_SECRET in simrs-dummy/.env}
       AUTH_SECRET: ${AUTH_SECRET:?Set AUTH_SECRET in simrs-dummy/.env}
       MONITORING_TOKEN: ${MONITORING_TOKEN:-}
+      # QR gelang & jadwal keluarga: QR_BASE_URL = alamat yang bisa dibuka HP (IP LAN host, bukan localhost).
+      QR_BASE_URL: ${QR_BASE_URL:-}
+      QR_SIGNING_SECRET: ${QR_SIGNING_SECRET:-}
+      QR_TOKEN_TTL_SECONDS: ${QR_TOKEN_TTL_SECONDS:-}
+      SCHEDULE_TOKEN_TTL_SECONDS: ${SCHEDULE_TOKEN_TTL_SECONDS:-}
     depends_on:
       simrs-postgres:
         condition: service_healthy
     ports:
-      - "127.0.0.1:${SIMRS_WEB_PORT:-3000}:3000"
+      # SIMRS_WEB_BIND=0.0.0.0 agar halaman /jadwal bisa dibuka HP di jaringan uji yang sama (data sintetis saja).
+      - "${SIMRS_WEB_BIND:-127.0.0.1}:${SIMRS_WEB_PORT:-3000}:3000"
 
   medical-postgres:
     image: postgres:17-alpine

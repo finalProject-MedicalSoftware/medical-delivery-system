@@ -73,3 +73,22 @@ assert.strictEqual(d.seen('a', now), false); // sudah > TTL, boleh lagi
 assert.strictEqual(d.seen('b', now), false);
 
 console.log('✅ scripts/check.js — semua check lolos (channel, envelope, dedupe)');
+
+// -- HMI_REPORT (tablet -> gateway, tidak ke robot) ----------------------
+{
+  const { normalizeHmiReport } = require('../src/core/hmi-report');
+  const good = {
+    sequence: 1, arrivedAt: '2026-11-23T03:00:00.000Z', presentDoneAt: '2026-11-23T03:02:10.000Z',
+    identity: { required: true, verified: true, method: 'camera', mismatches: 1 },
+    allergyShown: true, replays: 2, notUnderstood: 0, doctorCalled: false,
+    teachBack: { asked: true, correct: true }, scheduleQrShown: true,
+    patientName: 'BOCOR'
+  };
+  const r = normalizeHmiReport(good);
+  assert.ok(r.ok);
+  assert.strictEqual(r.report.patientName, undefined, 'field di luar whitelist dibuang');
+  assert.strictEqual(r.report.identity.method, 'camera');
+  assert.ok(!normalizeHmiReport({ ...good, replays: -1 }).ok);
+  assert.ok(!normalizeHmiReport({ ...good, identity: { ...good.identity, method: 'face' } }).ok);
+  assert.ok(!normalizeHmiReport(null).ok);
+}

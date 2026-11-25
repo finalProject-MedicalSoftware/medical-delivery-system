@@ -2,6 +2,7 @@ import { NextRequest } from "next/server";
 import { checkMonitoringToken } from "@/lib/monitoring";
 import { ITEMS_SELECT, mapItems } from "@/lib/delivery-items";
 import { MONITORING_ACTIVE_STATUSES, deliveryStatusLabel } from "@/lib/delivery-status";
+import { hmiBrief } from "@/lib/hmi-brief";
 
 /**
  * Kontrak FINAL (fase mock) - read API: daftar pengantaran yang masih
@@ -105,6 +106,9 @@ export async function GET(req: NextRequest) {
           bedNumber: p.bed?.bedNumber ?? null,
           dischargedAt: p.dischargedAt?.toISOString() ?? null,
         },
+        // Untuk HMI robot (aditif): hash MRN (cocokkan scan gelang), inisial, alergi,
+        // URL jadwal keluarga bertoken. Backend menitipkannya di OP.tray_tasks[].brief.
+        hmi: hmiBrief(p, d.requestCode),
         requestedAt: d.requestedAt.toISOString(),
         updatedAt: d.updatedAt.toISOString(),
       };

@@ -8,6 +8,7 @@ const { generateMessageId } = require('../utils/uuid');
 const registry = require('./registry-client');
 const backendEvents = require('./backend-events');
 const { uiFrame, commandFrames } = require('../core/robot-frames');
+const { normalizeHmiReport } = require('../core/hmi-report');
 
 const teleopCfg = () => ({ maxLinear: config.TELEOP_MAX_LINEAR, maxAngular: config.TELEOP_MAX_ANGULAR });
 
@@ -167,11 +168,32 @@ function isTargetedStop(code, data) {
     data.linear === 0 && data.angular === 0;
 }
 
+/**
+ * HMI_REPORT dari tablet (sesi SI UI): laporan interaksi satu tujuan untuk
+ * dashboard. Tidak dikirim ke robot. Divalidasi (whitelist), diperkaya
+ * robot_id + timestamp, lalu ke Kafka + semua UI, dan dibalas ack.
+ */
+async function handleHmiReport(socket, msg) {
+  const target = resolveTarget(msg);
+  if (!target) return send(socket, { code: 'ERROR', data: { error: 'ROBOT_ID_REQUIRED' } });
+  const norm = normalizeHmiReport(msg.data);
+  if (!norm.ok) return send(socket, { code: 'ERROR', data: { error: norm.error, robot_id: target } });
+  const frame = {
+    code: 'HMI_REPORT',
+    message_id: msg.message_id || generateMessageId(),
+    data: { ...norm.report, robot_id: target, timestamp: new Date().toISOString(), source: 'HMI' }
+  };
+  await kafkaProducer.produce(TOPICS.SIMRS_ROBOT_EVENTS, frame, target);
+  broadcastToUis(frame, target);
+  send(socket, { code: 'HMI_REPORT_ACK', data: { robot_id: target, sequence: norm.report.sequence, message_id: frame.message_id } });
+}
+
 async function handleUIDownlink(socket, msg) {
   const session = sessionManager.get(socket);
   if (!session || !session.identity || session.identity.type !== 'UI') {
     return send(socket, { code: 'ERROR', data: { error: 'UI_SESSION_REQUIRED', message: 'Downlink hanya dari sesi SI UI' } });
   }
+  if (msg.code === 'HMI_REPORT') return handleHmiReport(socket, msg);
   if (!DOWNLINK_CODES.has(msg.code)) {
     return send(socket, { code: 'ERROR', data: { error: 'CODE_NOT_ALLOWED', message: `Kode downlink tidak diizinkan: ${msg.code}` } });
   }

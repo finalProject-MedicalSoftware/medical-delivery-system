@@ -274,3 +274,103 @@ Token hanya di `.env`, tidak pernah dicommit.
 - Perintah balik HMI → robot (mis. "ulangi panduan") lewat WS; fase mock
   memakai `POST /missions/{id}/cancel` saja.
 - Logika kamera baki (tugas rekan, di luar cakupan kontrak ini).
+
+## 10. Tambahan kontrak (aditif) — identitas, laporan, INIT
+
+Keputusan dicatat 2026-11-23 (AGENTS.md aturan 6), disetujui Rayhan.
+Semua perubahan **aditif**; klien lama yang mengabaikan field baru tetap jalan.
+
+### 10.1 `BRIEF` — field baru
+
+```jsonc
+{
+  "code": "BRIEF",
+  "data": {
+    "sequence": 1,
+    "items": [ /* tetap seperti sebelumnya */ ],
+    "patient": {
+      "mrnHash": "<sha256 hex 64 karakter dari MRN>",
+      "initials": "B.S.",
+      "allergies": ["Ibuprofen"]
+    },
+    "scheduleUrl": "https://<SIMRS>/jadwal/<requestCode>?t=<token HMAC>"
+  }
+}
+```
+
+- Tablet **tidak** menerima nama atau MRN mentah. Gelang dipindai lalu
+  di-hash di tablet dan dibandingkan dengan `mrnHash`.
+- `mrnHash` yang bukan 64 hex dibuang; berarti verifikasi gelang dilewati
+  (`identity.method = "not_required"`).
+- Sumber: SIMRS `GET /api/v1/monitoring/active-deliveries` → field `hmi`
+  per delivery (`src/lib/hmi-brief.ts`).
+- `scheduleUrl` membuka halaman publik `/jadwal/<code>`. Token HMAC berprefiks
+  `jadwal:` dan berumur `SCHEDULE_TOKEN_TTL_SECONDS` (default 259200 = 3 hari).
+  Halaman hanya menampilkan inisial, alergi, dan jadwal (tanpa nama/MRN).
+
+### 10.2 `HMI_REPORT` (HMI → gateway, baru)
+
+Dikirim sekali setelah `PRESENT_DONE`. **Tidak** diteruskan ke robot.
+
+```jsonc
+{ "code": "HMI_REPORT", "data": {
+  "robot_id": "NEVO-01", "sequence": 1,
+  "arrivedAt": "2026-11-23T03:00:00.000Z", "presentDoneAt": "2026-11-23T03:02:10.000Z",
+  "identity": { "required": true, "verified": true, "method": "camera|keyboard|nurse_override|not_required", "mismatches": 0 },
+  "allergyShown": true, "replays": 1, "notUnderstood": 0, "doctorCalled": false,
+  "teachBack": { "asked": true, "correct": true }, "scheduleQrShown": true } }
+```
+
+- Gateway (`medical-ws/src/core/hmi-report.js`) memvalidasi whitelist,
+  membuang field lain, menambah `robot_id`, `timestamp`, `source:"HMI"`, lalu
+  `produce(TOPIC_ROBOT_EVENTS)` + broadcast UI, dan membalas `HMI_REPORT_ACK`.
+- Laporan tidak valid → `ERROR {error:"INVALID_REPORT"}`.
+- Jalur WS lokal robot (port 8765): bridge robot **wajib** me-relay
+  `HMI_REPORT` ke gateway sebagai uplink biasa (gateway sudah menerima kode
+  apa pun dari sesi ROBOT). Ini celah tim robot yang belum dikerjakan.
+
+### 10.3 `INIT` — rincian pemeriksaan
+
+`nevo_diagnostic_node` kini menambahkan ke `data`:
+
+```jsonc
+"mode": "NAVIGATION|MAPPING", "elapsed_sec": 12, "timeout_sec": 60,
+"checks": [
+  { "id": "nav_service", "label": "Layanan navigasi", "state": "ACTIVE|INACTIVE|FAILED|UNKNOWN", "required": true },
+  { "id": "mapping_service", "label": "Layanan mapping", "state": "...", "required": false },
+  { "id": "map", "label": "Peta", "state": "OK|WAIT|FAIL", "required": true },
+  { "id": "amcl", "label": "Lokalisasi", "state": "...", "required": true },
+  { "id": "odom", "label": "Odometri", "state": "...", "required": true }
+]
+```
+
+`status` tetap `INITIALIZING | READY | FAILED`. HMI: INITIALIZING → layar
+"Menyiapkan sistem" dengan daftar `checks`; READY → IDLE; FAILED → layar
+gangguan berisi `message`. State layanan dibaca dari `systemctl is-active`
+(param `nav_service`, `mapping_service`, `require_service` di
+`config/diagnostic_params.yaml`).
+
+**Status implementasi (dicek dari kode robot `0143a36`, 2026-11-24):** field §10.3
+di atas BELUM dikirim robot (perubahan diagnostic yang menambahkannya hilang, lihat
+`docs/REFERENSI-ROBOT-TIFA.md` T5). Frame yang benar-benar diterima HMI lewat
+`nevo_ws_bridge` (WS lokal 8765, `sendToAll` dari `/nevo/ws_out`), sama untuk
+`nevo.service` (navigasi, dulu `tifa-service`) dan `nevo-mapping.service`
+(pemetaan, dulu `tifa-mapping-service`) karena keduanya menjalankan
+`nevo_diagnostic_node` (param `mode`):
+
+| Frame | Isi `data` | Kapan |
+|---|---|---|
+| `INIT` INITIALIZING | `init_message: "System boot started. Waiting for grace period."` | sekali saat node mulai (masa tenggang: nav 30 dtk, mapping 10 dtk) |
+| `INIT` INITIALIZING | `"Grace period elapsed. Checking system readiness."`, lalu `"Checking system topics… elapsed N s."` | tiap 1 dtk saat memeriksa (nav: /map + /amcl_pose + /odometry/filtered; mapping: odometri saja) |
+| `INIT` READY | `"All systems operational. Robot is ready."` | **sekali** |
+| `INIT` FAILED | alasan, mis. `"Global timeout (300 s). No /amcl_pose received."` | sekali; robot lalu me-restart `nevo.service` |
+| `READY` (nevo_robot_api) | `{ mode: "mapping" \| …, ready: true }` | tiap 5 dtk selama 90 dtk pertama + saat cloud tersambung ulang |
+
+HMI (`medical-hmi/src/states/machine.ts`) menerima keduanya: field §10.3 bila ada;
+bila tidak, detik diambil dari pesan, tahap dari teks pesan, daftar periksa dari
+`waiting for: map amcl odom` (bila ada), mode dari `READY.mode`. Status
+`CHECKING_*`/`ERROR` (dikenal nevo-app/tifa-app) dinormalkan ke INITIALIZING/FAILED.
+`READY` robot_api tidak memotong layar persiapan selama `INIT` masih segar
+(< 30 dtk; masa tenggang < 120 dtk), agar layar tidak berkedip.
+Saran untuk tim robot (T5): kirim ulang INIT tiap 1 dtk juga selama masa tenggang,
+karena HMI yang tersambung setelah detik 0 tidak menerima pesan tenggang.
