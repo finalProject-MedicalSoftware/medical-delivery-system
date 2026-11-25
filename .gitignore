@@ -40,13 +40,14 @@ target/
 # Codegraph tool (symlink lokal)
 .codegraph
 
-#Folder  yang tidak perlu di-track
+# Folder yang tidak perlu di-track
 **/samples/ros-mock-map/
 .ustht/
 opencode.json
 task_plan.md
-inirobot/
 ini-ss-tifa/
+inirobot/
+robot/
 programTIFA/
 # HMI = repo git sendiri (finalProject-MedicalSoftware/medical-hmi)
 medical-hmi/
