@@ -10,8 +10,10 @@
     "check:tifa": "node scripts/tifa-selfcheck.js",
     "check:motion": "node scripts/motion-e2e.js",
     "fake-robot": "node scripts/fake-robot.js",
-    "test": "node scripts/check.js && node scripts/frames-check.js",
-    "audit": "npm audit --omit=dev"
+    "test": "node scripts/check.js && node scripts/frames-check.js && node scripts/pairing-check.js",
+    "audit": "npm audit --omit=dev",
+    "pair": "node scripts/pair.js",
+    "check:pairing": "node scripts/pairing-check.js"
   },
   "engines": {
     "node": ">=20"

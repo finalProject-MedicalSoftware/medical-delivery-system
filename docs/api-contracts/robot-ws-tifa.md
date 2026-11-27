@@ -65,6 +65,82 @@ Error (socket tetap terbuka kecuali dinyatakan lain):
 - `ROBOT` tidak boleh registernya sebagai UI dan sebaliknya (mismatch
   `type` dianggap `INVALID_SI`).
 
+## 3a. Pairing perangkat UI (tablet HMI) — disetujui owner 26/11/2026, diimplementasi di `medical-ws` (uji: `npm run check:pairing`)
+
+> Alasan: token bersama `WS_AUTH_TOKEN` panjang, diketik manual di tiap
+> tablet, hilang saat tablet restart, dan satu kebocoran mengenai semua
+> klien. Pairing memberi tiap tablet **token perangkat** sendiri yang bisa
+> dicabut satu per satu. Jalur token bersama tetap berlaku untuk
+> dashboard/BFF (tidak berubah). Acuan perilaku sesi: `reference-app/nevo-app`
+> (`WebSocketService.js`), tidak disalin.
+
+### Kode pairing (admin)
+
+- Dibuat lewat `npm run pair -- <ui_id>` di `medical-ws`, atau
+  `POST /internal/pairing` dengan header `x-internal-secret`
+  (`INTERNAL_PUBLISH_SECRET`, dipakai BFF dashboard). Body `{ "ui_id": "TFUI5" }`.
+  Respons: `{ "ui_id", "code", "expires_at" }`.
+- `code` berisi 6 digit acak (crypto) dan hanya berlaku sekali.
+  Berlaku selama `PAIRING_TTL_SEC` (bawaan 600 detik), lalu gugur.
+  Kode juga gugur setelah 5 kali percobaan salah.
+  Satu `ui_id` hanya punya satu kode aktif; membuat kode baru membatalkan kode lama.
+- Kode hanya disimpan di memori gateway (hilang saat restart gateway) dan
+  tidak pernah ditulis ke log.
+- Kode juga bisa dipakai sebagai QR untuk dipindai tablet. Isi QR:
+  `{"ws":"<url>","ui_id":"TFUI5","code":"123456"}`.
+
+### Tablet → gateway (sebelum SI)
+
+```json
+{ "code": "PAIR", "data": { "ui_id": "TFUI5", "code": "123456", "instance_id": "<uuid tetap per instalasi>" } }
+{ "code": "PAIR_OK", "data": { "ui_id": "TFUI5", "device_token": "<43 karakter base64url>", "paired_at": "..." } }
+```
+
+- `device_token` berisi 32 byte acak. Gateway hanya menyimpan
+  `sha256(device_token)` bersama `ui_id`, `instance_id`, `paired_at`,
+  dan `last_seen` di `DEVICES_FILE` (bawaan `data/devices.json`, volume Docker).
+- Satu `ui_id` dipasangkan ke **satu** perangkat. Pairing baru mencabut
+  perangkat lama untuk `ui_id` itu. Bila perangkat lama (instance lain) sedang
+  tersambung, sesinya ditutup close **4002** `DEVICE_REVOKED`.
+- Salah, kedaluwarsa, atau sudah terpakai → `ERROR/PAIR_INVALID`. Pesan sengaja
+  sama untuk ketiganya agar tidak membocorkan alasan. Socket tetap terbuka.
+  Batas: 5 `PAIR` per socket per menit.
+
+### SI UI dengan token perangkat
+
+```json
+{ "code": "SI", "data": { "type": "UI", "ui_id": "TFUI5", "instance_id": "<uuid>", "device_token": "..." } }
+{ "code": "ACK_SOFT", "data": { "ui_id": "TFUI5", "auth": "device", "timestamp": "..." } }
+```
+
+- `device_token` harus cocok dengan `ui_id` **dan** `instance_id`. Kalau tidak cocok →
+  `ERROR/DEVICE_UNPAIRED` (tablet menampilkan "Pasangkan ulang").
+- SI dengan `token` (token bersama) tetap diterima seperti §3 dan dibalas dengan `auth: "shared"`.
+
+### Sesi ganda (perubahan aturan duplikat UI)
+
+| Kondisi saat `ui_id` sudah punya sesi hidup | Respons |
+|---|---|
+| `instance_id` sama (tablet yang sama tersambung ulang; sesi lama = "hantu") | Sesi lama ditutup dengan close **4001** `SESSION_REPLACED`, sesi baru diterima |
+| `instance_id` beda | `ERROR/DUPLICATE_UI_ID` (seperti sekarang) |
+| `instance_id` beda + `force: true` + auth sah | Sesi lama ditutup dengan **4001**, sesi baru diterima. Hanya dari tombol manual "Ambil alih sesi" di tablet |
+
+Klien yang menerima close **4001** **tidak boleh** reconnect otomatis,
+supaya dua perangkat tidak saling menendang. Aturan duplikat ROBOT tidak berubah.
+
+### Mencabut perangkat
+
+- Dari tablet (sesi SI-UI dengan `auth: device`): `{ "code": "UNPAIR", "data": {} }` →
+  `UNPAIR_OK`. Token dihapus dari `DEVICES_FILE`, lalu socket ditutup dengan close 1000.
+- Dari admin: `npm run pair -- --revoke <ui_id>` atau
+  `DELETE /internal/pairing/<ui_id>` (header `x-internal-secret`).
+  Sesi hidup milik perangkat itu ikut ditutup dengan close **4002** `DEVICE_REVOKED`.
+
+### Log
+
+Token perangkat dicatat maksimal 4 karakter awal (aturan 7). Kode pairing
+tidak pernah dicatat; yang dicatat hanya "kode dibuat untuk TFUI5, berlaku s.d. …".
+
 ## 4. Uplink (robot → server)
 
 Setelah SI, setiap frame `{code, data}` dianggap uplink. Server:
@@ -83,7 +159,10 @@ Setelah SI, setiap frame `{code, data}` dianggap uplink. Server:
 
 Kode uplink umum (non-eksklusif; kode tak dikenal tetap dialirkan):
 `STATUS`, `ACK`, `READY`, `ERROR`, `POSITION`, `BATTERY`, `GOAL_COMPLETE`,
-`MAPPING_STATUS`, `MAPPING_COMPLETE`, `ROBOT_STUCK`.
+`MAPPING_STATUS`, `MAPPING_COMPLETE`, `ROBOT_STUCK`,
+`EMERGENCY_STOP` (26/11, disetujui: robot berhenti darurat. HMI wajib menghentikan
+presentasi dan menampilkan layar henti; data mengikuti kiriman robot,
+minimal `robot_id`).
 
 Frame tanpa SI dulu → `ERROR/NO_SESSION` (socket tetap terbuka).
 

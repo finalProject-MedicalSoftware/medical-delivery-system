@@ -374,3 +374,38 @@ bila tidak, detik diambil dari pesan, tahap dari teks pesan, daftar periksa dari
 (< 30 dtk; masa tenggang < 120 dtk), agar layar tidak berkedip.
 Saran untuk tim robot (T5): kirim ulang INIT tiap 1 dtk juga selama masa tenggang,
 karena HMI yang tersambung setelah detik 0 tidak menerima pesan tenggang.
+
+### 10.4 Koneksi & Pengaturan tablet — disetujui owner 26/11/2026 (sisi gateway selesai; sisi HMI: langkah 3–5)
+
+Pasangan dari `robot-ws-tifa.md` §3a (pairing) dan uplink `EMERGENCY_STOP`.
+
+**Jalur** (dipilih di Mode Perawat → Pengaturan → Koneksi; Robot ID/UI ID bisa diubah manual, bawaan dari env):
+
+| Jalur | Tujuan | Handshake |
+|---|---|---|
+| `gateway` (utama) | `medical-ws` lewat Wi-Fi | `SI UI` + `device_token` (pairing) |
+| `local` | WS lokal robot (`nevo_ws_bridge`) lewat Wi-Fi | tanpa SI, frame apa adanya |
+| `usb` | ADB forward `127.0.0.1:<port>` lewat plugin WebSocket native Android | sama dengan `local`. Disiapkan, disetel di robot nanti |
+
+**Nilai bawaan dari env** (bukan dari kode): `VITE_WS_URL`, `VITE_LOCAL_WS_URL`,
+`VITE_ROBOT_ID`, `VITE_UI_ID`, `VITE_USB_PORT`. Nilai yang diubah di Pengaturan
+menimpa nilai bawaan. Jalur §8 (`EXPO_PUBLIC_*`) sudah usang.
+
+**Penyimpanan**:
+- `instance_id`: UUID yang dibuat sekali per instalasi.
+- `device_token`: disimpan di penyimpanan aplikasi native (`@capacitor/preferences`), bukan localStorage web, dan dihapus lewat "Lupakan perangkat" (`UNPAIR`). Di log hanya muncul 4 karakter awal.
+- Token bersama tidak lagi dipakai tablet.
+
+**Status sambungan** (ditampilkan di Pengaturan dan Diagnostik):
+`off → connecting → open → session` (setelah `ACK_SOFT`). Status khusus:
+- `replaced`: close 4001, tidak reconnect, ada tombol "Sambung lagi".
+- `revoked`: close 4002 / `DEVICE_UNPAIRED`, lalu minta pairing ulang.
+- `duplicate`: `DUPLICATE_UI_ID`, retry 3 → 5 → 10 → 20 → 30 detik, dengan tombol manual "Ambil alih sesi" (`force`).
+
+Putus biasa → reconnect 3 → 30 detik ditambah acakan ≤ 1 detik, maksimal 20 kali,
+lalu menunggu tombol "Coba lagi".
+
+**`EMERGENCY_STOP`**: dari state apa pun, HMI langsung masuk layar henti darurat
+(merah, tanpa animasi, kalimat tetap "Robot berhenti darurat. Perawat akan
+membantu."). Presentasi dan panggilan dihentikan. Layar keluar hanya saat robot
+mengirim `STATUS`/`READY` berikutnya, atau perawat menekan "Selesai" di Mode Perawat.

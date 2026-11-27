@@ -21,7 +21,7 @@ medical-delivery-system/            # repo utama (dokumentasi, kontrak & orkestr
 | `medical-ws` | Gateway WS aktif: bridge HTTP → Kafka (`simrs.delivery.events.v1`) + konsumsi → broadcast WS; downlink `ROBOT_COMMAND` (UI→robot) + uplink `ROBOT_COMMAND_RESULT` → Kafka; `GET /internal/robots`; run: `npm install && npm run check && npm run dev` |
 | `medical-dashboard-monitoring/frontend` | Redesain 4B: koneksi runtime dari `/settings` (server-side BFF `data/settings.json`, env = default; tanpa hardcode/localStorage), relay SSE BFF, teleop tombol + **WASD** di `/robots` |
 | `simrs-dummy/medical-simrs-web` | Hidup; outbox+relay webhook (SIMRS TIDAK menyentuh Kafka — Kafka hidup di `medical-ws`) |
-| `medical-hmi/` | Belum dimulai; konsumsi Kafka nanti |
+| `medical-hmi/` | Repo sendiri. Kiosk tablet (wajah 3D, aturan pakai, suara klip ElevenLabs, gelang QR, video call). Sambungan: gateway (SI UI + token perangkat hasil pairing kode 6 digit), WS lokal, USB (plugin native `UsbWs`); Pengaturan bersubmenu di Mode Perawat (kontrak `hmi.md` §10.4, `robot-ws-tifa.md` §3a) |
 
 ## Arah kerja dan aturan agent
 

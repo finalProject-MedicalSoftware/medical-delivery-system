@@ -9,6 +9,19 @@ const registry = require('./registry-client');
 const backendEvents = require('./backend-events');
 const { uiFrame, commandFrames } = require('../core/robot-frames');
 const { normalizeHmiReport } = require('../core/hmi-report');
+const path = require('path');
+const { DeviceRegistry, safeEqual } = require('../core/devices');
+
+// Registry pairing tablet (kontrak robot-ws-tifa.md §3a). Dibuat saat pertama dipakai agar
+// impor modul (self-check) tidak menyentuh berkas.
+let deviceRegistry = null;
+function devices() {
+  if (!deviceRegistry) {
+    deviceRegistry = new DeviceRegistry({ file: path.resolve(config.DEVICES_FILE), ttlMs: config.PAIRING_TTL_SEC * 1000 });
+  }
+  return deviceRegistry;
+}
+const tokenPrefix = (t) => `${String(t).slice(0, 4)}…`; // aturan 7: token di log hanya prefix 4 karakter
 
 const teleopCfg = () => ({ maxLinear: config.TELEOP_MAX_LINEAR, maxAngular: config.TELEOP_MAX_ANGULAR });
 
@@ -64,16 +77,31 @@ async function handleSI(socket, data) {
   }
   if (data.type === 'UI') {
     const uiId = typeof data.ui_id === 'string' ? data.ui_id : '';
-    if (!uiId || typeof data.token !== 'string' || !data.token) {
-      send(socket, { code: 'ERROR', data: { error: 'INVALID_SI', message: 'SI UI wajib {ui_id:string, token:string}' } });
+    const instanceId = DeviceRegistry.validInstanceId(data.instance_id) ? data.instance_id : null;
+    const hasDevice = typeof data.device_token === 'string' && !!data.device_token;
+    const hasShared = typeof data.token === 'string' && !!data.token;
+    if (!uiId || (!hasDevice && !hasShared) || (hasDevice && !instanceId)) {
+      send(socket, { code: 'ERROR', data: { error: 'INVALID_SI', message: 'SI UI wajib {ui_id, token} atau {ui_id, instance_id, device_token}' } });
       return;
     }
-    if (!config.WS_AUTH_TOKEN || data.token !== config.WS_AUTH_TOKEN) {
-      logger.warn(`[Router] SI UI ditolak (token): ${uiId}`);
-      send(socket, { code: 'ERROR', data: { error: 'UNAUTHORIZED', message: 'Token UI tidak valid' } });
-      return;
+    let auth;
+    if (hasDevice) {
+      // Tablet terpasang (pairing): token perangkat harus cocok dengan ui_id + instance_id.
+      if (!devices().verify(uiId, instanceId, data.device_token)) {
+        logger.warn(`[Router] SI UI ditolak (perangkat tidak terpasang): ${uiId} token ${tokenPrefix(data.device_token)}`);
+        send(socket, { code: 'ERROR', data: { error: 'DEVICE_UNPAIRED', message: 'Perangkat belum/tidak lagi dipasangkan. Pasangkan ulang.' } });
+        return;
+      }
+      auth = 'device';
+    } else {
+      if (!config.WS_AUTH_TOKEN || !safeEqual(data.token, config.WS_AUTH_TOKEN)) {
+        logger.warn(`[Router] SI UI ditolak (token): ${uiId}`);
+        send(socket, { code: 'ERROR', data: { error: 'UNAUTHORIZED', message: 'Token UI tidak valid' } });
+        return;
+      }
+      auth = 'shared';
     }
-    const result = sessionManager.attachUI(socket, uiId);
+    const result = sessionManager.attachUI(socket, uiId, { instanceId, auth, force: data.force === true });
     if (!result.success) {
       logger.warn(`[Router] SI UI ditolak (duplikat): ${uiId}`);
       send(socket, {
@@ -82,12 +110,82 @@ async function handleSI(socket, data) {
       });
       return;
     }
-    logger.info(`[Router] UI terdaftar (SI): ${uiId}`);
-    send(socket, { code: 'ACK_SOFT', data: { ui_id: uiId, timestamp: new Date().toISOString() } });
+    if (result.replaced) {
+      // Sesi lama (hantu dari tablet yang sama, atau diambil alih manual) ditutup; klien lama tidak boleh reconnect.
+      logger.info(`[Router] sesi UI lama diganti: ${uiId}${data.force === true ? ' (ambil alih)' : ''}`);
+      try { result.replaced.close(4001, 'SESSION_REPLACED'); } catch { /* sudah tertutup */ }
+    }
+    logger.info(`[Router] UI terdaftar (SI, ${auth}): ${uiId}`);
+    send(socket, { code: 'ACK_SOFT', data: { ui_id: uiId, auth, timestamp: new Date().toISOString() } });
     return;
   }
   send(socket, { code: 'ERROR', data: { error: 'INVALID_SI', message: 'type wajib ROBOT atau UI' } });
 }
+
+const PAIR_LIMIT = 5, PAIR_WINDOW_MS = 60_000;
+
+/** PAIR (sebelum SI): tukar kode 6 digit dengan token perangkat. Gagal apa pun -> PAIR_INVALID. */
+function handlePair(socket, data) {
+  const session = sessionManager.get(socket);
+  if (!session) return;
+  if (session.identity) return send(socket, { code: 'ERROR', data: { error: 'SESSION_ALREADY_IDENTIFIED' } });
+  const now = Date.now();
+  session.pairTimes = (session.pairTimes || []).filter((t) => now - t < PAIR_WINDOW_MS);
+  if (session.pairTimes.length >= PAIR_LIMIT) {
+    return send(socket, { code: 'ERROR', data: { error: 'PAIR_RATE_LIMITED', message: 'Terlalu banyak percobaan. Tunggu 1 menit.' } });
+  }
+  session.pairTimes.push(now);
+  const d = data && typeof data === 'object' ? data : {};
+  const res = devices().redeem(d.ui_id, d.code, d.instance_id);
+  if (!res.ok) {
+    logger.warn(`[Router] PAIR ditolak: ${DeviceRegistry.validUiId(d.ui_id) ? d.ui_id : '(ui_id tidak valid)'}`);
+    return send(socket, { code: 'ERROR', data: { error: 'PAIR_INVALID', message: 'Kode pairing salah atau kedaluwarsa.' } });
+  }
+  // Satu ui_id = satu perangkat: sesi perangkat lama (instance lain) dicabut.
+  if (res.replaced && res.replaced.instance_id !== d.instance_id) closeDeviceSession(d.ui_id, 'DEVICE_REVOKED');
+  logger.info(`[Router] perangkat dipasangkan: ${d.ui_id} token ${tokenPrefix(res.device_token)}`);
+  send(socket, { code: 'PAIR_OK', data: { ui_id: d.ui_id, device_token: res.device_token, paired_at: res.paired_at } });
+}
+
+/** Tutup sesi UI hidup milik perangkat terpasang (auth device) untuk ui_id. */
+function closeDeviceSession(uiId, reason) {
+  const sock = sessionManager.getUI(uiId);
+  const s = sock && sessionManager.get(sock);
+  if (!s || !s.identity || s.identity.auth !== 'device') return false;
+  sessionManager.detach(sock);
+  try { sock.close(4002, reason); } catch { /* sudah tertutup */ }
+  return true;
+}
+
+/** UNPAIR dari tablet sendiri (sesi SI-UI auth device): cabut token, balas, lalu tutup normal. */
+function handleUnpair(socket) {
+  const s = sessionManager.get(socket);
+  if (!s || !s.identity || s.identity.type !== 'UI' || s.identity.auth !== 'device') {
+    return send(socket, { code: 'ERROR', data: { error: 'DEVICE_SESSION_REQUIRED', message: 'UNPAIR hanya dari tablet yang dipasangkan' } });
+  }
+  const uiId = s.identity.id;
+  devices().revoke(uiId);
+  logger.info(`[Router] perangkat dilupakan (UNPAIR): ${uiId}`);
+  send(socket, { code: 'UNPAIR_OK', data: { ui_id: uiId, timestamp: new Date().toISOString() } });
+  sessionManager.detach(socket);
+  try { socket.close(1000, 'UNPAIRED'); } catch { /* sudah tertutup */ }
+}
+
+/** Admin (HTTP internal / CLI): buat kode, cabut, daftar perangkat. */
+const pairing = {
+  createCode(uiId) {
+    const r = devices().createCode(uiId);
+    if (r.ok) logger.info(`[Router] kode pairing dibuat untuk ${uiId}, berlaku s.d. ${r.expires_at}`);
+    return r;
+  },
+  revoke(uiId) {
+    const revoked = devices().revoke(uiId);
+    const closed = closeDeviceSession(uiId, 'DEVICE_REVOKED');
+    if (revoked) logger.info(`[Router] perangkat dicabut admin: ${uiId}`);
+    return { revoked, closed };
+  },
+  list() { return devices().list(); }
+};
 
 async function handleUplink(socket, msg) {
   const session = sessionManager.get(socket);
@@ -266,8 +364,10 @@ async function handleTifa(socket, msg) {
     return send(socket, { code: 'ERROR', data: { error: 'INVALID_MESSAGE', message: 'code wajib string' } });
   }
   if (msg.code === 'SI') return handleSI(socket, msg.data);
+  if (msg.code === 'PAIR') return handlePair(socket, msg.data);
   const session = sessionManager.get(socket);
   if (session && session.identity && session.identity.type === 'UI') {
+    if (msg.code === 'UNPAIR') return handleUnpair(socket);
     return handleUIDownlink(socket, msg);
   }
   return handleUplink(socket, msg);
@@ -321,4 +421,5 @@ async function handleIncoming(socket, rawData) {
   }
 }
 
-module.exports = { handleIncoming, handleDisconnect, sendError, send, deliverRobotCommand };
+module.exports = { handleIncoming, handleDisconnect, sendError, send, deliverRobotCommand, pairing,
+  _internal: { setDeviceRegistry: (r) => { deviceRegistry = r; } } };

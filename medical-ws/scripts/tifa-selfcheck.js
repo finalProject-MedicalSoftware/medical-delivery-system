@@ -15,12 +15,16 @@ process.env.KAFKA_ENABLED = 'false';
 // HARUS sebelum require env.js (dotenv tidak menimpa process.env yang sudah ada).
 process.env.WS_AUTH_TOKEN = 'selfcheck-token';
 process.env.INTERNAL_PUBLISH_SECRET = 'selfcheck-secret';
+process.env.ALLOW_ROBOT_MOTION = 'true'; // skenario teleop/misi di bawah butuh gerak diizinkan
 
 const assert = require('assert');
 const http = require('http');
 const WebSocket = require('ws');
 const kafkaProducer = require('../src/kafka/producer');
 const serverModule = require('../src/ws/server');
+// Stub registry backend: semua robot terdaftar VERIFIED (self-check ini menguji protokol, bukan registry;
+// registry diuji di scripts/security-check.js).
+require('../src/ws/registry-client').lookup = async () => ({ ok: true, registrationStatus: 'VERIFIED' });
 
 const produced = [];
 kafkaProducer.connected = true; // stub: tangkap produce() tanpa broker

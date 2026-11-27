@@ -179,6 +179,36 @@ function handleListRobots(req, res) {
   res.end(JSON.stringify({ robots: sessionManager.listRobots() }));
 }
 
+/**
+ * Pairing tablet HMI (kontrak robot-ws-tifa.md §3a), header x-internal-secret:
+ *   POST   /internal/pairing          {ui_id}  -> 201 {ui_id, code, expires_at}
+ *   GET    /internal/pairing                   -> 200 {devices:[...]}  (tanpa hash token)
+ *   DELETE /internal/pairing/<ui_id>           -> 200 {revoked, closed}
+ */
+async function handlePairing(req, res) {
+  const send = (code, body) => {
+    res.writeHead(code, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+    res.end(JSON.stringify(body));
+  };
+  if (!secretOk(req.headers['x-internal-secret'])) return send(401, { error: 'UNAUTHORIZED' });
+  const url = new URL(req.url, 'http://x');
+  if (url.pathname === '/internal/pairing' && req.method === 'GET') return send(200, { devices: router.pairing.list() });
+  if (url.pathname === '/internal/pairing' && req.method === 'POST') {
+    let body;
+    try { body = JSON.parse((await readBody(req, 4096)) || '{}'); } catch { return send(400, { error: 'INVALID_JSON' }); }
+    const r = router.pairing.createCode(body && body.ui_id);
+    if (!r.ok) return send(400, { error: r.error });
+    return send(201, { ui_id: r.ui_id, code: r.code, expires_at: r.expires_at });
+  }
+  const m = url.pathname.match(/^\/internal\/pairing\/([^/]+)$/);
+  if (m && req.method === 'DELETE') {
+    let uiId;
+    try { uiId = decodeURIComponent(m[1]); } catch { return send(400, { error: 'INVALID_UI_ID' }); }
+    return send(200, router.pairing.revoke(uiId));
+  }
+  return send(405, { error: 'METHOD_NOT_ALLOWED' });
+}
+
 function startHttp() {
   const server = http.createServer((req, res) => {
     if (req.url === '/healthz') {
@@ -188,6 +218,14 @@ function startHttp() {
     }
     if (req.url === '/internal/robots' && req.method === 'GET') {
       handleListRobots(req, res);
+      return;
+    }
+    if (req.url === '/internal/pairing' || req.url.startsWith('/internal/pairing/') || req.url.startsWith('/internal/pairing?')) {
+      handlePairing(req, res).catch((err) => {
+        logger.error('[Pairing] error:', err.message);
+        if (!res.headersSent) res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'INTERNAL_ERROR' }));
+      });
       return;
     }
     if (req.url === '/internal/publish' && req.method === 'POST') {

@@ -6,3 +6,5 @@ npm-debug.log*
 *.log
 coverage/
 .DS_Store
+# token perangkat tablet (hash) — data runtime, jangan commit
+data/

@@ -14,6 +14,8 @@ RUN apk add --no-cache curl
 COPY package*.json ./
 COPY --from=builder /app/node_modules ./node_modules
 COPY src ./src
+# CLI admin pairing tablet: docker exec <container> npm run pair -- TFUI5
+COPY scripts/pair.js ./scripts/pair.js
 
 EXPOSE 8081
 

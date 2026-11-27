@@ -104,6 +104,8 @@ services:
       SIMRS_URL: ${DASHBOARD_BACKEND_URL:-http://medical-backend:8080}
       WS_BACKEND_URL: ${DASHBOARD_WS_BACKEND_URL:-ws://medical-ws:8081/ws/v1/deliveries}
       WS_AUTH_TOKEN: ${WS_AUTH_TOKEN:-}
+      # Pairing tablet HMI via BFF (/api/ws/pairing): secret internal gateway, hanya di server dashboard.
+      WS_INTERNAL_SECRET: ${INTERNAL_PUBLISH_SECRET:-}
       ALLOW_ROBOT_MOTION: ${ALLOW_ROBOT_MOTION:-false}
     depends_on:
       medical-backend:
@@ -171,6 +173,12 @@ services:
       ALLOW_ROBOT_MOTION: ${ALLOW_ROBOT_MOTION:-false}
       TELEOP_MAX_LINEAR: ${TELEOP_MAX_LINEAR:-0.3}
       TELEOP_MAX_ANGULAR: ${TELEOP_MAX_ANGULAR:-0.6}
+      # Pairing tablet HMI (kontrak robot-ws-tifa.md §3a): hash token perangkat, persist lintas rebuild.
+      DEVICES_FILE: /app/data/devices.json
+      PAIRING_TTL_SEC: ${PAIRING_TTL_SEC:-600}
+      PUBLIC_WS_URL: ${PUBLIC_WS_URL:-}
+    volumes:
+      - medical_ws_data:/app/data
     depends_on:
       redpanda:
         condition: service_healthy
@@ -183,3 +191,4 @@ volumes:
   medical_postgres_data:
   medical_uploads:
   dashboard_data:
+  medical_ws_data:

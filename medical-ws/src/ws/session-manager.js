@@ -45,19 +45,39 @@ class SessionManager {
     return { success: true };
   }
 
-  /** Identitas UI TIFA (BFF/dashboard); aturan duplikat sama dengan robot. */
-  attachUI(socket, uiId) {
+  /**
+   * Identitas UI TIFA (BFF/dashboard/tablet HMI). Socket lama DEAD dikick.
+   * Socket lama masih ALIVE (kontrak robot-ws-tifa.md §3a):
+   * - instance_id sama (tablet yang sama tersambung ulang, sesi lama = hantu) -> diganti;
+   * - `force` (tombol manual "Ambil alih sesi") -> diganti;
+   * - selain itu -> DUPLICATE_UI_ID.
+   * Socket yang diganti dikembalikan sebagai `replaced` (pemanggil menutupnya 4001).
+   * @param {{instanceId?: string, auth?: 'device'|'shared', force?: boolean}} [meta]
+   */
+  attachUI(socket, uiId, meta = {}) {
     const s = this.sessions.get(socket);
     if (!s) return { success: false, error: 'NO_SESSION' };
     if (s.identity) return { success: false, error: 'SESSION_ALREADY_IDENTIFIED' };
     const old = this.uis.get(uiId);
+    let replaced = null;
     if (old && old !== socket) {
-      if (isOpen(old)) return { success: false, error: 'DUPLICATE_UI_ID' };
+      if (isOpen(old)) {
+        const prev = this.sessions.get(old);
+        const sameInstance = !!meta.instanceId && !!prev && !!prev.identity && prev.identity.instanceId === meta.instanceId;
+        if (!sameInstance && !meta.force) return { success: false, error: 'DUPLICATE_UI_ID' };
+        replaced = old;
+      }
       this.detach(old);
     }
-    s.identity = { type: 'UI', id: uiId };
+    s.identity = { type: 'UI', id: uiId, instanceId: meta.instanceId || null, auth: meta.auth || 'shared' };
     this.uis.set(uiId, socket);
-    return { success: true };
+    return { success: true, replaced };
+  }
+
+  /** Socket UI hidup untuk ui_id (atau undefined). */
+  getUI(uiId) {
+    const sock = this.uis.get(uiId);
+    return isOpen(sock) ? sock : undefined;
   }
 
   getRobot(robotId) {

@@ -160,6 +160,22 @@ Self-check otomatis (tanpa Postman): `WS_PORT=8099 npm run check:tifa` di `medic
 > Catatan: downlink TIFA (UI → robot lewat frame `{code,data}`) ditunda fase B;
 > kontrak downlink tetap `robot-command.md` (envelope via `/internal/publish`).
 
+### 4c. Pairing tablet HMI (kontrak `robot-ws-tifa.md` §3a)
+
+Self-check otomatis: `npm run check:pairing` di `medical-ws` (11 asersi, server nyata port 8098).
+
+| # | Langkah | Harapan |
+|---|---|---|
+| 1 | `npm run pair -- TFUI5` (atau Postman **POST /internal/pairing**) | kode 6 digit + waktu kedaluwarsa (bawaan 10 menit); tanpa `X-Internal-Secret` → 401 |
+| 2 | WS: `PAIR {ui_id:"TFUI5", code, instance_id}` | `PAIR_OK {device_token}`; kode salah/kedaluwarsa/terpakai → `ERROR/PAIR_INVALID`; 5 salah → kode gugur; >5 PAIR/menit/socket → `PAIR_RATE_LIMITED` |
+| 3 | WS: `SI {type:"UI", ui_id, instance_id, device_token}` | `ACK_SOFT {auth:"device"}`; instance beda → `DEVICE_UNPAIRED` |
+| 4 | Buka socket kedua dengan instance **sama** lalu SI | socket pertama ditutup **4001** `SESSION_REPLACED`, socket kedua `ACK_SOFT` |
+| 5 | SI dari instance **beda** (token bersama) | `DUPLICATE_UI_ID`; dengan `force:true` → ambil alih, lama 4001 |
+| 6 | `PAIR` ulang TFUI5 dari tablet lain | sesi tablet lama ditutup **4002**, token lama → `DEVICE_UNPAIRED` |
+| 7 | WS: `UNPAIR {}` (sesi auth device) | `UNPAIR_OK` + close 1000; token mati |
+| 8 | `npm run pair -- --revoke TFUI5` / **DELETE /internal/pairing/TFUI5** | `{revoked:true, closed:true}`; sesi hidup ditutup 4002 |
+| 9 | Cek `data/devices.json` gateway | hanya `token_sha256` (mode 0600), tidak ada token mentah; log hanya prefix 4 karakter |
+
 ## 5. Webhook monitoring → SIMRS (BAGIAN 1 kontrak)
 
 `POST http://localhost:3001/api/v1/monitoring/delivery-status`, header `x-monitoring-token: <isi MONITORING_TOKEN>`, body:

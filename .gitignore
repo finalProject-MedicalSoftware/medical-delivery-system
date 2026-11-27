@@ -51,3 +51,6 @@ robot/
 programTIFA/
 # HMI = repo git sendiri (finalProject-MedicalSoftware/medical-hmi)
 medical-hmi/
+
+# aplikasi acuan pihak lain (nevo/tifa) — hanya bacaan, jangan di-commit
+reference-app/

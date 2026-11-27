@@ -12,6 +12,7 @@ import Link from 'next/link';
 import { PageHeading } from '../../components/NevoUI';
 import { useApp } from '../../components/AppShell';
 import { Save, Settings } from 'lucide-react';
+import { PairingPanel } from './PairingPanel';
 
 type Endpoints = { simrsUrl: string; wsUrl: string };
 type Identity = { uiId: string; robotId?: string; mapId?: number };
@@ -140,6 +141,8 @@ export default function SettingsPage() {
           <Save size={15} />{saving ? 'Saving…' : 'Save'}
         </button>
       </section>
+
+      <PairingPanel />
     </div>
   );
 }

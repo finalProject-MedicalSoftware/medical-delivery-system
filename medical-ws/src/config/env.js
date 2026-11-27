@@ -8,6 +8,9 @@ module.exports = {
   WS_AUTH_TOKEN: process.env.WS_AUTH_TOKEN || '',
   // Secret bridge HTTP backend -> WS (POST /internal/publish). Kosong = endpoint ditolak (401).
   INTERNAL_PUBLISH_SECRET: process.env.INTERNAL_PUBLISH_SECRET || '',
+  // Pairing tablet HMI (kontrak robot-ws-tifa.md §3a): file token perangkat (hanya hash) + umur kode 6 digit.
+  DEVICES_FILE: process.env.DEVICES_FILE || 'data/devices.json',
+  PAIRING_TTL_SEC: parseInt(process.env.PAIRING_TTL_SEC || '600', 10),
   REGISTRY_BACKEND_URL: process.env.REGISTRY_BACKEND_URL || '',
   // Izinkan gerak fisik robot (teleop, misi OP/MOVE, kembali ke dock). false = hanya "stop nol"
   // (identitas fisik robot belum terautentikasi). Nyalakan HANYA saat uji dengan robot yang diawasi.

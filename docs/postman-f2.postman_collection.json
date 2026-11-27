@@ -481,6 +481,59 @@
                     }
                 }
             ]
+        },
+        {
+            "name": "Pairing tablet HMI (medical-ws :8081) — kontrak robot-ws-tifa.md §3a",
+            "item": [
+                {
+                    "name": "POST /internal/pairing (buat kode 6 digit)",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "X-Internal-Secret",
+                                "value": "{{publishSecret}}"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\"ui_id\":\"TFUI5\"}"
+                        },
+                        "url": "{{ws}}/internal/pairing"
+                    }
+                },
+                {
+                    "name": "GET /internal/pairing (daftar tablet terpasang)",
+                    "request": {
+                        "method": "GET",
+                        "header": [
+                            {
+                                "key": "X-Internal-Secret",
+                                "value": "{{publishSecret}}"
+                            }
+                        ],
+                        "url": "{{ws}}/internal/pairing"
+                    }
+                },
+                {
+                    "name": "DELETE /internal/pairing/TFUI5 (cabut tablet)",
+                    "request": {
+                        "method": "DELETE",
+                        "header": [
+                            {
+                                "key": "X-Internal-Secret",
+                                "value": "{{publishSecret}}"
+                            }
+                        ],
+                        "url": "{{ws}}/internal/pairing/TFUI5"
+                    }
+                }
+            ],
+            "description": "Frame WS (kirim dari tab WebSocket Postman ke ws://…/ws/v1/deliveries): {\"code\":\"PAIR\",\"data\":{\"ui_id\":\"TFUI5\",\"code\":\"<6 digit>\",\"instance_id\":\"postman-instance-01\"}} → PAIR_OK{device_token}; lalu {\"code\":\"SI\",\"data\":{\"type\":\"UI\",\"ui_id\":\"TFUI5\",\"instance_id\":\"postman-instance-01\",\"device_token\":\"…\"}} → ACK_SOFT{auth:\"device\"}; {\"code\":\"UNPAIR\",\"data\":{}} → UNPAIR_OK + close 1000."
         }
     ]
 }
